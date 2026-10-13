@@ -1,0 +1,39 @@
+# Phase 1 implementation evidence
+
+Status: **Linux analysis development milestone implemented; full Phase 1 acceptance remains incomplete.** This is not native Windows/macOS certification or a production release. Phase 0 D14 deferred hardware tests, not mandatory scanner requirements.
+
+## Implemented
+
+- Rust 1.95.0 pinned workspace, `omg` executable, owner-approved MIT OR Apache-2.0 licensing and license texts.
+- Linux ext-family/tmpfs profile with anchored `openat2` no-follow/no-mount descendant acquisition, raw Unix paths, device/inode identity, logical and allocated metadata.
+- OMG-owned fixed worker pool (1–8), one directory stream per active worker, at most 64 queued events with 4096-byte paths; directory backlog lives in SQLite rather than an unbounded in-memory queue. Batches at most 128 events; SQLite page cache budget 4 MiB. No payload contents are opened.
+- Single explicit root per profile, exclusions, last-valid/staging scan generations, atomic publication, kernel scan lock, cancellation token and CLI Ctrl-C handling, visible partial/errors.
+- Bounded generation pruning, schema version checks, corruption refusal and documented preservation/rebuild guidance. Private supported local state, SQLite no-follow opening, WAL/FULL durability.
+- Reconciliation detects changes/removals even when parent mtimes do not change; configured root/exclusions persisted. No unsupported mtime-based recursive cache shortcut.
+- `omg scan`, `scan --full`, `status`, `doctor`, cached read-only ratatui overview, background foreground-refresh and cancel/quit controls. Service start/stop fail explicitly.
+
+## Verification executed
+
+On WSL2 Linux x86_64, kernel 5.15.167.4, Rust 1.95.0:
+
+```sh
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo run -p omg-core --example benchmark --locked
+```
+
+Six integration tests passed: hard-link/sparse/invalid-name/exclusion accounting and reconciliation; cancelled snapshot retention; redirected roots/private state denial; corrupt/future schema preservation; lock contention and interrupted-record recovery; permission-failure partial scan retains prior valid generation. Fixtures are synthetic. Interrupted-record test is not a process-kill/power-loss test.
+
+Synthetic benchmark: 100 directories × 100 64-byte files, debug build, OS cache warm. Cold index: 10,100 entries in 1,527 ms; warm full reconciliation: 1,507 ms, zero changed entries; reopen/status/50-row query: 49 ms. Two workers, event queue bound 64, disk-backed pending-directory peak 98/99. These are one-machine observations, not representative performance targets or cold OS-cache measurements.
+
+## Outstanding Phase 1 gates
+
+- True incremental subtree reuse with trusted invalidation continuity and periodic/gap reconciliation. Current normal refresh deliberately re-enumerates the scope; it only identifies changed records.
+- Multi-root/per-volume status, alias normalization and directory rollups; current profile has one root and lists directory own allocation separately.
+- Native Windows/macOS adapters and provider-specific cloud metadata testing; unsupported filesystem profiles are denied, not claimed supported.
+- Adaptation to I/O pressure, actual RSS/FD/queue-byte measurements and representative cold/warm/refresh benchmarks.
+- Barrier-controlled concurrent change/mount substitution tests, real process interruption, disk-full/DB fault injection, migrations from future schema revisions, complete recovery tooling.
+- Cached status currently computes identity unions from SQLite; optimize persisted totals only with tested consistency. TUI rendering/PTY panic restoration needs integration qualification.
+- Generic root acquisition and private-state checks reduce redirection risks but do not claim a security boundary against a hostile same-account process replacing application state.
+
+The CI workflow compiles on all three OS families, with non-Linux acquisition disabled; it has not been run remotely here. All mandatory native and release gates remain open. Later catalog/review work may build on this development milestone, but the checklist must not call full Phase 1 complete.

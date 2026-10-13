@@ -40,17 +40,19 @@ Phase 0 is **complete under revised scope D14**. Deferred checks are shown separ
 
 ## Phase 1 — Scanner and index
 
-- [ ] Create Rust workspace, pinned toolchain/MSRV and owner-approved license.
-- [ ] Admit a maintained, resource-bounded walker with source/native tests.
+- [x] Create Rust workspace, pinned toolchain/MSRV and owner-approved license.
+- [x] Implement OMG-owned Linux worker pool with bounded events and SQLite-backed work queue; verify synthetic integration fixtures.
 - [ ] Implement native metadata, roots, exclusions, cloud denial and volume samples.
-- [ ] Implement metadata-only bounded traversal, progress and cancellation.
-- [ ] Implement SQLite schema, migrations, staging publication and coverage.
+- [x] Implement Linux metadata-only bounded traversal, progress and cancellation.
+- [x] Implement initial SQLite versioned schema, staging publication and coverage.
 - [ ] Implement singleton scan ownership and interruption/corruption recovery.
 - [ ] Verify apparent/allocation, hard-link/root/mount alias accounting.
 - [ ] Implement incremental invalidation and reliable full/gap reconciliation.
-- [ ] Deliver scan/status/doctor and read-only cached TUI.
+- [x] Deliver scan/status/doctor and initial read-only cached TUI.
 - [ ] Record representative cold/warm/refresh/resource measurements.
 - [ ] Pass Phase 1 analysis-only acceptance gates.
+
+See [phase1-evidence.md](phase1-evidence.md) for implemented Linux development scope, six passing tests, synthetic benchmark and outstanding full-acceptance gates.
 
 ## Phase 2 — Catalog and policy
 

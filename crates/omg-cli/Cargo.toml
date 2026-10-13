@@ -1,0 +1,22 @@
+[package]
+name = "omg-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "omg"
+path = "src/main.rs"
+
+[dependencies]
+omg-core = { path = "../omg-core" }
+anyhow.workspace = true
+clap.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+serde_json.workspace = true
+ctrlc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
