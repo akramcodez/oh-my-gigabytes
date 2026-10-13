@@ -236,6 +236,7 @@ fn start_scan(state: &Path, options: &DaemonOptions, full: bool) -> Active {
             &ScanOptions {
                 workers: config.resources.workers,
                 full,
+                publish_partial: false,
                 ..saved
             },
             c,

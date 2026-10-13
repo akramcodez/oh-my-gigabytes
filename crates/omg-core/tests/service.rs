@@ -38,6 +38,7 @@ fn scan(index: &mut Index, root: &Path) -> omg_core::ScanReport {
             workers: 2,
             exclusions: vec![],
             full: true,
+            publish_partial: false,
         },
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicU64::new(0)),
@@ -579,6 +580,7 @@ fn foreground_scan_takes_over_from_a_running_service_scan_without_corruption() {
         workers: 2,
         exclusions: vec![],
         full: true,
+        publish_partial: false,
     };
     let mut yielded = false;
     let report = loop {

@@ -32,8 +32,12 @@ enum Command {
         root: Option<PathBuf>,
         #[arg(long)]
         full: bool,
-        #[arg(long, default_value_t = 2)]
-        workers: usize,
+        /// Publish the result even if some directories were unreadable (labelled partial)
+        #[arg(long)]
+        accept_gaps: bool,
+        /// Scanner threads (default: up to 8, based on CPU count)
+        #[arg(long)]
+        workers: Option<usize>,
         #[arg(long)]
         exclude: Vec<PathBuf>,
     },
@@ -117,6 +121,59 @@ enum CatalogCommand {
     },
     Rollback,
 }
+/// Live one-line progress on stderr (terminals only); the JSON report on stdout is unaffected.
+struct Meter {
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+impl Meter {
+    fn finish(mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+fn progress_meter(root: &std::path::Path, progress: Arc<std::sync::atomic::AtomicU64>) -> Meter {
+    let stop = Arc::new(AtomicBool::new(false));
+    if !std::io::stderr().is_terminal() {
+        return Meter { stop, handle: None };
+    }
+    let total = omg_core::scanner::estimate_entries(root).unwrap_or(0);
+    let flag = stop.clone();
+    let handle = std::thread::spawn(move || {
+        let started = std::time::Instant::now();
+        let frames = ["·", "✢", "✳", "✶", "✻", "✽"];
+        let mut tick = 0usize;
+        while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+            let done = progress.load(std::sync::atomic::Ordering::Relaxed);
+            let secs = started.elapsed().as_secs_f64().max(0.001);
+            let rate = done as f64 / secs;
+            let detail = if total > 0 && done > 0 {
+                let left = (total.saturating_sub(done)) as f64 / rate.max(1.0);
+                format!(
+                    "{} / ~{} · ≤{:.0}% · {:.0}/s · ~{:.0}s left",
+                    done,
+                    total,
+                    (done as f64 / total as f64 * 100.0).min(100.0),
+                    rate,
+                    left
+                )
+            } else {
+                format!("{done} entries · {rate:.0}/s")
+            };
+            eprint!("\r\x1b[2K{} Weighing gigabytes… {detail}", frames[tick % 6]);
+            tick += 1;
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        eprint!("\r\x1b[2K");
+    });
+    Meter {
+        stop,
+        handle: Some(handle),
+    }
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("omg: {error:#}");
@@ -160,6 +217,7 @@ fn run() -> Result<()> {
         Some(Command::Scan {
             root,
             full,
+            accept_gaps,
             workers,
             exclude,
         }) => {
@@ -176,23 +234,32 @@ fn run() -> Result<()> {
             let signal = cancel.clone();
             ctrlc::set_handler(move || signal.store(true, std::sync::atomic::Ordering::Relaxed))?;
             let options = ScanOptions {
+                workers: workers.unwrap_or_else(omg_core::scanner::default_workers),
                 root,
-                workers,
                 exclusions,
                 full,
+                publish_partial: accept_gaps,
             };
+            let progress = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let meter = progress_meter(&options.root, progress.clone());
             #[cfg(target_os = "linux")]
-            let report = svc::scan_with_handoff(&mut index, &options, cancel)?;
+            let report = svc::scan_with_handoff(&mut index, &options, cancel, progress);
             #[cfg(not(target_os = "linux"))]
-            let report = omg_core::scanner::scan(
-                &mut index,
-                &options,
-                cancel,
-                Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            )?;
+            let report = omg_core::scanner::scan(&mut index, &options, cancel, progress);
+            meter.finish();
+            let report = report?;
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if report.state != "complete" {
-                bail!("scan incomplete; last valid index retained");
+            match (report.state.as_str(), accept_gaps) {
+                ("complete", _) => (),
+                ("partial", true) => eprintln!(
+                    "omg: published as partial: {} directories could not be read (permission or changes during scan)",
+                    report.errors
+                ),
+                ("partial", false) => bail!(
+                    "scan finished with {} unreadable/changed directories and was not published; re-run with --accept-gaps to publish it labelled partial",
+                    report.errors
+                ),
+                _ => bail!("scan incomplete; last valid index retained"),
             }
         }
         Some(Command::Status) => {

@@ -24,6 +24,7 @@ fn scan_with(index: &mut Index, root: &Path, cancelled: bool) -> omg_core::ScanR
             workers: 2,
             exclusions: vec![],
             full: true,
+            publish_partial: false,
         },
         Arc::new(AtomicBool::new(cancelled)),
         Arc::new(AtomicU64::new(0)),

@@ -68,7 +68,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=5,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=6,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
     )
 }
 
@@ -188,12 +188,21 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 5 {
+        if version > 6 {
             bail!("index schema is newer than this omg build");
         }
-        let check: String = db
-            .query_row("PRAGMA quick_check", [], |r| r.get(0))
-            .context("index unreadable; preserve DB/WAL and see docs/operations.md recovery")?;
+        // quick_check reads the whole file (seconds on a multi-GB index), so very large indexes
+        // are verified by `omg doctor` instead of on every command; SQLite still reports
+        // corruption it hits while reading.
+        let large = fs::metadata(state.join("index.sqlite")).is_ok_and(|m| m.len() > 256 << 20);
+        let check: String = if large {
+            db.query_row("PRAGMA schema_version", [], |r| r.get::<_, i64>(0))
+                .context("index unreadable; preserve DB/WAL and see docs/operations.md recovery")?;
+            "ok".into()
+        } else {
+            db.query_row("PRAGMA quick_check", [], |r| r.get(0))
+                .context("index unreadable; preserve DB/WAL and see docs/operations.md recovery")?
+        };
         if check != "ok" {
             bail!("index corruption detected; preserve state and rebuild inventory explicitly");
         }
@@ -219,6 +228,9 @@ impl Index {
         if version < 5 {
             db.execute_batch(include_str!("../../../migrations/005.sql"))?;
         }
+        if version < 6 {
+            db.execute_batch(include_str!("../../../migrations/006.sql"))?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -238,13 +250,23 @@ impl Index {
             })
             .optional()?;
         let (entries, apparent, allocated) = if let Some(id) = active {
-            let entries =
-                self.db
-                    .query_row("SELECT count(*) FROM entries WHERE scan_id=?", [id], |r| {
-                        unsigned(r, 0)
-                    })?;
-            let (apparent, allocated) = self.db.query_row("SELECT coalesce(sum(apparent),0),coalesce(sum(allocated),0) FROM (SELECT max(apparent) apparent,max(allocated) allocated FROM entries WHERE scan_id=? AND excluded IS NULL GROUP BY identity)", [id], |r| Ok((unsigned(r,0)?, unsigned(r,1)?)))?;
-            (entries, apparent, allocated)
+            // Totals are stored when a scan is published; recompute only for older indexes.
+            let stored: (Option<i64>, Option<i64>, Option<i64>) = self.db.query_row(
+                "SELECT entry_count,unique_apparent,unique_allocated FROM scans WHERE id=?",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )?;
+            if let (Some(n), Some(a), Some(b)) = stored {
+                (n.max(0) as u64, a.max(0) as u64, b.max(0) as u64)
+            } else {
+                let entries = self.db.query_row(
+                    "SELECT count(*) FROM entries WHERE scan_id=?",
+                    [id],
+                    |r| unsigned(r, 0),
+                )?;
+                let (apparent, allocated) = self.db.query_row("SELECT coalesce(sum(apparent),0),coalesce(sum(allocated),0) FROM (SELECT max(apparent) apparent,max(allocated) allocated FROM entries WHERE scan_id=? AND excluded IS NULL GROUP BY identity)", [id], |r| Ok((unsigned(r,0)?, unsigned(r,1)?)))?;
+                (entries, apparent, allocated)
+            }
         } else {
             (0, 0, 0)
         };
@@ -341,6 +363,7 @@ impl Index {
                 .map(|p| platform::path(p))
                 .collect::<Result<_>>()?,
             full: true,
+            publish_partial: false,
         }))
     }
 }

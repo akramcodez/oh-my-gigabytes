@@ -26,6 +26,7 @@ fn explicit_preview_is_read_only_and_execution_cannot_bypass_denial() {
             workers: 1,
             exclusions: vec![],
             full: true,
+            publish_partial: false,
         },
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicU64::new(0)),

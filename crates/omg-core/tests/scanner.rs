@@ -21,6 +21,7 @@ fn scan(index: &mut Index, root: &Path) -> omg_core::ScanReport {
             workers: 2,
             exclusions: vec![],
             full: true,
+            publish_partial: false,
         },
         Arc::new(AtomicBool::new(false)),
         Arc::new(AtomicU64::new(0)),
@@ -126,6 +127,7 @@ fn cancelled_refresh_retains_previous_generation() {
             workers: 2,
             exclusions: vec![],
             full: true,
+            publish_partial: false,
         },
         Arc::new(AtomicBool::new(true)),
         Arc::new(AtomicU64::new(0)),
@@ -182,7 +184,8 @@ fn lock_contention_and_interrupted_run_recovery() {
                 root: root.path().into(),
                 workers: 1,
                 exclusions: vec![],
-                full: true
+                full: true,
+                publish_partial: false,
             },
             Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicU64::new(0))
@@ -237,4 +240,44 @@ fn partial_refresh_never_publishes_over_last_valid() {
         fs::Permissions::from_mode(0o700),
     )
     .unwrap();
+}
+
+#[test]
+fn explicit_partial_publication_is_labelled_and_opt_in() {
+    let root = tempfile::tempdir().unwrap();
+    let state = private_state();
+    let mut index = Index::open(state.path()).unwrap();
+    fs::write(root.path().join("keep"), b"fixture").unwrap();
+    fs::create_dir(root.path().join("locked")).unwrap();
+    fs::write(root.path().join("locked/hidden"), b"x").unwrap();
+    fs::set_permissions(
+        root.path().join("locked"),
+        fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+    let report = scanner::scan(
+        &mut index,
+        &ScanOptions {
+            root: root.path().to_path_buf(),
+            workers: 4,
+            exclusions: vec![],
+            full: true,
+            publish_partial: true,
+        },
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .unwrap();
+    fs::set_permissions(
+        root.path().join("locked"),
+        fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
+    assert_eq!(report.state, "partial");
+    let status = index.status().unwrap();
+    assert_eq!(status.last_report.unwrap().state, "partial");
+    assert!(status.entries >= 2, "partial view is published");
+    assert!(index.rollups_available().unwrap());
+    assert_eq!(report.changed_entries, report.entries);
+    assert!(report.estimated_total > 0);
 }

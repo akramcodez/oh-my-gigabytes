@@ -1,0 +1,6 @@
+BEGIN IMMEDIATE;
+ALTER TABLE scans ADD COLUMN entry_count INTEGER;
+ALTER TABLE scans ADD COLUMN unique_apparent INTEGER;
+ALTER TABLE scans ADD COLUMN unique_allocated INTEGER;
+PRAGMA user_version=6;
+COMMIT;

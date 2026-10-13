@@ -379,6 +379,7 @@ fn start_refresh(
         workers: 2,
         exclusions: vec![],
         full: true,
+        publish_partial: false,
     });
     let state = index.state.clone();
     let cancel = cancel.clone();

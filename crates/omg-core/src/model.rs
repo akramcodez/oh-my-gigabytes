@@ -21,6 +21,9 @@ pub struct ScanOptions {
     pub workers: usize,
     pub exclusions: Vec<PathBuf>,
     pub full: bool,
+    /// Publish a scan that could not read some directories (labelled `partial`) instead of keeping
+    /// the previous index. Off by default; explicit user choice only.
+    pub publish_partial: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -35,6 +38,9 @@ pub struct ScanReport {
     pub workers: usize,
     pub event_queue_bound: usize,
     pub peak_pending_directories: u64,
+    /// Approximate entries expected (filesystem used-inode count); an upper bound, not a promise.
+    #[serde(default)]
+    pub estimated_total: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

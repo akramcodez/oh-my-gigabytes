@@ -27,6 +27,7 @@ fn main() -> anyhow::Result<()> {
         workers: 2,
         exclusions: vec![],
         full: true,
+        publish_partial: false,
     };
     for label in ["cold-index (OS cache warm)", "warm-reconciliation"] {
         let report = scanner::scan(

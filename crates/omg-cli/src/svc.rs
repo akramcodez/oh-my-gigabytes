@@ -202,11 +202,12 @@ pub fn scan_with_handoff(
     index: &mut Index,
     options: &ScanOptions,
     cancel: Arc<AtomicBool>,
+    progress: Arc<AtomicU64>,
 ) -> Result<ScanReport> {
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut asked = false;
     loop {
-        match scanner::scan(index, options, cancel.clone(), Arc::new(AtomicU64::new(0))) {
+        match scanner::scan(index, options, cancel.clone(), progress.clone()) {
             Err(error)
                 if error.downcast_ref::<omg_core::index::Busy>().is_some()
                     && Instant::now() < deadline
