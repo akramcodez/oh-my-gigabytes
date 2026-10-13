@@ -23,6 +23,10 @@ Environment: WSL2 Linux x86_64, Node 22.20.0, npm 10.9.3, Rust 1.95.0. Tests use
 
 Executable-header checks passed. Linux PTY restoration smoke passed. Local CycloneDX inventory generation parsed successfully with 170 components/dependency records; external schema validation, advisory review and full license review remain pending. Package tests are not Windows/macOS installs. The native artifact workflow is implemented but not executed here.
 
+## Hosted CI
+
+The `Checks` workflow (fmt, clippy `-D warnings`, tests, PTY smoke, Node tests) passed on hosted ubuntu, macOS and Windows runners at commit 922ec40, after fixing non-Linux unused-import/dead-code errors that had failed the earlier Phase 4 push. This verifies that the non-Linux builds compile with native adapters disabled; it is **not** native macOS/Windows certification. The `artifacts.yml` native-artifact workflow has still not been run.
+
 ## Cross-target attempts
 
 Rust std targets installed into temporary toolchain storage. `cargo check --target x86_64-pc-windows-gnu` failed in bundled SQLite's build script because MinGW C compiler was unavailable. `cargo check --target x86_64-apple-darwin` failed because host `cc` lacks Apple `-arch`/deployment-target support and no Apple SDK/toolchain is configured. These are **failed qualification attempts**, not successful cross-platform builds. Native CI is the correct next verification path; no system toolchain packages were installed or compiler errors bypassed.

@@ -77,6 +77,10 @@ max_samples = 4000
 
 These are single-machine WSL2 measurements, not the representative-machine budgets the exit gate asks for, and battery/I/O-contention behavior was not measured on real laptop hardware beyond the sysfs parsing tests.
 
+## Hosted CI
+
+The `Checks` workflow (fmt, clippy `-D warnings`, tests, PTY smoke, Node tests) passed on hosted ubuntu, macOS and Windows runners at commit 922ec40, after fixing non-Linux unused-import/dead-code errors that had failed the earlier Phase 4 push. This verifies that the non-Linux builds compile with native adapters disabled; it is **not** native macOS/Windows certification. The `artifacts.yml` native-artifact workflow has still not been run.
+
 ## Not delivered / unpassed gates
 
 - **macOS LaunchAgent and Windows Task Scheduler** integrations: not implemented; those platforms report the service as unsupported. No native cross-platform service evidence exists.
