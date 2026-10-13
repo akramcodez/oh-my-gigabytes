@@ -357,6 +357,7 @@ impl Index {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
     use ed25519_dalek::Signer;
     #[test]
     fn strict_catalog_and_tier_contract() {

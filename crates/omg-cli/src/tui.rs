@@ -340,6 +340,7 @@ fn start_refresh(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
     use super::*;
     #[test]
     #[cfg(target_os = "linux")]
