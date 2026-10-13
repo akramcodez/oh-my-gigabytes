@@ -349,3 +349,50 @@ mod service {
         assert!(!Path::new(&fx.config_home.join("systemd")).exists());
     }
 }
+
+#[test]
+#[cfg(target_os = "linux")]
+fn tree_reports_subtree_sizes_and_rejects_escapes() {
+    let fixture = tempfile::tempdir().unwrap();
+    let (root, state) = (fixture.path().join("root"), fixture.path().join("state"));
+    std::fs::create_dir_all(root.join("big/inner")).unwrap();
+    std::fs::create_dir(root.join("small")).unwrap();
+    std::fs::write(root.join("big/inner/data"), vec![1u8; 2 << 20]).unwrap();
+    std::fs::write(root.join("small/data"), vec![1u8; 4096]).unwrap();
+    let omg = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_omg"))
+            .arg("--state-dir")
+            .arg(&state)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    // Before any scan there is nothing to report.
+    assert!(!omg(&["tree"]).status.success());
+    assert!(
+        omg(&["scan", "--root", root.to_str().unwrap()])
+            .status
+            .success()
+    );
+    let json = |out: &std::process::Output| -> serde_json::Value {
+        serde_json::from_slice(&out.stdout).unwrap()
+    };
+    let top = json(&omg(&["tree"]));
+    assert_eq!(top["children"][0]["path"], "\"big\"");
+    assert!(top["children"][0]["allocated"].as_u64().unwrap() >= 2 << 20);
+    assert!(top["totals"]["allocated"].as_u64().unwrap() >= 2 << 20);
+    let inner = json(&omg(&["tree", "big"]));
+    assert_eq!(inner["children"][0]["path"], "\"big/inner\"");
+    let absolute = json(&omg(&[
+        "tree",
+        root.join("big").to_str().unwrap(),
+        "--limit",
+        "1",
+    ]));
+    assert_eq!(absolute["children"].as_array().unwrap().len(), 1);
+    assert!(!omg(&["tree", "../escape"]).status.success());
+    assert!(!omg(&["tree", "/etc"]).status.success());
+    assert!(!omg(&["tree", "no-such-dir"]).status.success());
+    let status = json(&omg(&["status"]));
+    assert!(status["explained_estimate_bytes"].is_u64());
+}

@@ -1,8 +1,28 @@
 use crate::{Entry, platform};
 use std::path::{Path, PathBuf};
 
+/// Memo of "is this directory a repository marker" answers, valid for one bulk evaluation (a scan
+/// rollup) so that thousands of entries do not repeat the same ancestor filesystem checks.
+#[derive(Default)]
+pub struct RepositoryMemo(std::collections::HashMap<PathBuf, bool>);
+impl RepositoryMemo {
+    fn is_repository(&mut self, dir: &Path) -> bool {
+        *self.0.entry(dir.to_path_buf()).or_insert_with(|| {
+            dir.is_dir()
+                && (dir.join(".git").symlink_metadata().is_ok()
+                    || (dir.join("HEAD").is_file()
+                        && dir.join("objects").is_dir()
+                        && dir.join("refs").is_dir()))
+        })
+    }
+}
+
 /// Independent policy: catalog tier/action is never cleanup authority.
 pub fn protection(root: &Path, entry: &Entry) -> Option<String> {
+    protection_with(root, entry, &mut RepositoryMemo::default())
+}
+
+pub fn protection_with(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) -> Option<String> {
     if let Some(reason) = &entry.excluded {
         return Some(reason.clone());
     }
@@ -76,12 +96,7 @@ pub fn protection(root: &Path, entry: &Entry) -> Option<String> {
     // Whole known repositories are protected. This observes markers only, never runs Git.
     let mut current = Some(absolute.as_path());
     while let Some(parent) = current {
-        if parent.is_dir()
-            && (parent.join(".git").symlink_metadata().is_ok()
-                || (parent.join("HEAD").is_file()
-                    && parent.join("objects").is_dir()
-                    && parent.join("refs").is_dir()))
-        {
+        if memo.is_repository(parent) {
             return Some("repository scope protected".into());
         }
         current = parent.parent();

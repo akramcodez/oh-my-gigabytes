@@ -47,6 +47,10 @@ pub struct Finding {
     pub rule: Rule,
     pub catalog_digest: String,
     pub entry: Entry,
+    /// Subtree totals when the target is a directory with published rollups.
+    pub subtree: Option<crate::rollup::Totals>,
+    /// Estimated allocated bytes: the deduplicated subtree total for directories, else the file's.
+    pub estimate: u64,
     pub effective_tier: String,
     pub action: String,
     pub reason: String,
@@ -241,6 +245,8 @@ impl Index {
         tx.commit()?;
         Ok(())
     }
+    /// Directory-root rules resolve their root directly (no dependence on size paging) and carry
+    /// subtree totals; large files come from an indexed query and never overlap a directory finding.
     pub fn findings(
         &self,
         limit: usize,
@@ -255,65 +261,138 @@ impl Index {
         let (catalog, hash) = self.catalog()?;
         let ignores = self.ignores()?;
         let home = platform::home()?;
-        let mut output = Vec::new();
-        // Paged metadata candidates; no entire filesystem graph loaded in RAM.
-        for entry in self.entries(limit, offset)? {
-            let full = root.join(platform::path(&entry.path)?);
-            for rule in &catalog.rules {
-                if rule.deprecated || !rule.platforms.iter().any(|p| p == std::env::consts::OS) {
-                    continue;
-                }
-                let matched = match rule.discovery.as_str() {
-                    "npm_content_cache" => full.starts_with(home.join(".npm/_cacache")),
-                    "pip_cache" => full.starts_with(home.join(".cache/pip")),
-                    "uv_cache" => full.starts_with(home.join(".cache/uv")),
-                    "large_file" => entry.kind == "file" && entry.apparent >= 100 * 1024 * 1024,
-                    _ => false,
-                };
-                if !matched {
-                    continue;
-                }
-                if !include_ignored
-                    && ignores.iter().any(|i| {
-                        i.rule == rule.id
-                            && i.root == root_raw
-                            && policy::inside(&entry.path, &i.path, i.subtree)
-                    })
-                {
-                    continue;
-                }
-                let protected = policy::protection(&root, &entry);
-                let effective = if protected.is_some() {
-                    "protected"
-                } else {
-                    rule.tier.as_str()
-                };
-                let evidence = format!(
-                    "metadata identity {}; observed scan {:?}; known default-root match {}; tool version unknown; allocation {} logical {}; no cleanup qualification",
-                    entry.identity,
-                    status.last_successful,
-                    rule.discovery,
-                    entry.allocated,
-                    entry.apparent
+        let scan: i64 =
+            self.db
+                .query_row("SELECT scan_id FROM active WHERE singleton=1", [], |r| {
+                    r.get(0)
+                })?;
+        let rollups = self.rollups_available()?;
+        let mut output: Vec<Finding> = Vec::new();
+        let mut directory_roots: Vec<Vec<u8>> = Vec::new();
+        let applicable = |rule: &&Rule| {
+            !rule.deprecated && rule.platforms.iter().any(|p| p == std::env::consts::OS)
+        };
+        let assemble = |rule: &Rule,
+                        entry: Entry,
+                        subtree: Option<crate::rollup::Totals>|
+         -> Result<Option<Finding>> {
+            if !include_ignored
+                && ignores.iter().any(|i| {
+                    i.rule == rule.id
+                        && i.root == root_raw
+                        && policy::inside(&entry.path, &i.path, i.subtree)
+                })
+            {
+                return Ok(None);
+            }
+            let mut protected = policy::protection(&root, &entry);
+            if protected.is_none() && subtree.as_ref().is_some_and(|t| t.protected > 0) {
+                protected = Some(
+                    "contains protected, excluded or uncertain descendants; no cleanup action"
+                        .into(),
                 );
-                let mut fingerprint = serde_json::to_vec(&entry)?;
-                fingerprint.extend_from_slice(hash.as_bytes());
-                fingerprint.extend_from_slice(rule.id.as_bytes());
-                fingerprint.extend_from_slice(&root_raw);
-                output.push(Finding {
-                    id: digest(&fingerprint),
-                    rule: rule.clone(),
-                    catalog_digest: hash.clone(),
-                    entry: entry.clone(),
-                    effective_tier: effective.into(),
-                    action: "info".into(),
-                    reason: protected.unwrap_or_else(|| rule.explanation.clone()),
-                    evidence,
-                });
-                break; // More specific first rule, one finding per path; no double counting across rules.
+            }
+            let estimate = subtree.as_ref().map_or(entry.allocated, |t| t.allocated);
+            let effective = if protected.is_some() {
+                "protected"
+            } else {
+                rule.tier.as_str()
+            };
+            let totals = match (&subtree, rollups) {
+                (Some(t), _) => format!(
+                    "subtree {} allocated over {} files and {} directories (hard links counted once); {} protected/excluded entries inside",
+                    t.allocated, t.files, t.dirs, t.protected
+                ),
+                (None, true) => "single entry".into(),
+                (None, false) => "subtree total unavailable (rescan to compute rollups); estimate is the entry itself".into(),
+            };
+            let evidence = format!(
+                "metadata identity {}; observed scan {:?}; known default-root match {}; tool version unknown; allocation {} logical {}; {}; no cleanup qualification",
+                entry.identity,
+                status.last_successful,
+                rule.discovery,
+                entry.allocated,
+                entry.apparent,
+                totals
+            );
+            let mut fingerprint = serde_json::to_vec(&entry)?;
+            fingerprint.extend_from_slice(hash.as_bytes());
+            fingerprint.extend_from_slice(rule.id.as_bytes());
+            fingerprint.extend_from_slice(&root_raw);
+            fingerprint.extend_from_slice(&serde_json::to_vec(&subtree)?);
+            Ok(Some(Finding {
+                id: digest(&fingerprint),
+                rule: rule.clone(),
+                catalog_digest: hash.clone(),
+                entry,
+                subtree,
+                estimate,
+                effective_tier: effective.into(),
+                action: "info".into(),
+                reason: protected.unwrap_or_else(|| rule.explanation.clone()),
+                evidence,
+            }))
+        };
+        for rule in catalog.rules.iter().filter(applicable) {
+            let relative = match rule.discovery.as_str() {
+                "npm_content_cache" => home.join(".npm/_cacache"),
+                "pip_cache" => home.join(".cache/pip"),
+                "uv_cache" => home.join(".cache/uv"),
+                _ => continue,
+            };
+            let Some(relative) = crate::rollup::relative_raw(&root, &relative) else {
+                continue;
+            };
+            if relative.is_empty() {
+                continue;
+            }
+            let entry = self
+                .db
+                .query_row(
+                    "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND path=?",
+                    params![scan, relative],
+                    crate::index::row_entry,
+                )
+                .optional()?;
+            let Some(entry) = entry.filter(|e| e.kind == "directory") else {
+                continue;
+            };
+            directory_roots.push(entry.path.clone());
+            let subtree = self.subtree(&entry.path)?;
+            output.extend(assemble(rule, entry, subtree)?);
+        }
+        if let Some(rule) = catalog
+            .rules
+            .iter()
+            .filter(applicable)
+            .find(|r| r.discovery == "large_file")
+        {
+            let mut statement = self.db.prepare(
+                "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND kind='file' AND apparent>=? ORDER BY allocated DESC,path LIMIT 10000",
+            )?;
+            let rows = statement
+                .query_map(params![scan, 100i64 * 1024 * 1024], crate::index::row_entry)?;
+            for entry in rows {
+                let entry = entry?;
+                if directory_roots
+                    .iter()
+                    .any(|d| policy::inside(&entry.path, d, true))
+                {
+                    continue; // already inside a directory finding's estimate
+                }
+                output.extend(assemble(rule, entry, None)?);
             }
         }
-        Ok(output)
+        output.sort_by(|a, b| {
+            b.estimate
+                .cmp(&a.estimate)
+                .then(a.entry.path.cmp(&b.entry.path))
+        });
+        Ok(output
+            .into_iter()
+            .skip(offset)
+            .take(limit.min(1000))
+            .collect())
     }
     pub fn ignores(&self) -> Result<Vec<Ignore>> {
         let mut statement = self
@@ -387,25 +466,40 @@ mod tests {
             .db
             .execute("INSERT INTO active VALUES(1,1)", [])
             .unwrap();
-        let paths = [
-            ".npm/_cacache/item",
-            ".cache/pip/wheel",
-            ".cache/uv/item",
-            ".cache/pip-near/wheel",
-            ".cache/uv-near/item",
-            "ordinary",
-            "private.sqlite",
+        // (path, kind, bytes). Cache roots are directories; near-miss names must not match.
+        const BIG: i64 = 200 * 1024 * 1024;
+        let paths: [(&str, &str, i64); 16] = [
+            (".npm", "directory", 1),
+            (".npm/_cacache", "directory", 1),
+            (".npm/_cacache/item", "file", 1000),
+            (".cache", "directory", 1),
+            (".cache/pip", "directory", 1),
+            (".cache/pip/wheel", "file", 2000),
+            // Large file inside a cache root: counted by the directory, never a separate finding.
+            (".cache/pip/huge", "file", BIG),
+            (".cache/uv", "directory", 1),
+            (".cache/uv/item", "file", 3000),
+            // A protected-looking descendant makes the whole cache directory protected.
+            (".cache/uv/store.sqlite", "file", 10),
+            (".cache/pip-near", "directory", 1),
+            (".cache/pip-near/wheel", "file", 1),
+            (".cache/uv-near", "directory", 1),
+            (".cache/uv-near/item", "file", 1),
+            ("ordinary", "file", BIG),
+            ("private.sqlite", "file", BIG),
         ];
-        for (i, path) in paths.iter().enumerate() {
-            let size = if i >= 5 { 200 * 1024 * 1024 } else { 1 };
+        for (i, (path, kind, size)) in paths.iter().enumerate() {
             index
                 .db
                 .execute(
-                    "INSERT INTO entries VALUES(1,?,x'','file',?,?,?,1,0,0,NULL)",
-                    params![path.as_bytes(), format!("fixture:{i}"), size, size],
+                    "INSERT INTO entries VALUES(1,?,x'',?,?,?,?,1,0,0,NULL)",
+                    params![path.as_bytes(), kind, format!("fixture:{i}"), size, size],
                 )
                 .unwrap();
         }
+        assert!(!index.rollups_available().unwrap());
+        crate::rollup::compute(&index, 1, &home).unwrap();
+        assert!(index.rollups_available().unwrap());
         let findings = index.findings(1000, 0, false).unwrap();
         assert_eq!(findings.len(), 5);
         assert!(
@@ -421,6 +515,33 @@ mod tests {
                 .effective_tier,
             "protected"
         );
+        let pip = findings
+            .iter()
+            .find(|f| f.entry.path == b".cache/pip")
+            .unwrap();
+        assert_eq!(pip.estimate, 1 + 2000 + BIG as u64);
+        assert_eq!(pip.subtree.as_ref().unwrap().files, 2);
+        assert!(findings.iter().all(|f| f.entry.path != b".cache/pip/huge"));
+        assert!(findings.iter().all(|f| !f.entry.path.ends_with(b"-near")));
+        assert!(
+            findings[0].estimate >= findings[1].estimate,
+            "ordered by estimate"
+        );
+        let tier = |path: &[u8]| {
+            findings
+                .iter()
+                .find(|f| f.entry.path == path)
+                .unwrap()
+                .effective_tier
+                .as_str()
+        };
+        assert_eq!(tier(b".cache/uv"), "protected");
+        // The fixture scope is the real home directory, which may itself be a Git repository
+        // (then everything under it is rightly protected), so only assert the info tier otherwise.
+        if home.join(".git").symlink_metadata().is_err() {
+            assert_eq!(tier(b".npm/_cacache"), "info");
+            assert_eq!(tier(b".cache/pip"), "info");
+        }
         let selected = findings
             .iter()
             .find(|f| f.entry.path == b"ordinary")

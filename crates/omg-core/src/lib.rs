@@ -5,6 +5,7 @@ pub mod model;
 pub mod planning;
 pub mod platform;
 pub mod policy;
+pub mod rollup;
 pub mod scanner;
 pub mod service;
 

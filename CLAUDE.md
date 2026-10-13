@@ -49,7 +49,7 @@ Running the app. Always use a separate private state directory for experiments. 
 
 ```sh
 cargo run -p omg-cli -- --state-dir /tmp/omg-state scan --root /path/to/dir
-cargo run -p omg-cli -- --state-dir /tmp/omg-state status      # also: findings, trends, history, doctor, service status
+cargo run -p omg-cli -- --state-dir /tmp/omg-state status      # also: tree [PATH], findings, trends, history, doctor, service status
 cargo run -p omg-cli -- --state-dir /tmp/omg-state             # TUI; needs a real terminal
 ```
 
@@ -85,7 +85,7 @@ Find functionality by grepping for `impl Index`.
 
 ### Schema migrations
 
-Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/00N.sql` requires three edits in `index.rs`:
+Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/00N.sql` (currently up to 005) requires three edits in `index.rs`:
 1. Add the `include_str!` step.
 2. Bump the "schema is newer than this omg build" check (`version > N`).
 3. Bump `schema_supported` in `diagnose`.
@@ -103,9 +103,13 @@ Entries follow these conventions:
 - **Identity:** `"dev:ino"`. Totals deduplicate hard links with `GROUP BY identity`.
 - **Exclusions:** `excluded IS NOT NULL` marks entries skipped by mandatory or configured exclusions. Those come from `platform::excluded`.
 
+### Rollups (`rollup.rs`, table `dir_totals`)
+
+`rollup::compute` runs inside `scanner::scan` for a **complete** scan, before the `active` swap. It writes per-directory subtree totals (hard links counted once under the first path) plus a count of entries `policy::protection` would deny. `Index::subtree` and `Index::children` read them. `""` is the scan root, and older indexes without rollups return "unavailable" rather than zero. `service/trend.rs` snapshots growth from the same table.
+
 ### Findings are derived, not stored
 
-`Index::findings` pages through active entries and evaluates them against the active catalog. The active catalog is either `bundled.toml` or an Ed25519-signed import stored in `catalog_releases`.
+`Index::findings` builds findings on demand. Directory-root rules (npm, pip and uv caches) resolve their root and carry subtree totals. `large_file` comes from an indexed query and skips files already inside a directory finding. A directory containing protected descendants is itself `protected`. Findings are then sorted by `estimate` and paged. The active catalog is either `bundled.toml` or an Ed25519-signed import stored in `catalog_releases`.
 
 `catalog::parse` admits only:
 - tiers `info` or `review`

@@ -76,27 +76,22 @@ impl Index {
         Ok(Some(sample))
     }
 
-    /// Largest depth-1 and depth-2 directories under the scan root (hard links counted once).
+    /// Largest depth-1 and depth-2 directories under the scan root, from the published rollups.
     fn top_directories(&self, scan_id: i64) -> Result<Vec<(Vec<u8>, u64)>> {
         let mut statement = self.db.prepare(
-            "SELECT min(path),max(allocated),kind FROM entries WHERE scan_id=? AND excluded IS NULL GROUP BY identity",
+            "SELECT path,allocated FROM dir_totals WHERE scan_id=? AND path<>x'' ORDER BY allocated DESC,path",
         )?;
-        let mut totals: HashMap<Vec<u8>, u64> = HashMap::new();
         let mut rows = statement.query([scan_id])?;
+        let mut list = Vec::new();
         while let Some(row) = rows.next()? {
             let path: Vec<u8> = row.get(0)?;
-            let bytes = unsigned(row, 1)?;
-            let kind: String = row.get(2)?;
-            let parts: Vec<&[u8]> = path.split(|b| *b == b'/').collect();
-            for depth in 1..=2usize {
-                if depth < parts.len() || (depth == parts.len() && kind == "directory") {
-                    *totals.entry(parts[..depth].join(&b'/')).or_default() += bytes;
+            if path.iter().filter(|b| **b == b'/').count() < 2 {
+                list.push((path, unsigned(row, 1)?));
+                if list.len() == SNAPSHOT_PATHS {
+                    break;
                 }
             }
         }
-        let mut list: Vec<_> = totals.into_iter().collect();
-        list.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        list.truncate(SNAPSHOT_PATHS);
         Ok(list)
     }
 

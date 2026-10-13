@@ -53,6 +53,15 @@ enum Command {
         #[arg(long, default_value_t = 30)]
         days: u64,
     },
+    /// Largest subdirectories and files under a path in the scanned scope (subtree totals)
+    Tree {
+        /// Path inside the scan root (absolute or root-relative); default is the root
+        path: Option<PathBuf>,
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
     Findings {
         #[arg(long, default_value_t = 0)]
         offset: usize,
@@ -189,11 +198,77 @@ fn run() -> Result<()> {
         Some(Command::Status) => {
             #[allow(unused_mut)]
             let mut value = serde_json::to_value(index.status()?)?;
+            // Estimate only: deduplicated finding totals, not reclaimable or freed space.
+            value["explained_estimate_bytes"] = index
+                .findings(1000, 0, false)?
+                .iter()
+                .filter(|f| f.effective_tier != "protected")
+                .map(|f| f.estimate)
+                .sum::<u64>()
+                .into();
             #[cfg(target_os = "linux")]
             {
                 value["service"] = omg_core::service::daemon::health(&index)?;
             }
             println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        Some(Command::Tree {
+            path,
+            limit,
+            offset,
+        }) => {
+            let status = index.status()?;
+            let root = platform::path(
+                &status
+                    .root
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("no scan yet; run `omg scan`"))?,
+            )?;
+            if !index.rollups_available()? {
+                bail!("directory totals are unavailable for this index; run `omg scan` once");
+            }
+            let relative = match &path {
+                None => PathBuf::new(),
+                Some(p) if p.is_absolute() => p
+                    .strip_prefix(&root)
+                    .map_err(|_| anyhow::anyhow!("path is outside the scanned root"))?
+                    .to_path_buf(),
+                Some(p) => p.clone(),
+            };
+            if !relative.as_os_str().is_empty() && !omg_core::policy::safe_relative(&relative) {
+                bail!("path must be inside the scanned root without `..` components");
+            }
+            let raw = platform::raw(&relative)?;
+            let totals = index
+                .subtree(&raw)?
+                .ok_or_else(|| anyhow::anyhow!("not a scanned directory"))?;
+            let children: Vec<_> = index
+                .children(&raw, limit, offset)?
+                .into_iter()
+                .map(|c| {
+                    serde_json::json!({
+                        "path": omg_core::display_path(&c.path),
+                        "kind": c.kind,
+                        "allocated": c.allocated,
+                        "allocated_human": omg_core::bytes(c.allocated),
+                        "apparent": c.apparent,
+                        "files": c.files,
+                        "directories": c.dirs,
+                        "protected_or_excluded": c.protected,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "directory": omg_core::display_path(&raw),
+                    "totals": totals,
+                    "scan_state": status.last_report.as_ref().map(|r| r.state.clone()),
+                    "last_successful": status.last_successful,
+                    "note": "Allocated bytes from scan metadata; hard links counted once; shared/cloned blocks unknown; excluded entries are counted but not traversed.",
+                    "children": children,
+                }))?
+            );
         }
         Some(Command::Trends { days }) => {
             println!("{}", serde_json::to_string_pretty(&index.trend(days)?)?)

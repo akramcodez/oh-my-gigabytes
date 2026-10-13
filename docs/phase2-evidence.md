@@ -25,3 +25,7 @@ Status: **inventory-only catalog/policy development milestone implemented; full 
 - Core protections/fixture tests reduce obvious scope errors but full adversarial cross-platform policy/race tests remain required before actions.
 
 This milestone can support read-only review work. It does not satisfy the full traceable, native-tested catalog acceptance contract or authorize cleanup.
+
+## Directory-scoped findings (added after Phase 5)
+
+Directory-root rules (`npm_content_cache`, `pip_cache`, `uv_cache`) now yield **one finding per cache root directory**, resolved directly rather than by paging the largest entries. The estimate is the deduplicated subtree total; a directory whose subtree contains any protected, excluded or uncertain entry (or that policy itself denies, including anything inside a Git repository) is `protected`. `large_file` findings come from an indexed query and skip files inside a directory finding, so estimates are not double counted; the dry-run planner also drops targets nested inside another selected target. Catalog tiers and actions are unchanged (inventory only, no cleanup). This closes the "deduplicate candidate targets/estimates" checklist item for the current rule set; real tool/version qualification of the rules is still pending.

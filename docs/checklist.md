@@ -46,7 +46,7 @@ Phase 0 is **complete under revised scope D14**. Deferred checks are shown separ
 - [x] Implement Linux metadata-only bounded traversal, progress and cancellation.
 - [x] Implement initial SQLite versioned schema, staging publication and coverage.
 - [ ] Implement singleton scan ownership and interruption/corruption recovery.
-- [ ] Verify apparent/allocation, hard-link/root/mount alias accounting.
+- [ ] Verify apparent/allocation, hard-link/root/mount alias accounting (apparent/allocated/hard-link directory rollups verified against an inode oracle and `du`; mount/root alias accounting pending).
 - [ ] Implement incremental invalidation and reliable full/gap reconciliation.
 - [x] Deliver scan/status/doctor and initial read-only cached TUI.
 - [ ] Record representative cold/warm/refresh/resource measurements.
@@ -59,7 +59,7 @@ See [phase1-evidence.md](phase1-evidence.md) for implemented Linux development s
 - [x] Implement strict bounded TOML and inventory-only builtin discovery/action schema.
 - [ ] Implement evidence fingerprints, effective policy tiers and exclusions.
 - [ ] Author independently sourced developer rules with negative fixtures.
-- [ ] Deduplicate candidate targets/estimates and implement scoped ignores.
+- [x] Deduplicate candidate targets/estimates and implement scoped ignores (directory findings use published subtree totals; see phase2-evidence.md).
 - [ ] Ship known-good catalog and authenticated import/rollback lifecycle.
 - [x] Verify invalid/tampered catalogs cannot activate or grant shell execution in synthetic signed update tests.
 - [ ] Pass Phase 2 traceable-recommendation gates.

@@ -68,7 +68,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=4,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=5,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
     )
 }
 
@@ -188,7 +188,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 4 {
+        if version > 5 {
             bail!("index schema is newer than this omg build");
         }
         let check: String = db
@@ -215,6 +215,9 @@ impl Index {
         }
         if version < 4 {
             db.execute_batch(include_str!("../../../migrations/004.sql"))?;
+        }
+        if version < 5 {
+            db.execute_batch(include_str!("../../../migrations/005.sql"))?;
         }
         #[cfg(unix)]
         {

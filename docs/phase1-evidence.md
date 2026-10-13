@@ -29,7 +29,7 @@ Synthetic benchmark: 100 directories × 100 64-byte files, debug build, OS cache
 ## Outstanding Phase 1 gates
 
 - True incremental subtree reuse with trusted invalidation continuity and periodic/gap reconciliation. Current normal refresh deliberately re-enumerates the scope; it only identifies changed records.
-- Multi-root/per-volume status, alias normalization and directory rollups; current profile has one root and lists directory own allocation separately.
+- Multi-root/per-volume status and alias normalization; current profile has one root. **Directory rollups are now implemented** (schema 5, see below); they are not yet validated on representative large trees.
 - Native Windows/macOS adapters and provider-specific cloud metadata testing; unsupported filesystem profiles are denied, not claimed supported.
 - Adaptation to I/O pressure, actual RSS/FD/queue-byte measurements and representative cold/warm/refresh benchmarks.
 - Barrier-controlled concurrent change/mount substitution tests, real process interruption, disk-full/DB fault injection, migrations from future schema revisions, complete recovery tooling.
@@ -37,3 +37,9 @@ Synthetic benchmark: 100 directories × 100 64-byte files, debug build, OS cache
 - Generic root acquisition and private-state checks reduce redirection risks but do not claim a security boundary against a hostile same-account process replacing application state.
 
 The CI workflow compiles on all three OS families, with non-Linux acquisition disabled; it has not been run remotely here. All mandatory native and release gates remain open. Later catalog/review work may build on this development milestone, but the checklist must not call full Phase 1 complete.
+
+## Directory rollups (added after Phase 5)
+
+Schema 5 adds `dir_totals`: per-directory allocated/apparent bytes, file and directory counts and a count of protected/excluded entries. They are computed once per **complete** scan and published together with it (staging rows share the scan id, so a partial, cancelled or failed scan never exposes new totals and old scans' rows are cascade-pruned). A hard-linked file counts once, under its lexicographically first path; excluded entries are counted but their contents are not traversed. `omg tree [PATH]` and the TUI browse view (`b`) read them; indexes created before schema 5 report "unavailable, rescan" rather than zero.
+
+Verification (WSL2, release build, one machine): directory totals equal an independent `std::fs` inode oracle in `crates/omg-core/tests/rollup.rs`; scanning this repository gave `target/` = 2998894592 bytes, identical to `du -s --block-size=1`; a synthetic 101 100-entry tree scanned in 10.2 s plus about 1.5 s of rollup/sample work, peak RSS 27.9 MB. Rollup memory is proportional to the number of directories, not files. A scan of an entire real home directory (431 314 entries before a deliberate 500 s timeout, about 860 entries/s) shows the scanner's own throughput on that profile is slow; that was not investigated and no performance claim is made.

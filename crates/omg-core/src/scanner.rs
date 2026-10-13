@@ -364,6 +364,15 @@ mod linux {
             "complete"
         }
         .into();
+        // Subtree totals are part of the published view: compute them for the staging scan before
+        // the swap, so readers never see a complete scan without them.
+        let mut rollup_error = None;
+        if report.state == "complete"
+            && let Err(error) = crate::rollup::compute(index, id, &root_path)
+        {
+            report.state = "failed".into();
+            rollup_error = Some(error);
+        }
         let tx = index
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -386,6 +395,9 @@ mod linux {
             crate::service::trend::DEFAULT_MAX_SAMPLES,
         );
         result?;
+        if let Some(error) = rollup_error {
+            return Err(error.context("directory rollups failed; last valid index retained"));
+        }
         Ok(report)
     }
 }

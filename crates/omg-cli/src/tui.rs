@@ -34,6 +34,8 @@ struct View {
     selected: BTreeSet<String>,
     plan: Option<Plan>,
     confirmation: bool,
+    /// Directory (root-relative raw path) being browsed by subtree size, when browse mode is on.
+    browse: Option<Vec<u8>>,
 }
 
 fn visible(mut findings: Vec<Finding>, view: &View) -> Vec<Finding> {
@@ -50,13 +52,13 @@ fn visible(mut findings: Vec<Finding>, view: &View) -> Vec<Finding> {
                 .contains(&view.search.to_lowercase()))
             && (view.tier == 0 || f.effective_tier == tiers[view.tier])
             && (view.category == 0 || f.rule.category == categories[view.category])
-            && f.entry.allocated >= view.minimum
+            && f.estimate >= view.minimum
     });
     findings.sort_by(|a, b| {
         a.rule
             .category
             .cmp(&b.rule.category)
-            .then(b.entry.allocated.cmp(&a.entry.allocated))
+            .then(b.estimate.cmp(&a.estimate))
     });
     findings
 }
@@ -166,6 +168,49 @@ fn render(
                 .collect::<Vec<_>>()
                 .join("\n"),
         )
+    } else if let Some(dir) = &view.browse {
+        let totals = index.subtree(dir)?;
+        let rows = index
+            .children(dir, 200, 0)?
+            .iter()
+            .enumerate()
+            .map(|(n, c)| {
+                format!(
+                    "{} {:>10} | {}{}{}",
+                    if n == view.cursor { ">" } else { " " },
+                    bytes(c.allocated),
+                    display_path(&c.path),
+                    if c.kind == "directory" {
+                        format!(" ({} files)", c.files)
+                    } else {
+                        String::new()
+                    },
+                    if c.protected > 0 {
+                        "  [protected/excluded inside]"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        (
+            "Browse by size (Enter open dir | Backspace up | Esc leave)",
+            format!(
+                "{} — {} allocated in scan (hard links once; estimate)\n{}",
+                if dir.is_empty() {
+                    "scan root".into()
+                } else {
+                    display_path(dir)
+                },
+                totals.map_or("unknown".into(), |t| bytes(t.allocated)),
+                if rows.is_empty() {
+                    "No indexed children, or rollups unavailable: run omg scan.".into()
+                } else {
+                    rows
+                }
+            ),
+        )
     } else if view.details {
         ("Explanation / evidence / consequences",findings.get(view.cursor).map(|f|format!("{}\n{}\nTier {} | action {}\n{}\nEvidence {}\nEffects {}\nRegeneration {}\nWarnings {}\nSource {}",f.rule.name,display_path(&f.entry.path),f.effective_tier,f.action,f.reason,f.evidence,f.rule.side_effects,f.rule.regeneration,f.rule.warnings.join("; "),f.rule.source)).unwrap_or("No finding selected".into()))
     } else {
@@ -177,7 +222,7 @@ fn render(
                     "{} {} | {} | {} | {}",
                     if n == view.cursor { ">" } else { " " },
                     f.rule.category,
-                    bytes(f.entry.allocated),
+                    bytes(f.estimate),
                     f.effective_tier,
                     display_path(&f.entry.path)
                 )
@@ -198,7 +243,7 @@ fn render(
         regions[1],
     );
     let legend = format!(
-        "q quit | c cancel | Esc back | r/R reconcile | p preview\nj/k navigate | ]/[ page | Enter detail | / search {}\nt tier | g category | m size | i/I ignores | h history\n{message}",
+        "q quit | c cancel | Esc back | r/R reconcile | p preview\nj/k navigate | ]/[ page | Enter detail | / search {}\nt tier | g category | m size | i/I ignores | h history | b browse\n{message}",
         view.search
     );
     frame.render_widget(Paragraph::new(legend), regions[2]);
@@ -228,7 +273,9 @@ pub fn run(index: Index) -> Result<()> {
                     view.confirmation = false;
                 }
                 let findings = visible(index.findings(500, view.offset, false)?, &view);
-                let row_count = if view.ignores {
+                let row_count = if let Some(dir) = &view.browse {
+                    index.children(dir, 200, 0)?.len()
+                } else if view.ignores {
                     index.ignores()?.len()
                 } else {
                     findings.len()
@@ -284,23 +331,30 @@ pub fn run(index: Index) -> Result<()> {
                 }
                 match key.code {
                     KeyCode::Char('q')=>break,
-                    KeyCode::Esc=>{view.details=false;view.history=false;view.ignores=false;view.plan=None;view.confirmation=false;},
+                    KeyCode::Esc=>{view.details=false;view.history=false;view.browse=None;view.ignores=false;view.plan=None;view.confirmation=false;},
                     KeyCode::Char('c')=>cancel.store(true,Ordering::Relaxed),
                     KeyCode::Char('r'|'R') if refresh.is_none()=>start_refresh(&index,&cancel,&progress,&mut refresh)?,
                     KeyCode::Char('j')|KeyCode::Down=>view.cursor=(view.cursor+1).min(row_count.saturating_sub(1)),
                     KeyCode::Char('k')|KeyCode::Up=>view.cursor=view.cursor.saturating_sub(1),
                     KeyCode::Char(']')=>{view.offset+=500;view.cursor=0;},KeyCode::Char('[')=>{view.offset=view.offset.saturating_sub(500);view.cursor=0;},
+                    KeyCode::Char('b')=>{view.browse=if view.browse.is_some(){None}else{Some(Vec::new())};view.cursor=0;},
+                    KeyCode::Backspace if view.browse.is_some()=>{if let Some(dir)=&mut view.browse{let up=dir.iter().rposition(|b|*b==b'/').unwrap_or(0);dir.truncate(up);}view.cursor=0;},
+                    KeyCode::Enter if view.browse.is_some()=>{
+                        let dir = view.browse.clone().unwrap_or_default();
+                        let next = index.children(&dir, 200, 0)?.into_iter().nth(view.cursor).filter(|c| c.kind == "directory");
+                        if let Some(child) = next { view.browse = Some(child.path); view.cursor = 0; }
+                    },
                     KeyCode::Char('/')=>view.searching=true,KeyCode::Char('t')=>view.tier=(view.tier+1)%4,
                     KeyCode::Char('g')=>view.category=(view.category+1)%3,KeyCode::Char('m')=>view.minimum=if view.minimum==0{100*1024*1024}else{0},
                     KeyCode::Char('h')=>{view.history = !view.history;view.ignores=false;},KeyCode::Char('I')=>{view.ignores = !view.ignores;view.history=false;},
                     KeyCode::Char('u') if view.ignores=>{if let Some(item)=index.ignores()?.get(view.cursor){index.remove_ignore(item.id)?;message="Ignore removed; no target selected".into();}},
-                    KeyCode::Char('i')=>{if let Some(finding)=findings.get(view.cursor){index.ignore_finding(finding,false)?;message="Ignored exact rule/path/scope. I reviews scopes; u removes.".into();}},
+                    KeyCode::Char('i') if view.browse.is_none()=>{if let Some(finding)=findings.get(view.cursor){index.ignore_finding(finding,false)?;message="Ignored exact rule/path/scope. I reviews scopes; u removes.".into();}},
                     KeyCode::Char(' ')=>message="Selection denied: all current handlers are informational; tier never authorizes cleanup".into(),
-                    KeyCode::Char('p')=>{if let Some(finding)=findings.get(view.cursor){match index.preview(std::slice::from_ref(&finding.id)){Ok(plan)=>{view.plan=Some(plan);view.confirmation=false;},Err(e)=>message=e.to_string()}}},
+                    KeyCode::Char('p') if view.browse.is_none()=>{if let Some(finding)=findings.get(view.cursor){match index.preview(std::slice::from_ref(&finding.id)){Ok(plan)=>{view.plan=Some(plan);view.confirmation=false;},Err(e)=>message=e.to_string()}}},
                     KeyCode::Enter if view.plan.is_some()=>view.confirmation=true,
                     KeyCode::Char('y') if view.confirmation=>{if let Some(plan)=&view.plan{index.record_preview(plan)?;message="Preview acknowledged and logged. 0 mutations; 0 physical bytes freed claimed.".into();}view.confirmation=false;view.plan=None;},
                     KeyCode::Enter=>view.details = !view.details,
-                    KeyCode::Char('o')=>{if let Some(finding)=findings.get(view.cursor){let root=index.status()?.root.map(|raw|platform::path(&raw)).transpose()?.ok_or_else(||anyhow::anyhow!("no active root"))?;
+                    KeyCode::Char('o') if view.browse.is_none()=>{if let Some(finding)=findings.get(view.cursor){let root=index.status()?.root.map(|raw|platform::path(&raw)).transpose()?.ok_or_else(||anyhow::anyhow!("no active root"))?;
                         message=match omg_core::planning::open_location(&root,&finding.entry){Ok(())=>"Requested native file manager location".into(),Err(e)=>e.to_string()};}},
                     _=>(),
                 }

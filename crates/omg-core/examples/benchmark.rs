@@ -43,5 +43,14 @@ fn main() -> anyhow::Result<()> {
     index.status()?;
     index.entries(50, 0)?;
     println!("warm startup query ms: {}", started.elapsed().as_millis());
+    let started = Instant::now();
+    let root_totals = index.subtree(b"")?;
+    let children = index.children(b"", 50, 0)?.len();
+    index.findings(100, 0, false)?;
+    println!(
+        "rollup reads (root totals {:?}, {children} children, findings) ms: {}",
+        root_totals.map(|t| t.allocated),
+        started.elapsed().as_millis()
+    );
     Ok(())
 }

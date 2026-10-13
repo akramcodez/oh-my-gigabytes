@@ -43,22 +43,14 @@ pub struct History {
 
 impl Index {
     pub fn finding(&self, id: &str) -> Result<Finding> {
-        let mut offset = 0;
-        loop {
-            let entries = self.entries(1000, offset)?;
-            if entries.is_empty() {
-                break;
-            }
-            if let Some(finding) = self
-                .findings(1000, offset, true)?
-                .into_iter()
-                .find(|f| f.id == id)
-            {
-                return Ok(finding);
-            }
-            offset += entries.len();
-        }
-        bail!("candidate absent or stale; refresh and inspect before selecting again")
+        self.findings(1000, 0, true)?
+            .into_iter()
+            .find(|f| f.id == id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "candidate absent or stale; refresh and inspect before selecting again"
+                )
+            })
     }
     pub fn preview(&self, ids: &[String]) -> Result<Plan> {
         if ids.is_empty() || ids.len() > 1000 {
@@ -80,7 +72,22 @@ impl Index {
             if !seen.insert(finding.entry.identity.clone()) {
                 continue;
             }
-            estimated = estimated.saturating_add(finding.entry.allocated);
+            // Overlap: a target inside an included one adds nothing; an enclosing target replaces
+            // the included descendants so the estimate never counts a byte twice.
+            if items
+                .iter()
+                .any(|i: &PlanItem| policy::inside(&finding.entry.path, &i.path, true))
+            {
+                continue;
+            }
+            items.retain(|i: &PlanItem| {
+                let covered = policy::inside(&i.path, &finding.entry.path, true);
+                if covered {
+                    estimated = estimated.saturating_sub(i.estimated);
+                }
+                !covered
+            });
+            estimated = estimated.saturating_add(finding.estimate);
             let decision = match revalidate(&root, &finding.entry) {
                 Ok(()) => policy::cleanup_denial(&root, &finding.entry),
                 Err(_) => "Stale, inaccessible or redirected target; skipped".into(),
@@ -90,7 +97,7 @@ impl Index {
                 path: finding.entry.path,
                 identity: finding.entry.identity,
                 rule: finding.rule.id,
-                estimated: finding.entry.allocated,
+                estimated: finding.estimate,
                 action: "informational; no filesystem mutation".into(),
                 decision,
                 warnings: finding.rule.warnings,
