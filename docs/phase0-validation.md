@@ -1,10 +1,18 @@
 # Phase 0 validation protocol and fixture design
 
-Status: ready-to-run protocol; no sessions or performance benchmarks have been completed. Current evidence: [phase0.md](phase0.md).
+Status: deferred validation protocol under owner-approved D14; no sessions or performance benchmarks have been completed. Phase 0 research/design is complete. This protocol remains required at V01/V05 later usability/performance gates in [phase0-evidence-review.md](phase0-evidence-review.md). Current available experiment evidence: [phase0.md](phase0.md).
 
 ## Developer prototype comparison
 
-Recruit developers who regularly review storage, including at least package-heavy and multi-project workflows. Include varied OS/tooling experience where feasible. Founder preference is useful but not a substitute for independent task observation. Participant counts and session times are study-design choices, not a claim of statistical product-market proof.
+Recruit developers who regularly review storage, including package-heavy and multi-project workflows. **Native Linux and native macOS participants are required validation tracks**, reflecting the founder's clarified audience. Windows/WSL feedback supplements those tracks rather than replacing them. Founder preference is useful but not a substitute for independent task observation. Participant counts and session times are study-design choices, not a claim of statistical product-market proof.
+
+Use separate synthetic scenarios:
+
+- Linux: user package caches, generated project artifacts, mounted-volume boundaries and protected package/container-managed storage.
+- macOS: developer package caches/build output, installed SDK/runtime and backup inventory, APFS/container accounting, System Data and cloud exclusions.
+- Windows/WSL: remote-tool installations and distinct host/virtual capacity.
+
+Keep the common review questions and safety model consistent. Do not show WSL-specific capacity concepts as the primary Linux/macOS workflow. Scenario paths and category names do not establish cleanup eligibility.
 
 Use synthetic inventories and a labelled read-only prototype; do not enable cleanup or ask participants to expose sensitive filenames. Compare the same scope with current `dua`/`dust` or representative outputs and a catalog-cleaner preview. Record tool versions and disclose mocked/cached data; do not represent a static sketch as a working benchmark.
 
@@ -69,4 +77,4 @@ Capture OS/kernel/CPU/RAM/filesystem/disk, build/catalog/tool versions, cache co
 
 ## Completion decision
 
-Use `checklist.md` and `phase0.md` to record actual evidence. Keep developer validation pending until performed. Capability denials preserve safety while native certification is pending; they do not grant support claims. Any proposed scope change to the product gates requires explicit documented rationale rather than renaming unfinished work “100%”.
+Use `checklist.md` and `phase0.md` to record actual evidence. Developer validation remains deferred/not passed until performed. D14 explicitly revises Phase 0's additional interview scheduling gate and records evidence-based closure; it does not revise mandatory product safety or release gates. Capability denials preserve safety while native certification is pending and grant no support claims.

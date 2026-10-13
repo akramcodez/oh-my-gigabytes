@@ -16,6 +16,12 @@ Prioritize these outcomes:
 
 The first useful milestone is an analysis-only CLI and minimal read-only TUI. It should answer where storage is going even if no cleanup adapter has passed certification.
 
+### Audience and platform priorities
+
+The founder explicitly clarified that the product must solve storage investigation for **Linux and macOS developers broadly**, rather than specialize around their Windows/WSL machine. Prioritize native Linux and macOS discovery, explanations and validation together. Windows/WSL remain supported architectural targets with independently tested capabilities; host/VHD reporting is a platform-specific feature, not the central product pitch.
+
+The common problem is accumulated package/tool caches, generated artifacts and application data that take time to identify and assess. Prioritize coverage using official tool semantics, independent developer feedback and native tests, not the largest directories on one machine. First research tracks are npm/pip/uv/pnpm across both platforms, Linux user caches and managed package storage, and macOS developer-tool caches/build output alongside APFS/System Data limitations. System-managed data, runtimes, repositories and backups remain protected/informational until a specific reviewed action qualifies.
+
 ## 2. Initial scope
 
 ### Analysis MVP
@@ -28,6 +34,8 @@ The first useful milestone is an analysis-only CLI and minimal read-only TUI. It
 - `omg`, `omg scan`, `omg scan --full`, `omg status`, and `omg doctor`.
 
 Volume capacity is a measurement of a supported volume; home-directory inventory is not a complete inventory of that volume. Show both without conflating them.
+
+WSL additionally needs separate virtual-filesystem and Windows host-volume availability, with observation times and an unknown backing relationship when not established. Never sum their capacities or infer host headroom from virtual `df` alone. Follow-up [workflow research](workflow-research.md) found this mismatch locally and prioritizes tool-storage attribution; uv/pnpm caches, installed remote editor servers, and AI session data need distinct evidence/policy treatment.
 
 ### Recommendation MVP
 
@@ -65,6 +73,7 @@ Background service, growth trends, signed online catalog updates beyond offline 
 | D11 | Analysis process coordination before background service | Same scan ownership contract later prevents duplicate service work |
 | D12 | Mandatory metadata-only reconciliation after untrusted gaps | Directory mtimes/events cannot establish recursive freshness |
 | D13 | Ship no Safe rules until evidence/tests qualify them | Narrow reliable recommendations are better than a reassuring unsupported label |
+| D14 | Close Phase 0 as source-backed research/design; defer unavailable native/user sessions | Owner explicitly requested this scope revision; V01–V06 in `phase0-evidence-review.md` retain later usability, safety and release gates |
 
 ## 4. Critical-path work packages
 

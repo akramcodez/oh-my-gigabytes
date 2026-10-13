@@ -8,7 +8,9 @@
 
 Documentation baseline: **2026-10-13**. The repository contained only a title-only root README when this research began. Production features remain proposed; a synthetic Linux Phase 0 feasibility probe now exists. No platform is currently certified, no production dependency is adopted, and no release date is promised.
 
-Track delivery in [checklist.md](checklist.md). Phase 0 results and the remaining developer-validation gate are recorded in [phase0.md](phase0.md); the session/fixture protocol is in [phase0-validation.md](phase0-validation.md).
+Track delivery in [checklist.md](checklist.md). **Phase 0 research/design is complete under scope revision D14**; [phase0-evidence-review.md](phase0-evidence-review.md) records source evidence, closure and deferred native/user-validation gates. Available results are in [phase0.md](phase0.md); the later session/fixture protocol is in [phase0-validation.md](phase0-validation.md).
+
+The follow-up [workflow research](workflow-research.md) records founder pain, scoped local tool-storage observations, native Windows volume samples and Linux/macOS/Windows source synthesis. The [read-only synthetic prototype](phase0-prototype.md) is ready for the deferred comprehension/usefulness review at the later usability gate.
 
 | Read | Document | Purpose |
 | --- | --- | --- |

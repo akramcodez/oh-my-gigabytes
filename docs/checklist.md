@@ -2,13 +2,20 @@
 
 Status is evidence-based. `[x]` means the stated deliverable exists and its required local check passed; `[ ]` means pending. A capability denial completes a design decision, not platform certification. See [phase0.md](phase0.md) for the current evidence and blockers.
 
+Phase 0 is **complete under revised scope D14**. Deferred checks are shown separately rather than checked as passed; [phase0-evidence-review.md](phase0-evidence-review.md) defines their later gates.
+
 ## Phase 0 — Competitive validation and safety design
 
 - [x] Preserve the complete product brief and document implementation decisions.
 - [x] Research current competing tools, maintenance and component licenses with sources.
 - [x] Define differentiation: explanations/safety plus fast, coverage-aware cached startup.
+- [x] Record broad Linux/macOS audience priority; keep Windows/WSL as an additional platform track.
 - [x] Record actual founder feedback with provenance and limitations.
-- [ ] Validate the four success questions and repeat-use value through developer prototype sessions.
+- [x] Record founder workflow and authorized scoped metadata observations, including distinct Windows host/WSL capacity.
+- [x] Research official Linux/macOS/Windows workflows without claiming majority preference.
+- [x] Provide a read-only synthetic prototype and comprehension/usefulness questions.
+- [x] Complete additional source-based Linux/macOS evidence review and record limitations.
+- [x] Record owner-approved deferral of unavailable developer sessions with later acceptance gates.
 - [x] Define mandatory invariants S01–S12 and an adversarial test plan.
 - [x] Define roots, exclusions, repository protection, tier and confirmation semantics.
 - [x] Separate analysis, cleanup and service capabilities for each target environment.
@@ -19,9 +26,17 @@ Status is evidence-based. `[x]` means the stated deliverable exists and its requ
 - [x] Define dependency/license admission and release provenance strategy.
 - [x] Define representative benchmark fixtures and evidence recording format.
 - [x] Run and record local probe/tests and documentation checks.
-- [ ] **Phase 0 exit:** actual developer prototype feedback validates the differentiation hypothesis; all design/evidence gates reviewed.
+- [x] **Phase 0 exit (D14):** research/design evidence reviewed, provisional differentiation explicit, available spike verified and deferred validation assigned.
 
-**Current conclusion:** local engineering/design deliverables verified; full Phase 0 exit remains blocked by developer prototype validation. No deletion, ordinary scan, platform certification or benchmark performance claim is enabled by the probe.
+**Current conclusion:** Phase 0 research/design complete; Phase 1 may begin. No deletion, ordinary scan, platform certification or benchmark performance claim is enabled by closure.
+
+### Deferred work — not passed
+
+- [ ] V01: independent Linux/macOS developer comprehension and competitor comparison before Phase 3 usability acceptance.
+- [ ] V02–V03: native metadata/cloud/raw-path tests before the respective analysis capability is certified.
+- [ ] V04: native Trash/race/recovery tests before any action is enabled.
+- [ ] V05: representative benchmarks before performance targets/release claims.
+- [ ] V06: real tool/version/fixture qualification before rule/action activation.
 
 ## Phase 1 — Scanner and index
 

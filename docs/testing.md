@@ -2,6 +2,8 @@
 
 Status: production test plan; production tests have not been implemented or run. The limited Phase 0 feasibility probe and its six tests have passed on this WSL2 Linux environment; see [phase0.md](phase0.md) for scope and results. Safety invariants: [safety.md](safety.md). Phase gates: [phase.md](phase.md).
 
+Phase 0 research/design closure under D14 does not satisfy native testing, usability or performance acceptance. V01–V06 in [phase0-evidence-review.md](phase0-evidence-review.md) assign deferred independent developer review, metadata/cloud certification, Trash races, benchmarks and real-tool qualification to their later gates.
+
 ## 1. Test layers
 
 | Layer | Purpose |

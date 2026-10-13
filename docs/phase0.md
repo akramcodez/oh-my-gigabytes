@@ -4,7 +4,7 @@ Assessment date: **2026-10-13**. Checklist: [checklist.md](checklist.md). Requir
 
 ## Conclusion
 
-**The local Phase 0 engineering/design deliverables are verified. Full Phase 0 is not 100% complete:** developer prototype comparison has not occurred. Founder feedback supports a direction but does not prove the four success questions or repeat-use value. Native cloud/Trash/Windows/macOS capabilities are explicitly denied pending future certification; this satisfies the Phase 0 requirement to avoid advertising unproven capabilities, not certification itself.
+**Phase 0 is complete under the owner-approved research/design scope (D14).** The owner explicitly requested deeper internet evidence and deferral of currently unavailable native Linux/macOS developer sessions. [phase0-evidence-review.md](phase0-evidence-review.md) records the additional source review, acceptance rationale and later validation gates. Prototype comparison has not occurred; it is deferred, not passed. Native cloud/Trash/Windows/macOS capabilities remain denied pending certification. Completion here establishes readiness for Phase 1, not validated market usefulness or a supported release.
 
 No cleanup capability is implemented or enabled. Rust production work starts in Phase 1. This environment has no Rust toolchain; the dependency-free Python spike tests Linux kernel feasibility without selecting a Rust dependency or weakening any production requirement.
 
@@ -14,7 +14,7 @@ No cleanup capability is implemented or enabled. Rust production work starts in 
 | --- | --- | --- |
 | Current competitors/component licensing researched | `research.md`, 32 source references and dated maintenance findings | Design research complete; refresh exact versions at dependency admission |
 | Defensible differentiator defined | `plans.md`, founder feedback below | Hypothesis established, independently unvalidated |
-| Actual prototype feedback validates four questions/repeat use | Session protocol in `phase0-validation.md` | **Pending; Phase 0 exit blocker** |
+| Actual prototype feedback validates four questions/repeat use | Session protocol and V01 deferred gate | **Deferred by owner under D14; due Phase 3 usability acceptance** |
 | Default scope/exclusions/repository protection explicit | `plans.md`, `safety.md`, `architecture.md`, `ux.md` | Design complete |
 | Mandatory safety invariants and adversarial plan | S01–S12 in `safety.md`, fixture expectations in `testing.md` | Design complete; production safety tests not yet built |
 | Native feasibility results or capability denials | Executable Linux spike, matrix below, Trash acquisition plan in `safety.md` | Phase 0 evidence complete within declared limited scope |
@@ -28,6 +28,10 @@ No cleanup capability is implemented or enabled. Rust production work starts in 
 - Exact response: **`1, 2, 2`**.
 - Interpretation: prioritizes explanations/safety and cached startup; repeated `2` is recorded rather than invented as an additional preference.
 - Limitation: one founder preference response; no prototype was shown, no competitor task was observed, no representative developer interview/sample or performance validation occurred.
+
+Follow-up founder report identifies WSL/Windows use, the current `df` → AI-assisted investigation workflow, and time spent identifying storage as the main frustration. Authorized read-only metadata inspection and a successful native Windows volume query are recorded in [workflow-research.md](workflow-research.md), with no sensitive file contents or cleanup. A static synthetic [review prototype](phase0-prototype.md) now exists; participant answers are still pending. Official internet sources support platform workflows but do not establish majority preferences or replace a prototype session.
+
+The founder subsequently clarified the intended audience: solve Linux and macOS developers' problems broadly, not only their own WSL/Windows case. Native Linux/macOS are primary validation tracks in `phase0-validation.md`; the local case study does not determine general product or catalog priorities. Native Mac feedback/testing remains pending.
 
 The hypothesis to test is: **trustworthy explanations and exact scope, presented immediately from a local coverage-aware index, make repeated storage review materially more useful.** See the validation protocol for required evidence rather than treating this preference as product-market validation.
 
@@ -67,6 +71,7 @@ These tests do not traverse arbitrary user roots, read file contents for analysi
 | Linux aarch64 syscall profile | Probe code restricted to known syscall number; not executed | Native hardware test before support |
 | Linux ext4/other real storage accounting | Not certified by WSL fixture results | Native representative machine/filesystem tests |
 | Live mount swaps/bind aliases | No-cross-device flag used; live substitution not tested | Native mount/boundary adversarial suite; deny affected action |
+| Windows native volume query via WSL interop | Operational read-only capacity sample verified | Not filesystem/Trash certification; backing VHD relationship unknown |
 | Windows NTFS/reparse/cloud | **Denied/unverified** | Native metadata/identity/flags probe; cloud provider integration |
 | macOS APFS/File Provider | **Denied/unverified** | Native nonhydrating metadata and pool/identity tests |
 | Cloud nonhydration, any provider | **Denied/unverified** | Exclude unsafe roots; observe real provider transfer/hydration behavior |
@@ -85,6 +90,6 @@ These tests do not traverse arbitrary user roots, read file contents for analysi
 7. Actual cleanup requires separately reviewed exact plan confirmation and immediate revalidation, durable intent/outcomes and no permanent fallback.
 8. Independently authored small catalog, verified releases, local inventories and no unattended/service cleanup remain mandatory.
 
-## Remaining Phase 0 exit work
+## Phase 0 closure and later validation
 
-Conduct the prototype/competitor sessions in `phase0-validation.md`, record actual outcomes and limits, and review whether the differentiator succeeds. There is no fabricated interview result or “100% confirmed” claim. If feedback contradicts the hypothesis, revise scope before expanding implementation. Native unproven capabilities remain denied until their later certification gates pass.
+Phase 0 is accepted under D14 after the additional evidence review. Conduct the prototype/competitor sessions in `phase0-validation.md` at the V01 later usability gate, record actual outcomes and limits, and review whether the differentiator succeeds. Native tests/benchmarks remain due at their feature/release gates (V02–V06). No interview or native result is fabricated, and no deferred check is presented as passed. If feedback contradicts the hypothesis, revise the design. Unproven capabilities remain denied until certification.

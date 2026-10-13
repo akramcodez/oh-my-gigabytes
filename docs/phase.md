@@ -1,6 +1,6 @@
 # Phased roadmap and acceptance gates
 
-Status: planning baseline, 2026-10-13. **No engineering phase is complete.** Phase 0 design, founder feedback and a synthetic Linux metadata feasibility probe are documented in [phase0.md](phase0.md). Full Phase 0 exit remains blocked by actual developer prototype validation. Track every phase in [checklist.md](checklist.md).
+Status: 2026-10-13. **Phase 0 research/design is complete under owner-approved scope revision D14.** Additional evidence and deferred native/user-validation gates are recorded in [phase0-evidence-review.md](phase0-evidence-review.md); available spike results are in [phase0.md](phase0.md). Phases 1–6 remain pending. Track every phase in [checklist.md](checklist.md).
 
 This follows the supplied phases 0–6 while adding concrete dependencies and evidence. Use gates rather than arbitrary dates or universal scan-time promises. Work packages: [plans.md](plans.md). Verification: [testing.md](testing.md).
 
@@ -23,7 +23,7 @@ Cross-platform metadata/safety spikes begin in Phase 0/1, not only in Phase 4. A
 ### Deliverables
 
 - Source-cited comparison against current `dua`, `dust`, Czkawka/Krokiet, BleachBit, and later duplicate-analysis candidates.
-- Developer interviews/prototype comparison validating the four success questions and repeat-use value.
+- Source-based workflow/constraint review and a ready-to-run prototype comparison protocol; independent developer sessions deferred under D14 to Phase 3 usability acceptance.
 - Mandatory safety invariants S01–S12, threat model, protected scope, and denial semantics.
 - Proposed OS/filesystem/architecture capability matrix with analysis, cleanup, and service certification separate.
 - Native metadata/cloud/root-boundary spike and a plan for identity-safe Trash acquisition on each target.
@@ -31,7 +31,7 @@ Cross-platform metadata/safety spikes begin in Phase 0/1, not only in Phase 4. A
 
 ### Exit gate
 
-- A clear differentiation hypothesis has actual user feedback, not only competitor assertions.
+- A clear provisional differentiation hypothesis has sourced workflow evidence and recorded founder feedback; unavailable independent prototype sessions have explicit later gates under D14, without claims of majority/validated usefulness.
 - Default roots/exclusions, metadata-only behavior, repository protection, estimates, and confirmation rules are explicit.
 - Native feasibility risks have executable spike results or documented capability denials; no unsolved behavior is advertised as supported.
 - Adversarial suite design covers replacements, protected descendants, cloud virtual directories, crash windows, and release tampering.
@@ -39,6 +39,8 @@ Cross-platform metadata/safety spikes begin in Phase 0/1, not only in Phase 4. A
 ### Evidence artifacts
 
 Updated `research.md`, `plans.md`, `safety.md`, and `phase0.md` supply design/research, founder preference provenance, capability denials and verified synthetic Linux spike results. `phase0-validation.md` defines the pending prototype-feedback and benchmark-fixture protocol. Founder preference is not completed prototype validation.
+
+`phase0-evidence-review.md` records the additional Linux/macOS source evidence, D14 closure and V01–V06 deferred register. This changes Phase 0 scheduling only; mandatory native safety/reliability/release criteria are binding.
 
 ## Phase 1 — Scanner and local index
 
@@ -132,6 +134,7 @@ This gate can block cleanup for a platform or target type while read-only featur
 - Dry-run makes no target changes; Trash failure never calls permanent-delete fallback.
 - UI works at tested narrow/standard terminal sizes and restores terminal state on interruption.
 - Result totals distinguish attempted/processed/observed space change accurately.
+- V01: independent Linux/macOS developer review records comprehension, comparison and contrary findings before usability/validated-usefulness claims; Phase 0 desk research does not satisfy this gate.
 
 ## Phase 4 — Cross-platform hardening and distribution
 
