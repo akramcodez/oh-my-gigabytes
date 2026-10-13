@@ -50,7 +50,7 @@ Ed25519 signs `OMG-BINARY-MANIFEST-V1\0` followed by the **exact UTF-8 manifest 
 
 - `schema`, application `version`, platform `target`, Rust `triple`.
 - Fixed `file` (`omg` or `omg.exe`), exact `size`, SHA-256 `sha256`, pinned `keyId`.
-- `capabilities`: Linux analysis `development-linux` (other OS analysis `disabled`), cleanup/service `disabled`.
+- `capabilities`: Linux analysis and service `development-linux` (other OS `disabled`), cleanup `disabled`. The packages still never register or start a service; registration is the user's explicit `omg start`/`omg service install`.
 
 The launcher rejects unsupported fields/schema/capabilities, unsigned/untrusted metadata, signature tampering, mismatched version/target, traversal file names, oversize/redirected files and changed or wrong-format binary payloads. It re-verifies **every launch** and spawns the absolute packaged binary with inherited stdio/argv, no shell or PATH replacement. Signals/exit codes are forwarded. No automatic network fallback.
 
@@ -90,7 +90,7 @@ Use a verified matching-version package, retain readable user state and allow ap
 npm uninstall --global oh-my-gigabytes
 ```
 
-Uninstall removes the launcher/platform package; it **preserves the local index/history/preferences**. No service is installed by these packages. If a later service is installed, explicitly remove it first through a tested native service lifecycle. Uninstall never cleans scanned user files or Trash. State removal is a separate explicit scoped user decision.
+Uninstall removes the launcher/platform package; it **preserves the local index/history/preferences**. No service is installed by these packages. If you registered the service, run `omg service uninstall` first (npm lifecycle hooks are not relied on); `omg doctor` reports an orphaned registration whose binary no longer exists. Uninstall never cleans scanned user files or Trash. State removal is a separate explicit scoped user decision.
 
 ## Release controls still required
 

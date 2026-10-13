@@ -4,6 +4,8 @@ Status: proposed operational design; packages and commands are not published/imp
 
 Implementation update: Phase 4 private signed packaging, offline install verification and read-only `doctor` diagnosis now exist. See [release.md](release.md) for actual commands and [phase4-evidence.md](phase4-evidence.md) for tested scope; the remainder of this document includes planned release/service behavior, not certification.
 
+Implementation update (Phase 5): the Linux per-user systemd service, `omg service ...`, `omg trends` and the `config.toml` service settings now exist as a development implementation; see [phase5-evidence.md](phase5-evidence.md) for the exact commands, limits and unpassed gates. Sections 6 and 7 below still describe the full multi-platform design.
+
 ## 1. Distribution design
 
 Preferred layout:

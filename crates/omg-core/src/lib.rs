@@ -6,6 +6,7 @@ pub mod planning;
 pub mod platform;
 pub mod policy;
 pub mod scanner;
+pub mod service;
 
 pub use index::Index;
 pub use model::{Entry, ScanOptions, ScanReport, Status};

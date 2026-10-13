@@ -10,6 +10,8 @@ Documentation baseline: **2026-10-13**. Rust development milestones now provide 
 
 Track delivery in [checklist.md](checklist.md). **Phase 0 research/design is complete under scope revision D14**; [phase0-evidence-review.md](phase0-evidence-review.md) records source evidence, closure and deferred native/user-validation gates. Available results are in [phase0.md](phase0.md); the later session/fixture protocol is in [phase0-validation.md](phase0-validation.md).
 
+Phase 5 (optional scan-only background service, notifications and growth trends) has a Linux development implementation: [phase5-evidence.md](phase5-evidence.md) records what passed and what was deliberately not delivered.
+
 Phase 4 packaging work is in progress: [phase4-evidence.md](phase4-evidence.md) records qualified local results and failed/unrun native checks; [release.md](release.md) describes signed development packages, offline verification/install, upgrade and uninstall.
 
 The follow-up [workflow research](workflow-research.md) records founder pain, scoped local tool-storage observations, native Windows volume samples and Linux/macOS/Windows source synthesis. The [read-only synthetic prototype](phase0-prototype.md) is ready for the deferred comprehension/usefulness review at the later usability gate.

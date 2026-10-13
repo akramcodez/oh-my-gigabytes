@@ -1,13 +1,12 @@
 use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use omg_core::{Index, ScanOptions, platform};
+#[cfg(target_os = "linux")]
+mod svc;
 use std::{
     io::IsTerminal,
     path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64},
-    },
+    sync::{Arc, atomic::AtomicBool},
 };
 mod tui;
 
@@ -20,6 +19,9 @@ mod tui;
 struct Cli {
     #[arg(long, global = true)]
     state_dir: Option<PathBuf>,
+    /// Service configuration file (default: $XDG_CONFIG_HOME/omg/config.toml)
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -37,8 +39,20 @@ enum Command {
     },
     Status,
     Doctor,
+    /// Start the scan-only background service (asks before registering it)
     Start,
+    /// Stop the background service
     Stop,
+    /// Background service registration and control (never cleans up files)
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
+    /// Observed free-space and growth history from local scans
+    Trends {
+        #[arg(long, default_value_t = 30)]
+        days: u64,
+    },
     Findings {
         #[arg(long, default_value_t = 0)]
         offset: usize,
@@ -59,6 +73,32 @@ enum Command {
     },
     History,
 }
+// Only the Linux service controller (svc.rs) reads these fields.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// Register a per-user systemd service (explicit approval required)
+    Install {
+        /// Also start it at login
+        #[arg(long)]
+        enable: bool,
+        /// Approve registration non-interactively
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Stop and remove the per-user registration; local state is kept
+    Uninstall,
+    Start {
+        #[arg(long)]
+        yes: bool,
+    },
+    Stop,
+    Status,
+    /// Ask a running service for a low-priority scan
+    Scan,
+    /// Run the service in the foreground (used by the registered unit)
+    Run,
+}
 #[derive(Subcommand)]
 enum CatalogCommand {
     Status,
@@ -76,8 +116,19 @@ fn main() {
 }
 fn run() -> Result<()> {
     let cli = Cli::parse();
-    if matches!(cli.command, Some(Command::Start | Command::Stop)) {
-        bail!("background service not implemented; no service installed");
+    #[cfg(target_os = "linux")]
+    if matches!(
+        cli.command,
+        Some(Command::Start | Command::Stop | Command::Service { .. })
+    ) {
+        return svc::control(&cli);
+    }
+    #[cfg(not(target_os = "linux"))]
+    if matches!(
+        cli.command,
+        Some(Command::Start | Command::Stop | Command::Service { .. })
+    ) {
+        bail!("background service is not supported on this platform");
     }
     if matches!(cli.command, Some(Command::Doctor)) && !platform::supported() {
         println!("omg: this platform is not certified; native scanning and cleanup disabled");
@@ -87,7 +138,12 @@ fn run() -> Result<()> {
     if matches!(cli.command, Some(Command::Doctor)) {
         let diagnosis = omg_core::index::diagnose(&state)?;
         println!("omg: {}", serde_json::to_string_pretty(&diagnosis)?);
-        println!("cleanup disabled; service not installed; cloud/FUSE/remote profiles excluded");
+        println!("cleanup disabled; cloud/FUSE/remote profiles excluded");
+        #[cfg(target_os = "linux")]
+        println!(
+            "service: {}",
+            serde_json::to_string_pretty(&svc::registration()?)?
+        );
         return Ok(());
     }
     let mut index = Index::open(&state)?;
@@ -110,23 +166,38 @@ fn run() -> Result<()> {
             let cancel = Arc::new(AtomicBool::new(false));
             let signal = cancel.clone();
             ctrlc::set_handler(move || signal.store(true, std::sync::atomic::Ordering::Relaxed))?;
+            let options = ScanOptions {
+                root,
+                workers,
+                exclusions,
+                full,
+            };
+            #[cfg(target_os = "linux")]
+            let report = svc::scan_with_handoff(&mut index, &options, cancel)?;
+            #[cfg(not(target_os = "linux"))]
             let report = omg_core::scanner::scan(
                 &mut index,
-                &ScanOptions {
-                    root,
-                    workers,
-                    exclusions,
-                    full,
-                },
+                &options,
                 cancel,
-                Arc::new(AtomicU64::new(0)),
+                Arc::new(std::sync::atomic::AtomicU64::new(0)),
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             if report.state != "complete" {
                 bail!("scan incomplete; last valid index retained");
             }
         }
-        Some(Command::Status) => println!("{}", serde_json::to_string_pretty(&index.status()?)?),
+        Some(Command::Status) => {
+            #[allow(unused_mut)]
+            let mut value = serde_json::to_value(index.status()?)?;
+            #[cfg(target_os = "linux")]
+            {
+                value["service"] = omg_core::service::daemon::health(&index)?;
+            }
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        Some(Command::Trends { days }) => {
+            println!("{}", serde_json::to_string_pretty(&index.trend(days)?)?)
+        }
         Some(Command::Cleanup {
             dry_run: _,
             candidate,
@@ -179,9 +250,7 @@ fn run() -> Result<()> {
                 "omg: Linux metadata backend; SQLite {}; private local index opened",
                 omg_core::index::sqlite_version()
             );
-            println!(
-                "cleanup disabled; service not installed; cloud/FUSE/remote filesystems excluded"
-            );
+            println!("cleanup disabled; cloud/FUSE/remote filesystems excluded");
             println!(
                 "No content reads or network requests during scanning; full reconciliation on refresh."
             );

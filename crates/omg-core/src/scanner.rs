@@ -1,8 +1,8 @@
-use crate::{Index, ScanOptions, ScanReport, index::lock, platform};
+use crate::{Index, ScanOptions, ScanReport, index::lock};
 use anyhow::{Result, bail};
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64},
 };
 
 pub fn scan(
@@ -29,10 +29,12 @@ pub fn scan(
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
+    use crate::platform;
     use crate::{Entry, now};
     use crossbeam_channel::{Receiver, Sender, bounded};
     use rusqlite::params;
     use rustix::fs::{self, AtFlags, Dir};
+    use std::sync::atomic::Ordering;
     use std::{
         path::PathBuf,
         time::{Duration, Instant},
@@ -281,11 +283,15 @@ mod linux {
                 let first = match event_rx.recv_timeout(Duration::from_millis(100)) {
                     Ok(event) => event,
                     Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                    // Workers exit when cancelled; that is a cancellation, not a scanner fault.
+                    Err(_) if cancel.load(Ordering::Relaxed) => break,
                     Err(_) => bail!("scanner workers stopped unexpectedly"),
                 };
                 let mut events = vec![first];
                 events.extend(event_rx.try_iter().take(127));
-                let tx = index.db.transaction()?;
+                let tx = index
+                    .db
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
                 for event in events {
                     match event {
                         Event::Entry(entry) => {
@@ -358,7 +364,9 @@ mod linux {
             "complete"
         }
         .into();
-        let tx = index.db.transaction()?;
+        let tx = index
+            .db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute(
             "UPDATE scans SET ended=?,state=?,report=? WHERE id=?",
             params![now(), report.state, serde_json::to_string(&report)?, id],
@@ -370,6 +378,13 @@ mod linux {
         tx.execute("DELETE FROM scans WHERE id<>? AND id<>coalesce((SELECT scan_id FROM active WHERE singleton=1),?)",params![id,id])?;
         tx.commit()?;
         index.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
+        // Trend history is advisory; failing to record it must never fail or alter the scan result.
+        let _ = index.record_sample(
+            id,
+            &report.state,
+            crate::service::trend::DEFAULT_SAMPLE_DAYS,
+            crate::service::trend::DEFAULT_MAX_SAMPLES,
+        );
         result?;
         Ok(report)
     }

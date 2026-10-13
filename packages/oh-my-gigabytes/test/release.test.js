@@ -47,6 +47,7 @@ test('signed assembly verifies and offline payload contains no private signing m
   const result = verifyArtifact(f.artifact, f.trust, f);
   assert.equal(result.manifest.version, f.version);
   assert.equal(result.manifest.capabilities.cleanup, 'disabled');
+  assert.equal(result.manifest.capabilities.service, result.manifest.target.startsWith('linux-') ? 'development-linux' : 'disabled');
   const offline = path.join(f.out, 'offline-oh-my-gigabytes');
   assert.equal(resolveArtifact(offline, f.target, f.version), path.join(offline, 'vendor', f.target));
   assert.ok(!fs.readFileSync(path.join(offline, 'trust.json'), 'utf8').includes('PRIVATE KEY'));
@@ -84,7 +85,7 @@ test('authenticated wrong version, target, scope and capabilities are rejected',
   const f = fixture(t);
   const original = fs.readFileSync(path.join(f.artifact, 'manifest.json'));
   for (const mutate of [m => { m.version = '0.2.0'; }, m => { m.target = 'darwin-arm64'; },
-    m => { m.file = '../escape'; }, m => { m.capabilities.cleanup = 'enabled'; }, m => { m.size = -1; }]) {
+    m => { m.file = '../escape'; }, m => { m.capabilities.cleanup = 'enabled'; }, m => { m.capabilities.service = 'enabled'; }, m => { m.size = -1; }]) {
     fs.writeFileSync(path.join(f.artifact, 'manifest.json'), original);
     resign(f, mutate);
     assert.throws(() => verifyArtifact(f.artifact, f.trust, f));

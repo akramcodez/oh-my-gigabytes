@@ -96,13 +96,15 @@ In progress: [phase4-evidence.md](phase4-evidence.md) and [release.md](release.m
 
 ## Phase 5 — Optional service and intelligence
 
-- [ ] Deliver explicit per-user install/start/stop/status/uninstall integrations.
-- [ ] Implement authenticated scan-only coordination and foreground priority.
-- [ ] Verify native resource limits, backoff, cancellation and restart-gap reconciliation.
-- [ ] Implement opt-in privacy-safe threshold notifications with hysteresis/cooldown.
-- [ ] Add bounded local growth trends and evidence-driven developer coverage.
-- [ ] Gate optional duplicate content analysis and Git-aware analysis independently.
-- [ ] Pass service acceptance; no service cleanup entry point.
+Development milestone implemented and verified on Linux x86_64 (WSL2 with a systemd user manager); see [phase5-evidence.md](phase5-evidence.md). macOS launchd and Windows Task Scheduler integrations, desktop-session notification behavior beyond a fixed `notify-send` call, and independent usability review are **not** delivered.
+
+- [x] Deliver explicit per-user install/start/stop/status/uninstall integrations (systemd user units on Linux only; launchd/Task Scheduler pending).
+- [x] Implement authenticated scan-only coordination and foreground priority (peer-credential Unix socket, closed four-operation protocol, scan handoff).
+- [ ] Verify native resource limits, backoff, cancellation and restart-gap reconciliation (Linux limits, backoff, cancellation and restart-gap full rescan verified; advisory filesystem watchers and macOS/Windows limits not delivered).
+- [x] Implement opt-in privacy-safe threshold notifications with hysteresis/cooldown (log plus optional fixed `notify-send`; no other delivery channels).
+- [x] Add bounded local growth trends (`omg trends`); evidence-driven developer coverage expansion is **not** delivered because no volunteered feedback exists.
+- [ ] Gate optional duplicate content analysis and Git-aware analysis independently (deliberately not delivered).
+- [ ] Pass service acceptance; no service cleanup entry point (Linux-only development acceptance passed; cross-platform and idle-budget acceptance on representative machines pending).
 
 ## Phase 6 — Optional personalization
 

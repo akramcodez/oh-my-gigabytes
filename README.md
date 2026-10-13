@@ -19,3 +19,5 @@ Use `--state-dir /private/local/path` for a separate profile. Scanning currently
 Catalog findings and read-only review are available through the TUI or `omg findings`. Preview explicit IDs with `omg cleanup --dry-run --candidate ID`; inspect local preview history with `omg history`. **Actual cleanup is disabled** until native Trash race-safety qualification. See [Phase 2](docs/phase2-evidence.md) and [Phase 3](docs/phase3-evidence.md) evidence for unpassed gates.
 
 Phase 4 now has private signed npm/offline packaging and a native artifact CI design. See [release instructions](docs/release.md) and [Phase 4 evidence](docs/phase4-evidence.md). No public npm package/signing key is provisioned and cross-platform release certification remains incomplete.
+
+Phase 5 adds an optional, scan-only background service (Linux systemd user manager only) and `omg trends`. Nothing is installed unless you approve it: `omg start` explains and asks first, `omg service uninstall` removes it and keeps your data. The service cannot clean up files. See [Phase 5 evidence](docs/phase5-evidence.md).

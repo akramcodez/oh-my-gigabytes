@@ -11,7 +11,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 anyhow = "1"
 rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
-rustix = { version = "1.1", features = ["fs", "process"] }
+rustix = { version = "1.1", features = ["fs", "process", "net"] }
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -19,7 +19,7 @@ clap = { version = "4", features = ["derive"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = "0.29"
 tempfile = "3"
-ctrlc = "3"
+ctrlc = { version = "3", features = ["termination"] }
 toml = "1"
 sha2 = "0.10"
 ed25519-dalek = "3"

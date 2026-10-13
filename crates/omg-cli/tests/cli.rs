@@ -101,3 +101,251 @@ fn dry_run_requires_explicit_targets_and_no_unattended_execution_flag() {
             .success()
     );
 }
+
+#[cfg(target_os = "linux")]
+mod service {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        path::{Path, PathBuf},
+        process::{Child, Command, Stdio},
+        time::{Duration, Instant},
+    };
+
+    const BINARY: &str = env!("CARGO_BIN_EXE_omg");
+
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        root: PathBuf,
+        state: PathBuf,
+        config_home: PathBuf,
+    }
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        let (root, state, config_home) = (
+            dir.path().join("root"),
+            dir.path().join("state"),
+            dir.path().join("config"),
+        );
+        for path in [&root, &config_home] {
+            std::fs::create_dir(path).unwrap();
+        }
+        std::fs::write(root.join("data.bin"), vec![7u8; 1 << 20]).unwrap();
+        Fixture {
+            _dir: dir,
+            root,
+            state,
+            config_home,
+        }
+    }
+    fn omg(fx: &Fixture) -> Command {
+        let mut command = Command::new(BINARY);
+        command
+            .arg("--state-dir")
+            .arg(&fx.state)
+            .env("XDG_CONFIG_HOME", &fx.config_home)
+            .env("HOME", &fx.config_home);
+        command
+    }
+    fn json(output: &std::process::Output) -> serde_json::Value {
+        serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&output.stdout)))
+    }
+    struct Daemon(Child);
+    impl Drop for Daemon {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    fn wait_for(what: &str, mut condition: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if condition() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("timed out waiting for {what}");
+    }
+
+    #[test]
+    fn status_and_trends_work_without_a_service() {
+        let fx = fixture();
+        let scan = omg(&fx)
+            .arg("scan")
+            .arg("--root")
+            .arg(&fx.root)
+            .output()
+            .unwrap();
+        assert!(scan.status.success());
+        let status = json(&omg(&fx).arg("status").output().unwrap());
+        assert_eq!(status["service"]["state"], "stopped");
+        assert!(status["entries"].as_u64().unwrap() >= 1);
+        let trends = json(&omg(&fx).args(["trends", "--days", "7"]).output().unwrap());
+        assert_eq!(trends["samples"], 1);
+        assert!(trends["note"].as_str().unwrap().contains("uncertain"));
+        assert!(
+            !omg(&fx)
+                .args(["trends", "--days", "0"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let health = json(&omg(&fx).args(["service", "status"]).output().unwrap());
+        assert_eq!(health["health"]["state"], "stopped");
+    }
+
+    #[test]
+    fn registration_requires_explicit_approval_and_writes_nothing_without_it() {
+        let fx = fixture();
+        let out = omg(&fx).arg("start").stdin(Stdio::null()).output().unwrap();
+        assert!(!out.status.success());
+        let message = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            message.contains("approval") || message.contains("unsupported"),
+            "{message}"
+        );
+        assert!(
+            !fx.config_home.join("systemd").exists(),
+            "unit written without approval"
+        );
+        let out = omg(&fx)
+            .args(["service", "install"])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        assert!(!fx.config_home.join("systemd").exists());
+        // Uninstall with nothing registered is a harmless no-op that keeps state.
+        let out = omg(&fx).args(["service", "uninstall"]).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    #[test]
+    fn invalid_or_forged_configuration_stops_the_service_before_touching_state() {
+        let fx = fixture();
+        let config = fx.config_home.join("bad.toml");
+        for forged in ["cleanup = true\n", "[schedule]\ninterval_minutes = 1\n"] {
+            std::fs::write(&config, forged).unwrap();
+            let out = omg(&fx)
+                .arg("--config")
+                .arg(&config)
+                .args(["service", "run"])
+                .output()
+                .unwrap();
+            assert!(!out.status.success(), "{forged}");
+            assert!(!fx.state.exists(), "state created despite invalid config");
+        }
+    }
+
+    #[test]
+    fn running_service_coexists_with_foreground_commands_and_stops_cleanly() {
+        let fx = fixture();
+        assert!(
+            omg(&fx)
+                .arg("scan")
+                .arg("--root")
+                .arg(&fx.root)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let mut child = omg(&fx)
+            .args(["service", "run"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let daemon = Daemon(child);
+        wait_for("service socket", || fx.state.join("service.sock").exists());
+        wait_for("running health", || {
+            let out = omg(&fx).args(["service", "status"]).output().unwrap();
+            out.status.success() && json(&out)["health"]["state"] == "running"
+        });
+        let live = json(&omg(&fx).args(["service", "status"]).output().unwrap());
+        assert_eq!(
+            live["live"]["operations"],
+            serde_json::json!(["status", "scan", "yield", "stop"])
+        );
+        assert_eq!(live["live"]["priority_lowered"], true);
+
+        // A second service is refused; a foreground scan and a scan request both work.
+        let second = omg(&fx).args(["service", "run"]).output().unwrap();
+        assert!(!second.status.success());
+        assert!(String::from_utf8_lossy(&second.stderr).contains("already running"));
+        assert!(
+            omg(&fx)
+                .arg("scan")
+                .arg("--root")
+                .arg(&fx.root)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        assert!(
+            omg(&fx)
+                .args(["service", "scan"])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        wait_for("requested scan recorded", || {
+            json(&omg(&fx).arg("trends").output().unwrap())["samples"]
+                .as_u64()
+                .unwrap()
+                >= 3
+        });
+
+        // Stop through IPC (nothing is registered with systemd in this fixture).
+        assert!(omg(&fx).arg("stop").output().unwrap().status.success());
+        let mut daemon = daemon;
+        wait_for("clean exit", || daemon.0.try_wait().unwrap().is_some());
+        assert!(daemon.0.try_wait().unwrap().unwrap().success());
+        let mut log = String::new();
+        std::io::Read::read_to_string(&mut { stderr }, &mut log).unwrap();
+        assert!(log.contains("scan-only; no cleanup capability"));
+        let health = json(&omg(&fx).args(["service", "status"]).output().unwrap());
+        assert_eq!(health["health"]["detail"], "stopped cleanly");
+        assert!(!fx.state.join("service.sock").exists());
+        assert_eq!(
+            std::fs::read(fx.root.join("data.bin")).unwrap().len(),
+            1 << 20
+        );
+        assert_eq!(
+            std::fs::metadata(&fx.state).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn doctor_reports_registration_without_changing_anything() {
+        let fx = fixture();
+        assert!(
+            omg(&fx)
+                .arg("scan")
+                .arg("--root")
+                .arg(&fx.root)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+        let out = omg(&fx).arg("doctor").output().unwrap();
+        assert!(out.status.success());
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("service:") && text.contains("\"registered\": false"),
+            "{text}"
+        );
+        assert!(!Path::new(&fx.config_home.join("systemd")).exists());
+    }
+}

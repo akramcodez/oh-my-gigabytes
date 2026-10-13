@@ -18,6 +18,13 @@ pub fn default_state() -> Result<PathBuf> {
         .unwrap_or(home()?.join(".local/state"))
         .join("omg"))
 }
+pub fn default_config() -> Result<PathBuf> {
+    Ok(std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or(home()?.join(".config"))
+        .join("omg/config.toml"))
+}
 pub fn raw(path: &Path) -> Result<Vec<u8>> {
     #[cfg(unix)]
     {

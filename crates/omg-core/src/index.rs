@@ -31,7 +31,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
             Ok(_) => (),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(
-                    serde_json::json!({"platform":std::env::consts::OS,"sqlite":sqlite_version(),"state":"not initialized","cleanup":"disabled","service":"not installed"}),
+                    serde_json::json!({"platform":std::env::consts::OS,"sqlite":sqlite_version(),"state":"not initialized","cleanup":"disabled","service":"see omg service status"}),
                 );
             }
             Err(error) => return Err(error.into()),
@@ -49,7 +49,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let database = absolute.join("index.sqlite");
     if !database.exists() {
         return Ok(
-            serde_json::json!({"state":"no index","sqlite":sqlite_version(),"cleanup":"disabled","service":"not installed"}),
+            serde_json::json!({"state":"no index","sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status"}),
         );
     }
     for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
@@ -68,7 +68,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=3,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"not installed","native_analysis":"development Linux only"}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=4,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
     )
 }
 
@@ -87,10 +87,37 @@ pub fn lock(state: &Path, name: &str) -> Result<File> {
         options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     }
     let file = options.open(path)?;
-    file.try_lock().map_err(|_| {
-        anyhow::anyhow!("another omg process owns this operation; retry after it stops")
-    })?;
+    file.try_lock().map_err(|_| anyhow::Error::new(Busy))?;
     Ok(file)
+}
+
+/// Another process holds the kernel advisory lock for this operation.
+#[derive(Debug)]
+pub struct Busy;
+impl std::fmt::Display for Busy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("another omg process owns this operation; retry after it stops")
+    }
+}
+impl std::error::Error for Busy {}
+
+/// Whether some process currently holds a state-directory lock. Never creates the lock file.
+pub fn lock_held(state: &Path, name: &str) -> bool {
+    let path = state.join(name);
+    if fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file()) {
+        return false;
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+    }
+    match options.open(path) {
+        Ok(file) => file.try_lock_shared().is_err(),
+        Err(_) => false,
+    }
 }
 
 impl Index {
@@ -131,7 +158,18 @@ impl Index {
             }
             platform::linux::root(&state)?;
         }
-        let _maintenance = lock(&state, "database.lock")?;
+        // The maintenance lock is held only while another process opens/migrates; wait briefly
+        // instead of failing a concurrent CLI or service scan.
+        let mut waited = 0;
+        let _maintenance = loop {
+            match lock(&state, "database.lock") {
+                Err(error) if error.downcast_ref::<Busy>().is_some() && waited < 250 => {
+                    waited += 1;
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                other => break other?,
+            }
+        };
         for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
             if fs::symlink_metadata(state.join(name))
                 .is_ok_and(|m| !m.is_file() || m.file_type().is_symlink())
@@ -150,7 +188,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 3 {
+        if version > 4 {
             bail!("index schema is newer than this omg build");
         }
         let check: String = db
@@ -174,6 +212,9 @@ impl Index {
         }
         if version < 3 {
             db.execute_batch(include_str!("../../../migrations/003.sql"))?;
+        }
+        if version < 4 {
+            db.execute_batch(include_str!("../../../migrations/004.sql"))?;
         }
         #[cfg(unix)]
         {
@@ -240,7 +281,7 @@ impl Index {
         let volume: Option<(u64,u64,i64)> = self.db.query_row("SELECT capacity,available,sampled FROM scans WHERE capacity IS NOT NULL ORDER BY id DESC LIMIT 1", [], |r| Ok((unsigned(r,0)?,unsigned(r,1)?,r.get(2)?))).optional()?;
         Ok(Status { root, last_successful, last_report, entries,
             unique_apparent: apparent, unique_allocated: allocated, capacity: volume.map(|v|v.0), available: volume.map(|v|v.1), volume_sample_at: volume.map(|v|v.2),
-            scope_note: "Scoped metadata inventory, not whole-volume usage. Exclusions omitted; shared clones/snapshots unknown. Service stopped (not implemented).".into() })
+            scope_note: "Scoped metadata inventory, not whole-volume usage. Exclusions omitted; shared clones/snapshots unknown. Background service state is reported separately.".into() })
     }
     pub fn entries(&self, limit: usize, offset: usize) -> Result<Vec<Entry>> {
         let mut statement = self.db.prepare("SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=(SELECT scan_id FROM active WHERE singleton=1) ORDER BY allocated DESC,path LIMIT ? OFFSET ?")?;
@@ -251,6 +292,7 @@ impl Index {
             )?
             .collect::<rusqlite::Result<_>>()?)
     }
+    #[cfg(target_os = "linux")]
     pub(crate) fn recover_interrupted(&self) -> Result<()> {
         self.db.execute(
             "UPDATE scans SET state='interrupted',ended=? WHERE state='running'",
