@@ -1,6 +1,6 @@
 use crate::{
     model::{Entry, ScanReport, Status},
-    now, platform,
+    platform,
 };
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -294,6 +294,7 @@ impl Index {
     }
     #[cfg(target_os = "linux")]
     pub(crate) fn recover_interrupted(&self) -> Result<()> {
+        use crate::now;
         self.db.execute(
             "UPDATE scans SET state='interrupted',ended=? WHERE state='running'",
             [now()],
