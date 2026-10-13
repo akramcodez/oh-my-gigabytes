@@ -1,0 +1,51 @@
+#![cfg(target_os = "linux")]
+use omg_core::{Entry, policy};
+use std::{fs, path::Path};
+
+fn entry(path: &str) -> Entry {
+    Entry {
+        path: path.as_bytes().to_vec(),
+        parent: vec![],
+        kind: "file".into(),
+        identity: "fixture:1".into(),
+        apparent: 1,
+        allocated: 1,
+        links: 1,
+        modified_ns: 0,
+        changed_ns: 0,
+        excluded: None,
+    }
+}
+#[test]
+fn catalog_labels_cannot_override_protected_paths_or_unknown_handler() {
+    let root = tempfile::tempdir().unwrap();
+    for path in [
+        ".ssh/private",
+        ".git/config",
+        "credentials/token",
+        "data.sqlite",
+        "machine.vhdx",
+        "download.part",
+        "../escape",
+        "OneDrive/file",
+        "secret.pem",
+    ] {
+        assert!(
+            policy::protection(root.path(), &entry(path)).is_some(),
+            "{path}"
+        );
+    }
+    fs::create_dir(root.path().join(".git")).unwrap();
+    assert!(policy::protection(root.path(), &entry("node_modules/file")).is_some());
+    let plain = tempfile::tempdir().unwrap();
+    assert!(policy::cleanup_denial(plain.path(), &entry("ordinary")).contains("cleanup disabled"));
+    assert!(!policy::safe_relative(Path::new("../escape")));
+    assert!(!policy::safe_relative(Path::new("/")));
+}
+#[test]
+fn scoped_ignore_boundaries_do_not_match_siblings() {
+    assert!(policy::inside(b"cache/item", b"cache", true));
+    assert!(!policy::inside(b"cache-other/item", b"cache", true));
+    assert!(!policy::inside(b"cache/item", b"cache", false));
+    assert!(policy::inside(b"cache", b"cache", false));
+}

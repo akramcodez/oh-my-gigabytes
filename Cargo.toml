@@ -20,6 +20,9 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 crossterm = "0.29"
 tempfile = "3"
 ctrlc = "3"
+toml = "1"
+sha2 = "0.10"
+ed25519-dalek = "3"
 
 [profile.release]
 lto = "thin"

@@ -96,7 +96,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 1 {
+        if version > 2 {
             bail!("index schema is newer than this omg build");
         }
         let check: String = db
@@ -112,7 +112,12 @@ impl Index {
         db.execute_batch(
             "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA cache_size=-4096;",
         )?;
-        db.execute_batch(include_str!("../../../migrations/001.sql"))?;
+        if version < 1 {
+            db.execute_batch(include_str!("../../../migrations/001.sql"))?;
+        }
+        if version < 2 {
+            db.execute_batch(include_str!("../../../migrations/002.sql"))?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

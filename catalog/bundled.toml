@@ -1,0 +1,95 @@
+schema_version = 1
+version = 1
+engine_major = 0
+
+[[rules]]
+id = "dev.npm.content-cache"
+name = "npm downloaded package cache"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "package_caches"
+tier = "info"
+action = "info"
+discovery = "npm_content_cache"
+explanation = "npm keeps downloaded package data here to avoid repeated downloads."
+side_effects = "Removing entries can require network downloads and affect offline installs."
+regeneration = "npm recreates downloaded cache entries as packages are fetched."
+warnings = ["Tool version and active use are unknown; no cleanup action is qualified."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["npm-positive", "npm-near-miss", "protected", "incomplete"]
+source = "https://docs.npmjs.com/cli/v11/commands/npm-cache"
+
+[[rules]]
+id = "dev.pip.cache"
+name = "pip download and wheel cache"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "package_caches"
+tier = "info"
+action = "info"
+discovery = "pip_cache"
+explanation = "pip caches downloaded responses and built wheels for later installations."
+side_effects = "Cache removal may require downloads or rebuilding packages."
+regeneration = "pip can download or build cache entries again when needed."
+warnings = ["Cache layouts and custom roots vary by tool version; inventory only."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["pip-positive", "pip-near-miss", "protected", "incomplete"]
+source = "https://pip.pypa.io/en/stable/topics/caching/"
+
+[[rules]]
+id = "dev.uv.cache"
+name = "uv managed dependency cache"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "package_caches"
+tier = "info"
+action = "info"
+discovery = "uv_cache"
+explanation = "uv keeps package downloads, builds and managed cache state here."
+side_effects = "Cache changes can require downloads/rebuilds and affect shared environment storage."
+regeneration = "uv manages regeneration through its own supported operations."
+warnings = ["uv forbids direct cache modification; no Trash action is permitted."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["uv-positive", "uv-near-miss", "protected", "incomplete"]
+source = "https://docs.astral.sh/uv/concepts/cache/"
+
+[[rules]]
+id = "review.large-file"
+name = "Large file for human review"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["not-applicable"]
+category = "large_files"
+tier = "review"
+action = "info"
+discovery = "large_file"
+explanation = "This file has a large logical size. Size is not evidence that it is unwanted."
+side_effects = "Removing it could lose valuable data; no deletion handler is qualified."
+regeneration = "Unknown; the user must judge whether another copy or regeneration is possible."
+warnings = ["Review is a judgment label, not permission to delete.", "Allocated blocks may be shared or retained by snapshots."]
+preconditions = ["metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["large-positive", "large-near-miss", "protected", "incomplete"]
+source = "https://doc.rust-lang.org/std/fs/struct.Metadata.html"

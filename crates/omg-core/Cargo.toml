@@ -11,6 +11,9 @@ rusqlite.workspace = true
 crossbeam-channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true

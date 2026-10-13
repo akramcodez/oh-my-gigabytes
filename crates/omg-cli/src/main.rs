@@ -39,6 +39,27 @@ enum Command {
     Doctor,
     Start,
     Stop,
+    Findings {
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+    },
+    Catalog {
+        #[command(subcommand)]
+        command: CatalogCommand,
+    },
+    Ignores {
+        #[arg(long)]
+        remove: Option<i64>,
+    },
+}
+#[derive(Subcommand)]
+enum CatalogCommand {
+    Status,
+    Import {
+        payload: PathBuf,
+        signature: PathBuf,
+    },
+    Rollback,
 }
 fn main() {
     if let Err(error) = run() {
@@ -93,6 +114,44 @@ fn run() -> Result<()> {
             }
         }
         Some(Command::Status) => println!("{}", serde_json::to_string_pretty(&index.status()?)?),
+        Some(Command::Findings { offset }) => println!(
+            "{}",
+            serde_json::to_string_pretty(&index.findings(1000, offset, false)?)?
+        ),
+        Some(Command::Ignores { remove }) => {
+            if let Some(id) = remove {
+                index.remove_ignore(id)?;
+            }
+            println!("{}", serde_json::to_string_pretty(&index.ignores()?)?);
+        }
+        Some(Command::Catalog { command }) => match command {
+            CatalogCommand::Status => {
+                let (catalog, digest) = index.catalog()?;
+                println!(
+                    "catalog {} digest {} (inventory-only)",
+                    catalog.version, digest
+                );
+            }
+            CatalogCommand::Import { payload, signature } => {
+                use std::io::Read;
+                let mut text = String::new();
+                std::fs::File::open(payload)?
+                    .take((omg_core::catalog::MAX_CATALOG + 1) as u64)
+                    .read_to_string(&mut text)?;
+                let mut sig = vec![];
+                std::fs::File::open(signature)?
+                    .take(65)
+                    .read_to_end(&mut sig)?;
+                println!(
+                    "activated verified catalog {}",
+                    index.import_catalog(&text, &sig)?
+                );
+            }
+            CatalogCommand::Rollback => {
+                index.rollback_catalog()?;
+                println!("rolled back to previous verified catalog");
+            }
+        },
         Some(Command::Doctor) => {
             println!(
                 "omg: Linux metadata backend; SQLite {}; private local index opened",

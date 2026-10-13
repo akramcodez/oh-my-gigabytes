@@ -56,13 +56,15 @@ See [phase1-evidence.md](phase1-evidence.md) for implemented Linux development s
 
 ## Phase 2 — Catalog and policy
 
-- [ ] Implement strict bounded TOML and builtin discovery/action schema.
+- [x] Implement strict bounded TOML and inventory-only builtin discovery/action schema.
 - [ ] Implement evidence fingerprints, effective policy tiers and exclusions.
 - [ ] Author independently sourced developer rules with negative fixtures.
 - [ ] Deduplicate candidate targets/estimates and implement scoped ignores.
 - [ ] Ship known-good catalog and authenticated import/rollback lifecycle.
-- [ ] Verify invalid/tampered catalogs cannot activate or grant shell execution.
+- [x] Verify invalid/tampered catalogs cannot activate or grant shell execution in synthetic signed update tests.
 - [ ] Pass Phase 2 traceable-recommendation gates.
+
+See [phase2-evidence.md](phase2-evidence.md): bundled inventory rules, policy, fingerprints, scoped ignores, signature/replay/rollback tests implemented; real tool/native qualification and release trust provisioning remain pending.
 
 ## Phase 3 — TUI and cleanup
 
