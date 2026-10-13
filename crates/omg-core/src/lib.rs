@@ -2,6 +2,7 @@
 pub mod catalog;
 pub mod index;
 pub mod model;
+pub mod planning;
 pub mod platform;
 pub mod policy;
 pub mod scanner;

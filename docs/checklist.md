@@ -77,6 +77,8 @@ See [phase2-evidence.md](phase2-evidence.md): bundled inventory rules, policy, f
 - [ ] Verify terminal restoration, narrow screens and truthful processed/space-delta reporting.
 - [ ] Pass Phase 3 safety gates before enabling any cleanup.
 
+See [phase3-evidence.md](phase3-evidence.md): read-only navigation/details/filters/ignores, exact explicit dry-run, revalidation/history and 15 passing Rust tests plus PTY smoke implemented. Actual Trash, native safety, operation outcomes and independent usability acceptance remain blocked; cleanup is disabled.
+
 ## Phase 4 — Cross-platform release
 
 - [ ] Establish native analysis/Trash certification and final OS/filesystem/architecture matrix.

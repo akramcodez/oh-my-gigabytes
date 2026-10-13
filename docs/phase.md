@@ -2,6 +2,8 @@
 
 Status: 2026-10-13. **Phase 0 research/design is complete under owner-approved scope revision D14.** Additional evidence and deferred native/user-validation gates are recorded in [phase0-evidence-review.md](phase0-evidence-review.md); available spike results are in [phase0.md](phase0.md). Phases 1–6 remain pending. Track every phase in [checklist.md](checklist.md).
 
+Phases 1–3 now have committed development milestones, **not full phase acceptance**. Implemented scope and blockers are in `phase1-evidence.md`, `phase2-evidence.md`, and `phase3-evidence.md`. Linux single-root reconciliation/inventory/review works in the tested environment; true incremental reuse, full native qualification and actual cleanup remain incomplete.
+
 This follows the supplied phases 0–6 while adding concrete dependencies and evidence. Use gates rather than arbitrary dates or universal scan-time promises. Work packages: [plans.md](plans.md). Verification: [testing.md](testing.md).
 
 ## Phase overview

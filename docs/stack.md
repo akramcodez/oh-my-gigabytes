@@ -105,7 +105,7 @@ Before adding a dependency:
 5. Give safety-critical crates explicit integration tests and source review; a clean advisory scan is not a safety proof.
 6. Preserve notices and generate a release SBOM/license inventory.
 
-Recommended project licensing is MIT OR Apache-2.0 for the Rust code and independently authored catalog, subject to owner approval. The repository currently has no adopted license. Do not copy GPL catalog material into a permissively licensed distribution without a deliberate compatible licensing decision. Assets and subcomponents need separate inspection.
+The owner approved MIT OR Apache-2.0 for the Rust code and independently authored catalog; both license texts are included. Do not copy GPL catalog material into a permissively licensed distribution without a deliberate compatible licensing decision. Assets and subcomponents need separate inspection. The initial workspace pins Rust 1.95.0 and uses an OMG-owned Linux bounded worker pool rather than adopting an unverified walker; exact selected dependencies are in Cargo.lock.
 
 ## Deferred dependencies
 

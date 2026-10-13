@@ -16,4 +16,6 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - if: runner.os == 'Linux'
+        run: cargo build -p omg-cli --locked && python3 -m unittest discover -s tests -p 'test_*.py' -v
       # Non-Linux builds compile disabled native adapters, not platform certification.

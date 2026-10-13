@@ -96,7 +96,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 2 {
+        if version > 3 {
             bail!("index schema is newer than this omg build");
         }
         let check: String = db
@@ -117,6 +117,9 @@ impl Index {
         }
         if version < 2 {
             db.execute_batch(include_str!("../../../migrations/002.sql"))?;
+        }
+        if version < 3 {
+            db.execute_batch(include_str!("../../../migrations/003.sql"))?;
         }
         #[cfg(unix)]
         {
@@ -159,17 +162,29 @@ impl Index {
                     .query_row("SELECT ended FROM scans WHERE id=?", [id], |r| r.get(0))
             })
             .transpose()?;
-        let last_json: Option<String> = self
+        let last_record: Option<(i64, String, Option<String>)> = self
             .db
             .query_row(
-                "SELECT report FROM scans ORDER BY id DESC LIMIT 1",
+                "SELECT id,state,report FROM scans ORDER BY id DESC LIMIT 1",
                 [],
-                |r| r.get(0),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
-            .optional()?
-            .flatten();
+            .optional()?;
+        let last_report = last_record
+            .map(|(id, state, json)| -> Result<ScanReport> {
+                let mut report = match json {
+                    Some(json) => serde_json::from_str(&json)?,
+                    None => ScanReport {
+                        id,
+                        ..Default::default()
+                    },
+                };
+                report.state = state;
+                Ok(report)
+            })
+            .transpose()?;
         let volume: Option<(u64,u64,i64)> = self.db.query_row("SELECT capacity,available,sampled FROM scans WHERE capacity IS NOT NULL ORDER BY id DESC LIMIT 1", [], |r| Ok((unsigned(r,0)?,unsigned(r,1)?,r.get(2)?))).optional()?;
-        Ok(Status { root, last_successful, last_report: last_json.map(|json| serde_json::from_str::<ScanReport>(&json)).transpose()?, entries,
+        Ok(Status { root, last_successful, last_report, entries,
             unique_apparent: apparent, unique_allocated: allocated, capacity: volume.map(|v|v.0), available: volume.map(|v|v.1), volume_sample_at: volume.map(|v|v.2),
             scope_note: "Scoped metadata inventory, not whole-volume usage. Exclusions omitted; shared clones/snapshots unknown. Service stopped (not implemented).".into() })
     }

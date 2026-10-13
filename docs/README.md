@@ -6,7 +6,7 @@
 
 ## Status and reading order
 
-Documentation baseline: **2026-10-13**. The repository contained only a title-only root README when this research began. Production features remain proposed; a synthetic Linux Phase 0 feasibility probe now exists. No platform is currently certified, no production dependency is adopted, and no release date is promised.
+Documentation baseline: **2026-10-13**. Rust development milestones now provide scoped Linux metadata scanning/SQLite, inventory catalog/policy, read-only TUI, explicit dry-run and preview history. Full phase acceptance and native release certification remain incomplete. Current evidence: [phase1-evidence.md](phase1-evidence.md), [phase2-evidence.md](phase2-evidence.md), [phase3-evidence.md](phase3-evidence.md). Their implementation limits take precedence over proposed future behavior in the design documents.
 
 Track delivery in [checklist.md](checklist.md). **Phase 0 research/design is complete under scope revision D14**; [phase0-evidence-review.md](phase0-evidence-review.md) records source evidence, closure and deferred native/user-validation gates. Available results are in [phase0.md](phase0.md); the later session/fixture protocol is in [phase0-validation.md](phase0-validation.md).
 

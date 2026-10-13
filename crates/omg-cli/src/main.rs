@@ -51,6 +51,13 @@ enum Command {
         #[arg(long)]
         remove: Option<i64>,
     },
+    Cleanup {
+        #[arg(long, required = true)]
+        dry_run: bool,
+        #[arg(long,required=true,num_args=1..)]
+        candidate: Vec<String>,
+    },
+    History,
 }
 #[derive(Subcommand)]
 enum CatalogCommand {
@@ -114,6 +121,15 @@ fn run() -> Result<()> {
             }
         }
         Some(Command::Status) => println!("{}", serde_json::to_string_pretty(&index.status()?)?),
+        Some(Command::Cleanup {
+            dry_run: _,
+            candidate,
+        }) => {
+            let plan = index.preview(&candidate)?;
+            index.record_preview(&plan)?;
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+        }
+        Some(Command::History) => println!("{}", serde_json::to_string_pretty(&index.history()?)?),
         Some(Command::Findings { offset }) => println!(
             "{}",
             serde_json::to_string_pretty(&index.findings(1000, offset, false)?)?
