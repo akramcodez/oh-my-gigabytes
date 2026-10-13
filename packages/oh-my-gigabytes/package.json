@@ -1,0 +1,11 @@
+{
+  "name": "oh-my-gigabytes",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first storage intelligence for developers (development preview)",
+  "license": "MIT OR Apache-2.0",
+  "engines": { "node": ">=22" },
+  "bin": { "omg": "bin/omg.js" },
+  "files": ["bin", "lib", "trust.json", "vendor", "README.md", "LICENSE-MIT", "LICENSE-APACHE"],
+  "scripts": { "test": "node --test test/*.test.js" }
+}

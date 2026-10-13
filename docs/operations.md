@@ -2,6 +2,8 @@
 
 Status: proposed operational design; packages and commands are not published/implemented by this documentation work. Public identity: product **OMG**, npm **`oh-my-gigabytes`**, executable **`omg`**.
 
+Implementation update: Phase 4 private signed packaging, offline install verification and read-only `doctor` diagnosis now exist. See [release.md](release.md) for actual commands and [phase4-evidence.md](phase4-evidence.md) for tested scope; the remainder of this document includes planned release/service behavior, not certification.
+
 ## 1. Distribution design
 
 Preferred layout:

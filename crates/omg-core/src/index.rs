@@ -18,6 +18,60 @@ pub fn sqlite_version() -> String {
     rusqlite::version().to_string()
 }
 
+/// Diagnosis does not create state, migrate schemas or repair an index.
+pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
+    let absolute = platform::absolute(state)?;
+    let mut current = PathBuf::new();
+    for part in absolute.components() {
+        current.push(part);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                bail!("diagnosis: unsafe state ancestor")
+            }
+            Ok(_) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(
+                    serde_json::json!({"platform":std::env::consts::OS,"sqlite":sqlite_version(),"state":"not initialized","cleanup":"disabled","service":"not installed"}),
+                );
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::symlink_metadata(&absolute)?;
+        if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0 {
+            bail!("diagnosis: state directory is not private/current-user owned");
+        }
+        platform::linux::root(&absolute)?;
+    }
+    let database = absolute.join("index.sqlite");
+    if !database.exists() {
+        return Ok(
+            serde_json::json!({"state":"no index","sqlite":sqlite_version(),"cleanup":"disabled","service":"not installed"}),
+        );
+    }
+    for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
+        if fs::symlink_metadata(absolute.join(name))
+            .is_ok_and(|m| m.file_type().is_symlink() || !m.is_file())
+        {
+            bail!("diagnosis: unsafe database/sidecar");
+        }
+    }
+    // Read-only queries may participate in existing WAL shared memory; no migrations or repairs.
+    let db = Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
+    )?;
+    db.busy_timeout(Duration::from_secs(2))?;
+    let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
+    Ok(
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=3,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"not installed","native_analysis":"development Linux only"}),
+    )
+}
+
 pub fn lock(state: &Path, name: &str) -> Result<File> {
     let path = state.join(name);
     if fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file() || m.file_type().is_symlink()) {

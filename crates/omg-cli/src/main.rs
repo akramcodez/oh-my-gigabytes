@@ -84,6 +84,12 @@ fn run() -> Result<()> {
         return Ok(());
     }
     let state = cli.state_dir.unwrap_or(platform::default_state()?);
+    if matches!(cli.command, Some(Command::Doctor)) {
+        let diagnosis = omg_core::index::diagnose(&state)?;
+        println!("omg: {}", serde_json::to_string_pretty(&diagnosis)?);
+        println!("cleanup disabled; service not installed; cloud/FUSE/remote profiles excluded");
+        return Ok(());
+    }
     let mut index = Index::open(&state)?;
     match cli.command {
         Some(Command::Scan {

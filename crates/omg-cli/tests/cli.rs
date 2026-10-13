@@ -1,6 +1,38 @@
 use std::process::Command;
 #[test]
 #[cfg(target_os = "linux")]
+fn doctor_does_not_initialize_or_migrate_state() {
+    let fixture = tempfile::tempdir().unwrap();
+    let state = fixture.path().join("not-created");
+    let binary = env!("CARGO_BIN_EXE_omg");
+    let result = Command::new(binary)
+        .arg("--state-dir")
+        .arg(&state)
+        .arg("doctor")
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert!(!state.exists());
+    let future = fixture.path().join("future");
+    std::fs::create_dir(&future).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&future, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // SQL fixture produced by a helper path is covered by core diagnosis tests separately.
+    std::fs::write(future.join("index.sqlite"), b"corrupt fixture").unwrap();
+    let result = Command::new(binary)
+        .arg("--state-dir")
+        .arg(&future)
+        .arg("doctor")
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert_eq!(
+        std::fs::read(future.join("index.sqlite")).unwrap(),
+        b"corrupt fixture"
+    );
+}
+#[test]
+#[cfg(target_os = "linux")]
 fn scan_status_findings_and_dry_run_roundtrip() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("root");

@@ -81,9 +81,14 @@ See [phase3-evidence.md](phase3-evidence.md): read-only navigation/details/filte
 
 ## Phase 4 — Cross-platform release
 
+In progress: [phase4-evidence.md](phase4-evidence.md) and [release.md](release.md) record local signed packaging/verification, offline install tests and blocked cross-target qualification.
+
 - [ ] Establish native analysis/Trash certification and final OS/filesystem/architecture matrix.
 - [ ] Publish security reporting channel and adopted license/notices.
 - [ ] Build precompiled native artifacts and exact-version npm launcher/platform packages.
+- [x] Implement private launcher/platform/offline package assembly with no install-time downloader or compiler.
+- [x] Implement strict signature/digest/version/target verification with synthetic tamper tests.
+- [x] Verify isolated Linux offline npm install/reinstall/uninstall with scripts disabled and state preserved.
 - [ ] Implement and test signed manifest/digest/target/version verification and provenance.
 - [ ] Test clean installation, upgrade, offline/manual path and uninstall.
 - [ ] Verify migration/recovery/runtime/terminal behavior on supported targets.

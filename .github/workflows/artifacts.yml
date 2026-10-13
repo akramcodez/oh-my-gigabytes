@@ -1,0 +1,49 @@
+name: Native development artifacts
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            file: omg
+          - os: macos-14
+            target: aarch64-apple-darwin
+            file: omg
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            file: omg.exe
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cargo test --workspace --locked
+      - run: cargo build --release --locked --target ${{ matrix.target }} -p omg-cli
+      - run: node scripts/sbom.js > dependency-inventory.cdx.json
+      - run: target/${{ matrix.target }}/release/${{ matrix.file }} --version
+      - run: target/${{ matrix.target }}/release/${{ matrix.file }} doctor
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: target/${{ matrix.target }}/release/${{ matrix.file }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: omg-development-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/${{ matrix.file }}
+            dependency-inventory.cdx.json
+            LICENSE-MIT
+            LICENSE-APACHE
+      # Unsigned development artifacts. No npm publication, release-key generation or service install.

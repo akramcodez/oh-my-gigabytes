@@ -153,6 +153,7 @@ fn database_corruption_and_future_schema_are_not_overwritten() {
     let state = private_state();
     fs::write(state.path().join("index.sqlite"), b"corrupt fixture").unwrap();
     assert!(Index::open(state.path()).is_err());
+    assert!(omg_core::index::diagnose(state.path()).is_err());
     assert_eq!(
         fs::read(state.path().join("index.sqlite")).unwrap(),
         b"corrupt fixture"
@@ -163,6 +164,9 @@ fn database_corruption_and_future_schema_are_not_overwritten() {
     db.execute_batch("PRAGMA user_version=999").unwrap();
     drop(db);
     assert!(Index::open(state.path()).is_err());
+    let diagnosis = omg_core::index::diagnose(state.path()).unwrap();
+    assert_eq!(diagnosis["schema"], 999);
+    assert_eq!(diagnosis["schema_supported"], false);
 }
 
 #[test]
