@@ -492,8 +492,17 @@ mod tests {
             index
                 .db
                 .execute(
-                    "INSERT INTO entries VALUES(1,?,x'',?,?,?,?,1,0,0,NULL)",
-                    params![path.as_bytes(), kind, format!("fixture:{i}"), size, size],
+                    "INSERT INTO entries VALUES(1,?,?,?,?,?,?,1,0,0,NULL)",
+                    params![
+                        path.as_bytes(),
+                        path.rsplit_once('/')
+                            .map_or("", |(parent, _)| parent)
+                            .as_bytes(),
+                        kind,
+                        format!("fixture:{i}"),
+                        size,
+                        size
+                    ],
                 )
                 .unwrap();
         }

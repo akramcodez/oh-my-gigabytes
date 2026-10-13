@@ -42,6 +42,8 @@ enum Command {
         exclude: Vec<PathBuf>,
     },
     Status,
+    /// Finish removing rows of superseded scans (housekeeping; scans only prune for a few seconds)
+    Prune,
     Doctor,
     /// Start the scan-only background service (asks before registering it)
     Start,
@@ -278,6 +280,17 @@ fn run() -> Result<()> {
                 value["service"] = omg_core::service::daemon::health(&index)?;
             }
             println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        Some(Command::Prune) => {
+            let done = index.prune_stale(std::time::Duration::from_secs(600))?;
+            println!(
+                "{}",
+                if done {
+                    "nothing stale remains"
+                } else {
+                    "more stale data remains; run `omg prune` again"
+                }
+            );
         }
         Some(Command::Tree {
             path,

@@ -418,7 +418,7 @@ mod linux {
         if matches!(report.state.as_str(), "complete" | "partial") {
             report.changed_entries = match previous {
                 Some(old) => index.db.query_row(
-                    "SELECT count(*) FROM entries e WHERE e.scan_id=?1 AND NOT EXISTS (SELECT 1 FROM entries p WHERE p.scan_id=?2 AND p.path=e.path AND p.identity=e.identity AND p.apparent=e.apparent AND p.allocated=e.allocated AND p.modified_ns=e.modified_ns AND p.changed_ns=e.changed_ns AND p.excluded IS e.excluded)",
+                    "SELECT count(*) FROM entries e LEFT JOIN entries p ON p.scan_id=?2 AND p.path=e.path WHERE e.scan_id=?1 AND (p.path IS NULL OR p.identity<>e.identity OR p.apparent<>e.apparent OR p.allocated<>e.allocated OR p.modified_ns<>e.modified_ns OR p.changed_ns<>e.changed_ns OR p.excluded IS NOT e.excluded)",
                     params![id, old],
                     |r| crate::index::unsigned(r, 0),
                 )?,
@@ -461,8 +461,10 @@ mod linux {
             tx.execute("INSERT INTO active VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET scan_id=excluded.scan_id",[id])?;
         }
         tx.execute("DELETE FROM jobs", [])?;
-        tx.execute("DELETE FROM scans WHERE id<>? AND id<>coalesce((SELECT scan_id FROM active WHERE singleton=1),?)",params![id,id])?;
         tx.commit()?;
+        // Old scans are invisible once `active` moved, so removing their rows is housekeeping done
+        // in bounded chunks instead of one multi-second transaction on the publish path.
+        let _ = index.prune_stale(Duration::from_secs(4));
         index.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
         // Trend history is advisory; failing to record it must never fail or alter the scan result.
         let _ = index.record_sample(

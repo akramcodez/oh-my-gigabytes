@@ -64,7 +64,7 @@ Constraints that affect tests and running:
 - **`crates/omg-core`** contains all logic. It has no UI.
 - **`crates/omg-cli`** builds the `omg` binary:
   - `main.rs`: clap commands.
-  - `tui.rs`: ratatui interface.
+  - `tui/`: ratatui interface (`mod.rs` state/loop, `render.rs` pure rendering that must never query SQLite, `theme.rs`).
   - `svc.rs`: service control surface, Linux only.
 - **`catalog/bundled.toml`** is the known-good rule catalog. It is compiled in with `include_str!`.
 - **`migrations/NNN.sql`** holds the schema migrations.
@@ -93,6 +93,8 @@ Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per fi
 `diagnose` backs `omg doctor`. It must stay read-only: it never creates, migrates or repairs state.
 
 ### Scan and publish
+
+(Performance notes: workers pull directories from an in-memory queue, so scanner speed comes from `scanner.rs` queue/batching, not from SQLite jobs; keep per-entry work to one `statat`. Old scans are pruned lazily via `Index::prune_stale` / `omg prune`.)
 
 `scanner::scan` takes `scan.lock` and records a `running` row in `scans`. Bounded worker threads then traverse with `openat2` (`RESOLVE_NO_SYMLINKS | BENEATH | NO_XDEV`). Entries are batched through a bounded channel into `IMMEDIATE` transactions.
 

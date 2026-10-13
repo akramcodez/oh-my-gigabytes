@@ -327,6 +327,35 @@ impl Index {
         self.db.execute("DELETE FROM jobs", [])?;
         Ok(())
     }
+    /// Delete rows of scans that are neither published nor the latest record, in chunks, stopping
+    /// after `budget`. Returns true when nothing stale remains. Safe to call repeatedly.
+    pub fn prune_stale(&self, budget: Duration) -> Result<bool> {
+        let started = std::time::Instant::now();
+        let stale: Vec<i64> = {
+            let mut statement = self.db.prepare(
+                "SELECT id FROM scans WHERE state<>'running' AND id<>coalesce((SELECT scan_id FROM active WHERE singleton=1),-1) AND id<>(SELECT max(id) FROM scans) ORDER BY id",
+            )?;
+            statement
+                .query_map([], |r| r.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        for id in stale {
+            loop {
+                let removed = self.db.execute(
+                    "DELETE FROM entries WHERE rowid IN (SELECT rowid FROM entries WHERE scan_id=? LIMIT 25000)",
+                    [id],
+                )?;
+                if removed == 0 {
+                    break;
+                }
+                if started.elapsed() >= budget {
+                    return Ok(false);
+                }
+            }
+            self.db.execute("DELETE FROM scans WHERE id=?", [id])?;
+        }
+        Ok(true)
+    }
     pub fn issues(&self) -> Result<Vec<(Vec<u8>, String)>> {
         let mut stmt = self.db.prepare(
             "SELECT path,reason FROM issues WHERE scan_id=(SELECT max(id) FROM scans) LIMIT 100",

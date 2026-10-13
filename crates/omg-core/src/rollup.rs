@@ -29,28 +29,26 @@ pub struct Child {
     pub protected: u64,
 }
 
-/// Directories on the way from the root to `path`, excluding `path` itself ("" is the scan root).
-fn ancestors(path: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let mut ends: Vec<usize> = path
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| **b == b'/')
-        .map(|(n, _)| n)
-        .collect();
-    ends.insert(0, 0);
-    ends.into_iter().map(move |end| &path[..end])
-}
-
 fn parent_of(path: &[u8]) -> &[u8] {
     path.iter()
         .rposition(|b| *b == b'/')
         .map_or(&path[..0], |n| &path[..n])
 }
 
-/// Aggregate and insert rollups for `scan_id`. Memory is proportional to the number of directories.
+fn bucket<'a>(map: &'a mut HashMap<Vec<u8>, Totals>, key: &[u8]) -> &'a mut Totals {
+    // Look up by slice first so the common (existing) case allocates nothing.
+    if !map.contains_key(key) {
+        map.insert(key.to_vec(), Totals::default());
+    }
+    map.get_mut(key).expect("just inserted")
+}
+
+/// Aggregate and insert rollups for `scan_id`. Each entry is added once to its parent's bucket;
+/// buckets are then folded upward deepest-first, so work is O(entries + directories·log) and memory
+/// is proportional to the number of directories.
 pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
     let mut totals: HashMap<Vec<u8>, Totals> = HashMap::new();
-    totals.entry(Vec::new()).or_default();
+    bucket(&mut totals, b"");
     {
         let mut statement = index.db.prepare(
             "SELECT min(path),max(apparent),max(allocated),kind FROM entries WHERE scan_id=? AND path<>x'' GROUP BY identity",
@@ -60,18 +58,20 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
             let path: Vec<u8> = row.get(0)?;
             let (apparent, allocated) = (unsigned(row, 1)?, unsigned(row, 2)?);
             let directory = row.get::<_, String>(3)? == "directory";
-            for ancestor in ancestors(&path) {
-                let t = totals.entry(ancestor.to_vec()).or_default();
-                t.allocated += allocated;
-                t.apparent += apparent;
-                t.dirs += u64::from(directory);
-                t.files += u64::from(!directory);
-            }
-            if directory {
-                let t = totals.entry(path).or_default();
-                t.allocated += allocated;
-                t.apparent += apparent;
-            }
+            // Derived from the path: bare columns are unreliable with several min/max aggregates.
+            let t = bucket(&mut totals, parent_of(&path));
+            t.dirs += u64::from(directory);
+            t.files += u64::from(!directory);
+            // Bytes go to the entry's own bucket for directories (the fold below carries them up)
+            // and to the parent for files, so nothing is counted twice.
+            let owner = if directory {
+                path.as_slice()
+            } else {
+                parent_of(&path)
+            };
+            let t = bucket(&mut totals, owner);
+            t.allocated += allocated;
+            t.apparent += apparent;
         }
     }
     {
@@ -86,13 +86,23 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
             if policy::protection_with(root, &entry, &mut memo).is_none() {
                 continue;
             }
-            for ancestor in ancestors(&entry.path) {
-                totals.entry(ancestor.to_vec()).or_default().protected += 1;
-            }
+            bucket(&mut totals, &entry.parent).protected += 1;
             if entry.kind == "directory" {
-                totals.entry(entry.path).or_default().protected += 1;
+                bucket(&mut totals, &entry.path).protected += 1;
             }
         }
+    }
+    // Fold each directory's subtree into its parent, deepest first.
+    let mut order: Vec<Vec<u8>> = totals.keys().filter(|k| !k.is_empty()).cloned().collect();
+    order.sort_by_key(|k| std::cmp::Reverse(k.iter().filter(|b| **b == b'/').count()));
+    for key in &order {
+        let child = totals.get(key).cloned().unwrap_or_default();
+        let parent = bucket(&mut totals, parent_of(key));
+        parent.allocated += child.allocated;
+        parent.apparent += child.apparent;
+        parent.files += child.files;
+        parent.dirs += child.dirs;
+        parent.protected += child.protected;
     }
     let mut rows: Vec<_> = totals.into_iter().collect();
     rows.sort_by(|a, b| a.0.cmp(&b.0));
