@@ -17,7 +17,7 @@ Status: **no profile is qualified.** This page records what was actually run, an
 | --- | --- | --- | --- | --- | --- |
 | Fedora 44, kernel 7.2.9-201, x86_64, Btrfs `/home` | Owner's desktop | Scan and CLI tests passed (native, prior session; ignored Btrfs tests not re-run after cleanup in this session) | Unit and integration tests run on tmpfs; not run on this Btrfs home | Reported by `stat -c %w` on 2026-10-15 | Development only |
 | tmpfs (`/tmp`) on the same host | Same | Full test suite passed (2026-10-15) | Full cleanup suite passed (16 tests, including race barriers and hard-link oracle) | Reported | Development only |
-| ext4 (any kernel) | **Not available** (no spare partition; no sudo for a loop mount) | Not run | Not run | Not measured | **Missing** |
+| ext4 (loop image, `scripts/ext4-sandbox.sh`, kernel 7.2.9) | Owner's host, 2026-10-15 | Scanner suite: 9 passed, 1 ignored (Btrfs-only) | Cleanup suite: 16 passed (race barriers, hard-link oracle, partial removal, interrupted attempt) | Not captured in that run; `up` now prints it | Development: passed on ext4 |
 | WSL2 ext4 | **Not available** | Not run | Not run | Not measured | **Missing** |
 | Linux ARM64 GNU | **Not available** | Not built | Not run | — | **Missing** |
 | Oldest supported kernel (openat2) | **Not available** | Not run | Not run | — | **Missing** |

@@ -24,6 +24,9 @@ case "${1:-}" in
     sudo chown "$(id -u):$(id -g)" "$MOUNT"
     chmod 700 "$MOUNT"
     echo "ext4 sandbox ready at $MOUNT ($(stat -f -c %T "$MOUNT"))"
+    probe="$MOUNT/birth-probe"; echo probe > "$probe"
+    echo "birth time reported: $(stat -c %w "$probe" | grep -qv '^-$' && echo yes || echo no)"
+    rm -f "$probe"
     ;;
   test)
     fstype="$(stat -f -c %T "$MOUNT" 2>/dev/null || true)"
