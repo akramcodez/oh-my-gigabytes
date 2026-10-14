@@ -27,7 +27,8 @@ function fixture(t) {
   const target = 'linux-x64-gnu';
   const version = '0.1.0';
   const out = path.join(directory, 'release');
-  assemble({ binary, target, version, publicKey: publicFile, privateKey: privateFile, out });
+  // The fixture binary is not executable, so the doctor cross-check is skipped for it.
+  assemble({ binary, target, version, publicKey: publicFile, privateKey: privateFile, out, checkBinary: false });
   const artifact = path.join(out, `oh-my-gigabytes-${target}`, 'artifact');
   const trust = JSON.parse(fs.readFileSync(path.join(out, 'oh-my-gigabytes/trust.json'), 'utf8'));
   return { directory, publicKey, privateKey, publicFile, privateFile, binary, target, version, out, artifact, trust };
@@ -41,6 +42,25 @@ function resign(f, change) {
   fs.writeFileSync(file, data);
   fs.writeFileSync(path.join(f.artifact, 'manifest.sig'), crypto.sign(null, signedMessage(data), f.privateKey));
 }
+
+test('analysis-only variant signs cleanup as disabled and verifies', t => {
+  const f = fixture(t);
+  const out = path.join(f.directory, 'release-analysis');
+  assemble({ binary: f.binary, target: f.target, version: f.version, publicKey: f.publicFile, privateKey: f.privateFile, out, variant: 'analysis-only', checkBinary: false });
+  const artifact = path.join(out, `oh-my-gigabytes-${f.target}`, 'artifact');
+  const trust = JSON.parse(fs.readFileSync(path.join(out, 'oh-my-gigabytes/trust.json'), 'utf8'));
+  const result = verifyArtifact(artifact, trust, { target: f.target, version: f.version });
+  assert.equal(result.manifest.capabilities.cleanup, 'disabled');
+});
+
+test('a real build cannot be signed with a capability its own doctor does not report', t => {
+  const real = path.resolve(__dirname, '../../../target/debug/omg');
+  if (process.platform !== 'linux' || !fs.existsSync(real) || process.arch !== 'x64') t.skip('needs a runnable x86_64 Linux omg binary');
+  const f = fixture(t);
+  const out = path.join(f.directory, 'release-mislabel');
+  assert.throws(() => assemble({ binary: real, target: f.target, version: f.version, publicKey: f.publicFile, privateKey: f.privateFile, out, variant: 'analysis-only' }), /reports cleanup/);
+  assert.equal(fs.existsSync(out), false, 'nothing is written when the claim is wrong');
+});
 
 test('signed assembly verifies and offline payload contains no private signing material', t => {
   const f = fixture(t);

@@ -117,9 +117,12 @@ function verifyArtifact(directory, trust, expected) {
   if (manifest.file !== file || !Number.isSafeInteger(manifest.size) || manifest.size <= 0 || manifest.size > MAX_BINARY ||
       !/^[a-f0-9]{64}$/.test(manifest.sha256)) throw new Error('Invalid binary scope/size/digest');
   exactKeys(manifest.capabilities, ['analysis', 'cleanup', 'service'], 'capabilities');
-  if (manifest.capabilities.analysis !== (expected.target.startsWith('linux-') ? 'development-linux' : 'disabled') ||
-      manifest.capabilities.cleanup !== (expected.target.startsWith('linux-') ? 'development-unqualified' : 'disabled') ||
-      manifest.capabilities.service !== (expected.target.startsWith('linux-') ? 'development-linux' : 'disabled')) {
+  const linux = expected.target.startsWith('linux-');
+  // Linux: permanent delete is `development-unqualified` (full build) or `disabled` (analysis-only build).
+  const cleanupValues = linux ? ['development-unqualified', 'disabled'] : ['disabled'];
+  if (manifest.capabilities.analysis !== (linux ? 'development-linux' : 'disabled') ||
+      !cleanupValues.includes(manifest.capabilities.cleanup) ||
+      manifest.capabilities.service !== (linux ? 'development-linux' : 'disabled')) {
     throw new Error('Unsupported advertised capabilities');
   }
   const binary = path.join(directory, file);
