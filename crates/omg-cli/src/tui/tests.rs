@@ -182,3 +182,106 @@ fn preview_screens() {
         println!("{}\n", draw(&state, 100, 26));
     }
 }
+
+#[test]
+fn paths_saved_in_omg_trash_are_red_and_underlined() {
+    use ratatui::style::Modifier;
+    let child = |path: &str| Child {
+        path: path.as_bytes().to_vec(),
+        kind: "directory".into(),
+        allocated: 1 << 30,
+        apparent: 0,
+        files: 1,
+        dirs: 0,
+        protected: 0,
+        newest: 0,
+    };
+    let mut state = AppState {
+        tab: Tab::Browse,
+        ..Default::default()
+    };
+    state.dirs.insert(
+        Vec::new(),
+        DirView {
+            children: vec![child("saved-dir"), child("plain-dir")],
+            marks: vec![],
+            total: None,
+        },
+    );
+    state.summary = Some(Box::new(summary_with_marked(b"saved-dir")));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal
+        .draw(|f| {
+            render(
+                f,
+                &state,
+                &theme::Theme {
+                    mode: theme::Mode::TrueColor,
+                },
+            )
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    let styled = |needle: &str| -> (bool, bool) {
+        for y in 0..30u16 {
+            let row: String = (0..100u16)
+                .map(|x| buffer[(x, y)].symbol().to_string())
+                .collect();
+            if let Some(at) = row.find(needle) {
+                let col = row[..at].chars().count() as u16;
+                let cell = &buffer[(col, y)];
+                return (
+                    cell.fg == ratatui::style::Color::Rgb(255, 107, 87),
+                    cell.modifier.contains(Modifier::UNDERLINED),
+                );
+            }
+        }
+        panic!("{needle} not drawn");
+    };
+    assert_eq!(
+        styled("saved-dir"),
+        (true, true),
+        "saved path is red + underlined"
+    );
+    assert_eq!(
+        styled("plain-dir"),
+        (false, false),
+        "other rows are untouched"
+    );
+}
+
+fn summary_with_marked(path: &[u8]) -> worker::Summary {
+    worker::Summary {
+        status: omg_core::Status {
+            root: Some(b"/".to_vec()),
+            last_successful: Some(1),
+            last_report: None,
+            entries: 1,
+            unique_apparent: 0,
+            unique_allocated: 0,
+            capacity: None,
+            available: None,
+            volume_sample_at: None,
+            scope_note: String::new(),
+        },
+        rollups: true,
+        findings: vec![],
+        top: vec![],
+        marked: vec![omg_core::cleanup::Marked {
+            id: 1,
+            path: path.to_vec(),
+            identity: "1:1".into(),
+            kind: "directory".into(),
+            allocated: 1,
+            added: 0,
+            warning: None,
+            birth: None,
+            source: "user".into(),
+        }],
+        trend_delta: None,
+        root: None,
+        home: None,
+        auto_trash: true,
+        volume: None,
+    }
+}

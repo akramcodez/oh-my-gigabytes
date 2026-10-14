@@ -12,6 +12,17 @@ use std::sync::atomic::Ordering;
 
 type Lines = Vec<Line<'static>>;
 
+/// Path/name styling: red and underlined when the item is saved in OMG Trash.
+fn path_style(base: Style, in_trash: bool, theme: &Theme) -> Style {
+    if in_trash {
+        theme
+            .danger()
+            .add_modifier(ratatui::style::Modifier::UNDERLINED)
+    } else {
+        base
+    }
+}
+
 fn name_of(raw: &[u8]) -> String {
     let text = clean(raw);
     text.rsplit('/').next().unwrap_or(&text).to_string()
@@ -614,8 +625,9 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
     let start = state.cursor.saturating_sub(visible.saturating_sub(1));
     for (n, child) in view.children.iter().enumerate().skip(start).take(visible) {
         let selected = n == state.cursor;
-        let flag = if marked.contains(&child.path.as_slice()) {
-            Span::styled(" ✗ in OMG Trash", theme.danger())
+        let in_trash = marked.contains(&child.path.as_slice());
+        let flag = if in_trash {
+            Span::raw("")
         } else {
             match view.marks.get(n) {
                 Some(super::worker::RowMark::Locked(_)) => Span::styled(" 🔒", theme.dim()),
@@ -643,11 +655,15 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
                     truncate_middle(&name_of(&child.path), width.saturating_sub(bar_width + 40)),
                     if child.kind == "directory" { "/" } else { "" }
                 ),
-                if selected {
-                    theme.selected()
-                } else {
-                    Style::new()
-                },
+                path_style(
+                    if selected {
+                        theme.selected()
+                    } else {
+                        Style::new()
+                    },
+                    in_trash,
+                    theme,
+                ),
             ),
             Span::styled(
                 if child.kind == "directory" {
@@ -690,8 +706,14 @@ fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lin
     }
     let visible = (height.saturating_sub(1) / 2).max(1);
     let start = state.cursor.saturating_sub(visible.saturating_sub(1));
+    let marked: Vec<&[u8]> = state
+        .summary
+        .as_ref()
+        .map(|s| s.marked.iter().map(|m| m.path.as_slice()).collect())
+        .unwrap_or_default();
     for (n, f) in rows.iter().enumerate().skip(start).take(visible) {
         let selected = n == state.cursor;
+        let in_trash = marked.contains(&f.entry.path.as_slice());
         out.push(Line::from(vec![
             Span::styled(if selected { "❯ " } else { "  " }, theme.selected()),
             Span::styled(
@@ -704,11 +726,15 @@ fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lin
                     &state.shorten_home(&state.absolute(&f.entry.path)),
                     width.saturating_sub(28),
                 ),
-                if selected {
-                    theme.selected()
-                } else {
-                    Style::new()
-                },
+                path_style(
+                    if selected {
+                        theme.selected()
+                    } else {
+                        Style::new()
+                    },
+                    in_trash,
+                    theme,
+                ),
             ),
         ]));
         out.push(Line::from(Span::styled(
