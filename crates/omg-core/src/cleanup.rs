@@ -236,7 +236,10 @@ impl Index {
             .ok_or_else(|| anyhow::anyhow!("changed on disk since the last scan; rescan first"))?
             .1;
         #[cfg(not(target_os = "linux"))]
-        let birth: Option<String> = None;
+        let birth: Option<String> = {
+            let _ = &root;
+            None
+        };
         let warning = match &verdict {
             Gate::Denied(reason) => bail!("cannot add to OMG Trash: {reason}"),
             Gate::Warn(text) => Some(text.clone()),
@@ -267,6 +270,7 @@ impl Index {
             params![root_raw, scan],
         )?;
         let mut listed = 0;
+        let mut suggested: Vec<Vec<u8>> = Vec::new();
         for finding in self.findings_in(1000, 0, false, home)? {
             // Regenerable things only: tool caches and dependency folders of stale projects.
             if !["package_caches", "build_artifacts"].contains(&finding.rule.category.as_str())
@@ -279,7 +283,23 @@ impl Index {
                 .is_ok()
             {
                 listed += 1;
+                suggested.push(finding.entry.path.clone());
             }
+        }
+        // Suggestions reflect the current rules: drop earlier ones no longer suggested.
+        let mut statement = self
+            .db
+            .prepare("SELECT id,path FROM marked WHERE source='auto' AND dismissed=0 AND root=?")?;
+        let stale: Vec<i64> = statement
+            .query_map([&root_raw], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?
+            .filter_map(|r| r.ok())
+            .filter(|(_, path)| !suggested.contains(path))
+            .map(|(id, _)| id)
+            .collect();
+        for id in stale {
+            self.db.execute("DELETE FROM marked WHERE id=?", [id])?;
         }
         Ok(listed)
     }

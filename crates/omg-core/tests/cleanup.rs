@@ -263,3 +263,74 @@ fn scans_suggest_regenerable_caches_but_never_large_files_and_respect_dismissal(
     index.set_auto_trash(false).unwrap();
     assert!(!index.auto_trash().unwrap());
 }
+
+#[test]
+fn stale_project_dependencies_are_suggested_but_tool_installs_are_not() {
+    let (home, state) = setup();
+    let h = home.path();
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(90 * 86_400);
+    let make = |dir: &str| {
+        fs::create_dir_all(h.join(dir).join("node_modules/pkg")).unwrap();
+        fs::write(h.join(dir).join("package.json"), b"{}").unwrap();
+        fs::write(
+            h.join(dir).join("node_modules/pkg/index.js"),
+            vec![0u8; 2 << 20],
+        )
+        .unwrap();
+        for p in [
+            "node_modules/pkg/index.js",
+            "node_modules/pkg",
+            "node_modules",
+            "package.json",
+            "",
+        ] {
+            fs::File::open(h.join(dir).join(p))
+                .unwrap()
+                .set_modified(past)
+                .unwrap();
+        }
+    };
+    make("projects/old-site");
+    make(".nvm/versions/node/v22/lib/node_modules/some-cli");
+    // A fresh project is not suggested.
+    fs::create_dir_all(h.join("projects/fresh/node_modules/pkg")).unwrap();
+    fs::write(h.join("projects/fresh/package.json"), b"{}").unwrap();
+    fs::write(
+        h.join("projects/fresh/node_modules/pkg/index.js"),
+        vec![0u8; 2 << 20],
+    )
+    .unwrap();
+    for p in [
+        "projects/old-site",
+        "projects",
+        ".nvm/versions/node/v22/lib/node_modules",
+        ".nvm/versions/node/v22/lib",
+        ".nvm/versions/node/v22",
+        ".nvm/versions/node",
+        ".nvm/versions",
+        ".nvm",
+    ] {
+        fs::File::open(h.join(p))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let marked: Vec<Vec<u8>> = index
+        .marked()
+        .unwrap()
+        .into_iter()
+        .map(|m| m.path)
+        .collect();
+    assert_eq!(
+        marked,
+        vec![b"projects/old-site/node_modules".to_vec()],
+        "{:?}",
+        marked
+            .iter()
+            .map(|p| String::from_utf8_lossy(p).into_owned())
+            .collect::<Vec<_>>()
+    );
+}

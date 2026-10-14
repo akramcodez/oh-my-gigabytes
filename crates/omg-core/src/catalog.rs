@@ -475,7 +475,8 @@ impl Index {
             .collect())
     }
     /// Top-level dependency folders (`node_modules` next to `package.json`, `target` next to
-    /// `Cargo.toml`, Python virtual environments) of projects untouched for `policy::STALE_DAYS`.
+    /// `Cargo.toml`, Python virtual environments) of projects untouched for `policy::STALE_DAYS`,
+    /// outside hidden (tool/application) folders.
     fn stale_dependencies(&self, scan: i64) -> Result<Vec<Vec<u8>>> {
         let mut statement = self.db.prepare(
             "SELECT path FROM dir_totals WHERE scan_id=? AND allocated>=1048576 AND path<>x''",
@@ -516,7 +517,13 @@ impl Index {
                 b".venv" | b"venv" => exists(join(&path, "pyvenv.cfg"))?,
                 _ => false,
             };
-            if !evidence || chosen.iter().any(|c| policy::inside(&path, c, true)) {
+            // Projects live in ordinary folders. Hidden folders hold installed tools (nvm global
+            // packages, editor servers, pnpm's own versions), whose dependencies are not stale
+            // project output: deleting them would break the tool.
+            let hidden = path
+                .split(|b| *b == b'/')
+                .any(|part| part.first() == Some(&b'.'));
+            if !evidence || hidden || chosen.iter().any(|c| policy::inside(&path, c, true)) {
                 continue;
             }
             let newest = self.subtree(&parent)?.map_or(0, |t| t.newest);

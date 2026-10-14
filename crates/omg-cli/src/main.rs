@@ -46,7 +46,11 @@ enum Command {
     },
     Status,
     /// Show OMG Trash (saved paths waiting for your decision; nothing has been deleted)
-    Trash,
+    Trash {
+        /// Recompute scan suggestions from the current index first (no rescan)
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Finish removing rows of superseded scans (housekeeping; scans only prune for a few seconds)
     Prune,
     Doctor,
@@ -307,7 +311,10 @@ fn run() -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
-        Some(Command::Trash) => {
+        Some(Command::Trash { refresh }) => {
+            if refresh {
+                index.suggest(&platform::home()?)?;
+            }
             let items: Vec<_> = index
                 .marked()?
                 .into_iter()
