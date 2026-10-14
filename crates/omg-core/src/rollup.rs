@@ -59,7 +59,116 @@ fn bucket<'a>(map: &'a mut HashMap<Vec<u8>, Totals>, key: &[u8]) -> &'a mut Tota
     map.get_mut(key).expect("just inserted")
 }
 
-/// Aggregate and insert rollups for `scan_id`. Each entry is added once to its parent's bucket;
+/// Totals identical to `compute`, accumulated entry by entry while a scan runs, so no later pass
+/// over the stored rows is needed. A hard-linked file counts once, under its first path.
+#[derive(Default)]
+pub struct Aggregator {
+    totals: HashMap<Vec<u8>, Totals>,
+    /// identity -> (first path, max apparent, max allocated, newest, bytes among non-excluded)
+    links: HashMap<String, LinkedFile>,
+    unique_apparent: u64,
+    unique_allocated: u64,
+}
+struct LinkedFile {
+    path: Vec<u8>,
+    apparent: u64,
+    allocated: u64,
+    newest: i64,
+    live: Option<(u64, u64)>,
+}
+impl Aggregator {
+    pub fn new() -> Self {
+        let mut totals = HashMap::new();
+        totals.insert(Vec::new(), Totals::default());
+        Self {
+            totals,
+            ..Default::default()
+        }
+    }
+    /// `protected` is `policy::hard_protection(..).is_some()`, evaluated by the caller (in parallel).
+    pub fn add(&mut self, entry: &Entry, protected: bool) {
+        let directory = entry.kind == "directory";
+        let modified = entry.modified_ns / 1_000_000_000;
+        if protected {
+            bucket(&mut self.totals, &entry.parent).protected += 1;
+            if directory {
+                bucket(&mut self.totals, &entry.path).protected += 1;
+            }
+        }
+        if !directory && entry.links > 1 {
+            let live = entry
+                .excluded
+                .is_none()
+                .then_some((entry.apparent, entry.allocated));
+            self.links
+                .entry(entry.identity.clone())
+                .and_modify(|l| {
+                    if entry.path < l.path {
+                        l.path = entry.path.clone();
+                    }
+                    l.apparent = l.apparent.max(entry.apparent);
+                    l.allocated = l.allocated.max(entry.allocated);
+                    l.newest = l.newest.max(modified);
+                    l.live = match (l.live, live) {
+                        (Some(a), Some(b)) => Some((a.0.max(b.0), a.1.max(b.1))),
+                        (a, b) => a.or(b),
+                    };
+                })
+                .or_insert(LinkedFile {
+                    path: entry.path.clone(),
+                    apparent: entry.apparent,
+                    allocated: entry.allocated,
+                    newest: modified,
+                    live,
+                });
+            return;
+        }
+        self.count(
+            &entry.path,
+            directory,
+            entry.apparent,
+            entry.allocated,
+            modified,
+        );
+        if entry.excluded.is_none() {
+            self.unique_apparent += entry.apparent;
+            self.unique_allocated += entry.allocated;
+        }
+    }
+    fn count(
+        &mut self,
+        path: &[u8],
+        directory: bool,
+        apparent: u64,
+        allocated: u64,
+        modified: i64,
+    ) {
+        let t = bucket(&mut self.totals, parent_of(path));
+        t.dirs += u64::from(directory);
+        t.files += u64::from(!directory);
+        let owner = if directory { path } else { parent_of(path) };
+        let t = bucket(&mut self.totals, owner);
+        t.allocated += allocated;
+        t.apparent += apparent;
+        t.newest = t.newest.max(modified);
+    }
+    /// Folded rollups plus the scan-wide unique (apparent, allocated) bytes of non-excluded entries.
+    pub fn finish(mut self, index: &Index, scan_id: i64) -> Result<(u64, u64)> {
+        for (_, l) in std::mem::take(&mut self.links) {
+            self.count(&l.path, false, l.apparent, l.allocated, l.newest);
+            if let Some((a, b)) = l.live {
+                self.unique_apparent += a;
+                self.unique_allocated += b;
+            }
+        }
+        let totals = std::mem::take(&mut self.totals);
+        fold_and_store(index, scan_id, totals)?;
+        Ok((self.unique_apparent, self.unique_allocated))
+    }
+}
+
+/// Aggregate and insert rollups for `scan_id` from the stored rows (reference implementation;
+/// scans use `Aggregator`). Each entry is added once to its parent's bucket;
 /// buckets are then folded upward deepest-first, so work is O(entries + directories·log) and memory
 /// is proportional to the number of directories.
 pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
@@ -110,7 +219,15 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
             }
         }
     }
-    // Fold each directory's subtree into its parent, deepest first.
+    fold_and_store(index, scan_id, totals)
+}
+
+/// Fold each directory's subtree into its parent (deepest first) and insert `dir_totals` rows.
+pub fn fold_and_store(
+    index: &Index,
+    scan_id: i64,
+    mut totals: HashMap<Vec<u8>, Totals>,
+) -> Result<()> {
     let mut order: Vec<Vec<u8>> = totals.keys().filter(|k| !k.is_empty()).cloned().collect();
     order.sort_by_key(|k| std::cmp::Reverse(k.iter().filter(|b| **b == b'/').count()));
     for key in &order {

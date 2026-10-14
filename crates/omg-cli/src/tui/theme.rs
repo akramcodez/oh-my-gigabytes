@@ -52,14 +52,12 @@ impl Theme {
         self.pick(rgb, basic)
             .map_or_else(Style::new, |c| Style::new().fg(c))
     }
+    /// The one signature colour (electric violet) used for brand, selection, bars and key hints.
+    pub fn brand(&self) -> Style {
+        self.style((139, 124, 255), Color::LightMagenta)
+    }
     pub fn accent(&self) -> Style {
-        self.style((255, 79, 216), Color::Magenta)
-    }
-    pub fn violet(&self) -> Style {
-        self.style((155, 92, 255), Color::LightMagenta)
-    }
-    pub fn cyan(&self) -> Style {
-        self.style((61, 224, 255), Color::Cyan)
+        self.brand()
     }
     pub fn good(&self) -> Style {
         self.style((92, 242, 138), Color::Green)
@@ -85,31 +83,11 @@ impl Theme {
             _ => self.accent().add_modifier(Modifier::BOLD),
         }
     }
-    /// Magenta → cyan gradient colour for position `i` of `n`.
-    pub fn gradient(&self, i: usize, n: usize) -> Style {
-        let t = if n <= 1 {
-            0.0
-        } else {
-            i as f32 / (n - 1) as f32
-        };
-        let (a, b) = ((255.0, 79.0, 216.0), (61.0, 224.0, 255.0));
-        let mix = |x: f32, y: f32| (x + (y - x) * t) as u8;
-        let rgb = (mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2));
-        match self.mode {
-            Mode::TrueColor => Style::new()
-                .fg(Color::Rgb(rgb.0, rgb.1, rgb.2))
-                .add_modifier(Modifier::BOLD),
-            Mode::Basic => Style::new()
-                .fg(if t < 0.5 { Color::Magenta } else { Color::Cyan })
-                .add_modifier(Modifier::BOLD),
-            Mode::Mono => Style::new().add_modifier(Modifier::BOLD),
-        }
-    }
     pub fn tier(&self, tier: &str) -> Style {
         match tier {
             "protected" => self.danger(),
             "review" => self.warn(),
-            _ => self.cyan(),
+            _ => self.brand(),
         }
     }
 }

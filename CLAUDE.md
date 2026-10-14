@@ -85,7 +85,7 @@ Find functionality by grepping for `impl Index`.
 
 ### Schema migrations
 
-Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/00N.sql` (currently up to 005) requires three edits in `index.rs`:
+Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/00N.sql` (currently up to 010) requires three edits in `index.rs`:
 1. Add the `include_str!` step.
 2. Bump the "schema is newer than this omg build" check (`version > N`).
 3. Bump `schema_supported` in `diagnose`.
@@ -107,7 +107,7 @@ Entries follow these conventions:
 
 ### Rollups (`rollup.rs`, table `dir_totals`)
 
-`rollup::compute` runs inside `scanner::scan` for a **complete** scan, before the `active` swap. It writes per-directory subtree totals (hard links counted once under the first path) plus a count of entries `policy::protection` would deny. `Index::subtree` and `Index::children` read them. `""` is the scan root, and older indexes without rollups return "unavailable" rather than zero. `service/trend.rs` snapshots growth from the same table.
+`rollup::Aggregator` accumulates per-directory subtree totals (hard links counted once under the first path), newest-change time and a count of `policy::hard_protection` hits while `scanner::scan` walks (workers compute the protection bit); `finish` folds and stores them before the `active` swap. `rollup::compute` is the slower reference implementation that must stay equal to it (tested). `Index::subtree` and `Index::children` read them. `""` is the scan root, and older indexes without rollups return "unavailable" rather than zero. `service/trend.rs` snapshots growth from the same table.
 
 ### Findings are derived, not stored
 

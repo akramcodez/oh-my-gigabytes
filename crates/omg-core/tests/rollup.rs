@@ -186,3 +186,69 @@ fn indexes_without_rollups_report_unavailable_instead_of_zero() {
                 .all(|c| c.kind != "directory")
     );
 }
+
+#[test]
+fn in_walk_rollups_equal_the_reference_computation() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir_all(root.path().join("a/b/.git")).unwrap();
+    fs::create_dir_all(root.path().join("c/d")).unwrap();
+    fs::write(root.path().join("a/b/.git/config"), "x").unwrap();
+    fs::write(root.path().join("a/b/f1"), vec![1u8; 200_000]).unwrap();
+    fs::write(root.path().join("a/data.sqlite"), vec![2u8; 9_000]).unwrap();
+    fs::write(root.path().join("c/d/f2"), vec![3u8; 70_000]).unwrap();
+    fs::hard_link(
+        root.path().join("c/d/f2"),
+        root.path().join("a/b/link-of-f2"),
+    )
+    .unwrap();
+    fs::hard_link(root.path().join("a/b/f1"), root.path().join("c/f1-link")).unwrap();
+    std::os::unix::fs::symlink("a", root.path().join("c/sym")).unwrap();
+    let state = private_state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan_with(&mut index, root.path(), false);
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    type Row = (Vec<u8>, i64, i64, i64, i64, i64, i64);
+    let read = |db: &rusqlite::Connection| -> Vec<Row> {
+        let mut s = db
+            .prepare("SELECT path,allocated,apparent,files,dirs,protected,coalesce(newest,0) FROM dir_totals ORDER BY path")
+            .unwrap();
+        s.query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+                r.get(6)?,
+            ))
+        })
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect()
+    };
+    let in_walk = read(&db);
+    let (scan_id, stored): (i64, (i64, i64, i64)) = db
+        .query_row(
+            "SELECT scan_id,(SELECT unique_allocated FROM scans WHERE id=scan_id),0 FROM active",
+            [],
+            |r| Ok((r.get(0)?, (r.get(1)?, 0, 0))),
+        )
+        .unwrap();
+    db.execute("DELETE FROM dir_totals", []).unwrap();
+    omg_core::rollup::compute(&index, scan_id, root.path()).unwrap();
+    assert_eq!(
+        in_walk,
+        read(&db),
+        "in-walk aggregation must equal the stored-row computation"
+    );
+    // Scan-wide unique bytes match the old GROUP BY identity query.
+    let expected: i64 = db
+        .query_row(
+            "SELECT coalesce(sum(a),0) FROM (SELECT max(allocated) a FROM entries WHERE scan_id=? AND excluded IS NULL GROUP BY identity)",
+            [scan_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored.0, expected);
+}

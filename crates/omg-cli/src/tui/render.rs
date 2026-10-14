@@ -104,22 +104,18 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
 fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
     let inner = area.width.saturating_sub(4) as usize;
     let rows = banner(inner.saturating_sub(24).max(13));
-    let columns = rows[0].chars().count().max(1);
-    let gradient_row = |row: &str| -> Vec<Span<'static>> {
-        let mut spans = vec![Span::raw(" ")];
-        spans.extend(
-            row.chars()
-                .enumerate()
-                .map(|(i, c)| Span::styled(c.to_string(), theme.gradient(i, columns))),
-        );
-        spans
+    let brand_row = |row: &str| -> Vec<Span<'static>> {
+        vec![
+            Span::raw(" "),
+            Span::styled(row.to_string(), theme.brand().patch(theme.bold())),
+        ]
     };
-    let mut first = gradient_row(&rows[0]);
+    let mut first = brand_row(&rows[0]);
     first.push(Span::styled(
         format!("   v{}", env!("CARGO_PKG_VERSION")),
         theme.dim(),
     ));
-    let mut second = gradient_row(&rows[1]);
+    let mut second = brand_row(&rows[1]);
     second.push(Span::styled(
         "   find it · explain it · you decide",
         theme.dim(),
@@ -151,11 +147,11 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                 Some("partial") => {
                     Span::styled(" · partial (some folders unreadable)", theme.warn())
                 }
-                Some("running") => Span::styled(" · a scan is running", theme.cyan()),
+                Some("running") => Span::styled(" · a scan is running", theme.brand()),
                 _ => Span::raw(""),
             };
             lines.push(Line::from(vec![
-                Span::styled(format!("  {scope}"), theme.cyan()),
+                Span::styled(format!("  {scope}"), Style::new()),
                 Span::styled(
                     format!(
                         "  ·  scanned {}  ·  {} files  ·  {} indexed",
@@ -167,16 +163,19 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                 ),
                 label,
             ]));
-            let gauge = inner.saturating_sub(52).clamp(10, 40);
-            lines.push(match (status.capacity, status.available) {
-                (Some(cap), Some(free)) if cap > 0 => {
-                    let used = cap.saturating_sub(free) as f64 / cap as f64;
+            let gauge = inner.saturating_sub(70).clamp(10, 36);
+            // Live numbers (read fresh from the filesystem) win over the scan-time sample.
+            let disk = summary_volume(state).or(status.capacity.zip(status.available));
+            lines.push(match disk {
+                Some((cap, free)) if cap > 0 => {
+                    let used_bytes = cap.saturating_sub(free);
+                    let used = used_bytes as f64 / cap as f64;
                     let (caption, style) = if used >= 0.9 {
                         ("OMG, it's full!", theme.danger())
                     } else if used >= 0.7 {
                         ("getting chunky", theme.warn())
                     } else {
-                        ("plenty of room", theme.good())
+                        ("plenty of room", theme.brand())
                     };
                     let filled = bar(used, gauge).trim_end().to_string();
                     Line::from(vec![
@@ -187,9 +186,10 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                             theme.dim(),
                         ),
                         Span::styled(
-                            format!(" {:.0}% used · {} free · ", used * 100.0, bytes(free)),
-                            theme.dim(),
+                            format!(" {} used of {}", bytes(used_bytes), bytes(cap)),
+                            Style::new().patch(theme.bold()),
                         ),
+                        Span::styled(format!(" · {} free · ", bytes(free)), theme.dim()),
                         Span::styled(caption, style),
                     ])
                 }
@@ -201,7 +201,7 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
         Paragraph::new(lines).block(
             Block::bordered()
                 .border_type(BorderType::Rounded)
-                .border_style(theme.violet()),
+                .border_style(theme.dim()),
         ),
         area,
     );
@@ -469,13 +469,13 @@ fn overview(state: &AppState, theme: &Theme, width: usize) -> Lines {
         .unwrap_or(1)
         .max(1);
     let bar_width = (width.saturating_sub(44)).clamp(8, 30);
-    for (n, child) in summary.top.iter().take(8).enumerate() {
+    for child in summary.top.iter().take(8) {
         let filled = bar(child.allocated as f64 / max as f64, bar_width)
             .trim_end()
             .to_string();
         out.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(filled.clone(), theme.gradient(n, 8)),
+            Span::styled(filled.clone(), theme.brand()),
             Span::styled(
                 "·".repeat(bar_width.saturating_sub(filled.chars().count())),
                 theme.dim(),
@@ -565,10 +565,10 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
         .and_then(|s| s.root.as_ref())
         .map(|r| state.shorten_home(&r.display().to_string()))
         .unwrap_or_else(|| "/".into());
-    crumbs.push(Span::styled(root, theme.cyan()));
+    crumbs.push(Span::styled(root, Style::new()));
     for part in clean(&state.dir).split('/').filter(|p| !p.is_empty()) {
         crumbs.push(Span::styled(" › ", theme.dim()));
-        crumbs.push(Span::styled(part.to_string(), theme.cyan()));
+        crumbs.push(Span::styled(part.to_string(), Style::new()));
     }
     let Some(view) = state.current_dir() else {
         return vec![
@@ -629,7 +629,7 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
             .to_string();
         out.push(Line::from(vec![
             Span::styled(if selected { "❯ " } else { "  " }, theme.selected()),
-            Span::styled(filled.clone(), theme.gradient(n.min(9), 10)),
+            Span::styled(filled.clone(), theme.brand()),
             Span::styled(
                 " ".repeat(bar_width.saturating_sub(filled.chars().count())),
                 Style::new(),
@@ -830,7 +830,7 @@ fn plan_view(plan: &Plan, theme: &Theme) -> Lines {
     for item in &plan.items {
         out.push(Line::from(Span::styled(
             format!("  {}", clean(&item.path)),
-            theme.cyan(),
+            theme.brand(),
         )));
         out.push(Line::from(Span::styled(
             format!("    {}", item.decision),
@@ -880,4 +880,8 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
         )));
     }
     out
+}
+
+fn summary_volume(state: &AppState) -> Option<(u64, u64)> {
+    state.summary.as_ref().and_then(|s| s.volume)
 }

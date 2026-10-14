@@ -31,7 +31,9 @@ pub struct ScanReport {
     pub id: i64,
     pub state: String,
     pub entries: u64,
-    pub changed_entries: u64,
+    /// Entries that differ from the previously published scan; `None` when not compared.
+    #[serde(default)]
+    pub changed_entries: Option<u64>,
     pub errors: u64,
     pub excluded: u64,
     pub elapsed_ms: u64,

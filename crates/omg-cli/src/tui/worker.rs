@@ -56,6 +56,8 @@ pub struct Summary {
     pub root: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub auto_trash: bool,
+    /// (capacity, available) bytes read from the filesystem now, not from the scan record.
+    pub volume: Option<(u64, u64)>,
 }
 
 pub enum Response {
@@ -95,6 +97,11 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
             .ok()
             .and_then(|t| t.indexed_allocated_change),
         auto_trash: index.auto_trash()?,
+        volume: status
+            .root
+            .as_deref()
+            .and_then(|r| platform::path(r).ok())
+            .and_then(|root| platform::volume_sample(&root)),
         rollups,
         status,
     })

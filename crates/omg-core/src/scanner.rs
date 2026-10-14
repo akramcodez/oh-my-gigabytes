@@ -92,6 +92,8 @@ mod linux {
     }
     struct Batch {
         entries: Vec<Entry>,
+        /// `policy::hard_protection` verdict per entry, computed by the walking workers in parallel.
+        protected: Vec<bool>,
         issues: Vec<(Vec<u8>, String)>,
     }
     struct QueueState {
@@ -177,6 +179,7 @@ mod linux {
         while let Some(job) = shared.queue.pop(&shared.cancel) {
             let mut batch = Batch {
                 entries: Vec::new(),
+                protected: Vec::new(),
                 issues: Vec::new(),
             };
             let result = read_directory(&shared, &job, &events, &mut batch);
@@ -249,10 +252,14 @@ mod linux {
                     identity: entry.identity.clone(),
                 });
             }
+            batch
+                .protected
+                .push(crate::policy::hard_protection(&shared.root_path, &entry).is_some());
             batch.entries.push(entry);
             if batch.entries.len() >= BATCH_ENTRIES {
                 let full = Batch {
                     entries: std::mem::take(&mut batch.entries),
+                    protected: std::mem::take(&mut batch.protected),
                     issues: std::mem::take(&mut batch.issues),
                 };
                 if !send(events, full, &shared.cancel) {
@@ -269,6 +276,16 @@ mod linux {
             bail!("directory changed during enumeration; reconciliation needed");
         }
         Ok(())
+    }
+
+    /// `OMG_TIMINGS=1` prints cumulative phase times to stderr (diagnostics only).
+    fn timing(phase: &str, started: Instant) {
+        if std::env::var_os("OMG_TIMINGS").is_some() {
+            eprintln!(
+                "omg-timing {phase}: {:.1}s",
+                started.elapsed().as_secs_f64()
+            );
+        }
     }
 
     pub fn run(
@@ -359,6 +376,7 @@ mod linux {
             estimated_total,
             ..Default::default()
         };
+        let mut aggregate = crate::rollup::Aggregator::new();
         let result = (|| -> Result<()> {
             loop {
                 let first = match rx.recv_timeout(Duration::from_millis(100)) {
@@ -376,7 +394,8 @@ mod linux {
                     {
                         let mut insert =
                             tx.prepare_cached("INSERT INTO entries VALUES(?,?,?,?,?,?,?,?,?,?,?)")?;
-                        for entry in batch.entries {
+                        for (entry, protected) in batch.entries.into_iter().zip(batch.protected) {
+                            aggregate.add(&entry, protected);
                             if entry.excluded.is_some() {
                                 report.excluded += 1;
                             }
@@ -442,6 +461,7 @@ mod linux {
             params![now(), i64::try_from(report.entries)?, id],
         );
         report.elapsed_ms = started.elapsed().as_millis() as u64;
+        timing("walk", started);
         report.state = if result.is_err() {
             "failed"
         } else if cancel.load(Ordering::Relaxed) {
@@ -452,36 +472,49 @@ mod linux {
             "complete"
         }
         .into();
-        // Changed entries: one set difference against the published scan, not a lookup per entry.
+        // Changed entries: one set difference against the published scan. Over very large indexes
+        // the comparison costs more than it informs, so it is skipped and reported as "not compared".
         if matches!(report.state.as_str(), "complete" | "partial") {
+            const COMPARE_LIMIT: i64 = 300_000;
             report.changed_entries = match previous {
-                Some(old) => index.db.query_row(
-                    "SELECT count(*) FROM entries e LEFT JOIN entries p ON p.scan_id=?2 AND p.path=e.path WHERE e.scan_id=?1 AND (p.path IS NULL OR p.identity<>e.identity OR p.apparent<>e.apparent OR p.allocated<>e.allocated OR p.modified_ns<>e.modified_ns OR p.changed_ns<>e.changed_ns OR p.excluded IS NOT e.excluded)",
-                    params![id, old],
-                    |r| crate::index::unsigned(r, 0),
-                )?,
-                None => report.entries,
+                None => Some(report.entries),
+                Some(old) => {
+                    let before: Option<i64> = index
+                        .db
+                        .query_row("SELECT entry_count FROM scans WHERE id=?", [old], |r| {
+                            r.get(0)
+                        })
+                        .unwrap_or(None);
+                    if before.is_some_and(|n| n <= COMPARE_LIMIT)
+                        && report.entries as i64 <= COMPARE_LIMIT * 2
+                    {
+                        Some(index.db.query_row(
+                            "SELECT count(*) FROM entries e LEFT JOIN entries p ON p.scan_id=?2 AND p.path=e.path WHERE e.scan_id=?1 AND (p.path IS NULL OR p.identity<>e.identity OR p.apparent<>e.apparent OR p.allocated<>e.allocated OR p.modified_ns<>e.modified_ns OR p.changed_ns<>e.changed_ns OR p.excluded IS NOT e.excluded)",
+                            params![id, old],
+                            |r| crate::index::unsigned(r, 0),
+                        )?)
+                    } else {
+                        None
+                    }
+                }
             };
         }
-        index
-            .db
-            .execute_batch("PRAGMA synchronous=FULL; PRAGMA cache_size=-4096;")?;
-        // Subtree totals are part of the published view: compute them for the staging scan before
-        // the swap, so readers never see a complete scan without them.
+        timing("changed", started);
         let publishable =
             |state: &str| state == "complete" || (state == "partial" && options.publish_partial);
         let mut rollup_error = None;
-        if publishable(&report.state)
-            && let Err(error) = crate::rollup::compute(index, id, &root_path)
-        {
-            report.state = "failed".into();
-            rollup_error = Some(error);
+        let mut totals = None;
+        if publishable(&report.state) {
+            // Folder totals were accumulated during the walk; only the fold and insert remain.
+            match aggregate.finish(index, id) {
+                Ok(unique) => totals = Some(unique),
+                Err(error) => {
+                    report.state = "failed".into();
+                    rollup_error = Some(error);
+                }
+            }
         }
-        let totals = if publishable(&report.state) {
-            Some(index.db.query_row("SELECT coalesce(sum(apparent),0),coalesce(sum(allocated),0) FROM (SELECT max(apparent) apparent,max(allocated) allocated FROM entries WHERE scan_id=? AND excluded IS NULL GROUP BY identity)", [id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?)
-        } else {
-            None
-        };
+        timing("rollup", started);
         let tx = index
             .db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -492,7 +525,12 @@ mod linux {
         if let Some((apparent, allocated)) = totals {
             tx.execute(
                 "UPDATE scans SET entry_count=?,unique_apparent=?,unique_allocated=? WHERE id=?",
-                params![i64::try_from(report.entries)?, apparent, allocated, id],
+                params![
+                    i64::try_from(report.entries)?,
+                    i64::try_from(apparent)?,
+                    i64::try_from(allocated)?,
+                    id
+                ],
             )?;
         }
         if publishable(&report.state) {
@@ -502,9 +540,11 @@ mod linux {
         tx.commit()?;
         // Old scans are invisible once `active` moved, so removing their rows is housekeeping done
         // in bounded chunks instead of one multi-second transaction on the publish path.
+        timing("publish", started);
         let _ = index.prune_stale_locked(Duration::from_secs(4));
         index.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
         // Trend history is advisory; failing to record it must never fail or alter the scan result.
+        timing("prune+checkpoint", started);
         let _ = index.record_sample(
             id,
             &report.state,

@@ -90,7 +90,7 @@ fn metadata_accounting_reconciliation_and_exclusions() {
             .mtime_nsec()
     );
     let second = scan(&mut index, fixture.path());
-    assert!(second.changed_entries >= 2);
+    assert!(second.changed_entries.unwrap() >= 2);
     assert_eq!(
         index
             .entries(1000, 0)
@@ -278,6 +278,20 @@ fn explicit_partial_publication_is_labelled_and_opt_in() {
     assert_eq!(status.last_report.unwrap().state, "partial");
     assert!(status.entries >= 2, "partial view is published");
     assert!(index.rollups_available().unwrap());
-    assert_eq!(report.changed_entries, report.entries);
+    assert_eq!(report.changed_entries, Some(report.entries));
     assert!(report.estimated_total > 0);
+}
+
+#[test]
+fn live_volume_sample_tracks_real_free_space() {
+    let dir = tempfile::tempdir().unwrap();
+    let (capacity, before) = platform::volume_sample(dir.path()).expect("supported filesystem");
+    assert!(capacity > 0 && before <= capacity);
+    fs::write(dir.path().join("big"), vec![7u8; 8 << 20]).unwrap();
+    let (_, after) = platform::volume_sample(dir.path()).unwrap();
+    // Other activity can only add noise; a deliberate 8 MiB write must not leave free space higher.
+    assert!(
+        after <= before + (1 << 20),
+        "free space did not shrink: {before} -> {after}"
+    );
 }

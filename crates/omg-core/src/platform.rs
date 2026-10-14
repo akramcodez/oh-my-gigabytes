@@ -25,6 +25,18 @@ pub fn default_config() -> Result<PathBuf> {
         .unwrap_or(home()?.join(".config"))
         .join("omg/config.toml"))
 }
+/// Live (capacity, available) bytes of the filesystem holding `root`, or `None` when unsupported.
+pub fn volume_sample(root: &Path) -> Option<(u64, u64)> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::volume(&linux::root(root).ok()?).ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        None
+    }
+}
 pub fn raw(path: &Path) -> Result<Vec<u8>> {
     #[cfg(unix)]
     {
