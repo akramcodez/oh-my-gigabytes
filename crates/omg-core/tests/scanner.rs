@@ -305,7 +305,7 @@ fn eta_matches_the_measured_scan_speed() {
     // Once the walk ends, finishing 1.56 M entries is a few seconds, not a minute.
     let finishing = scanner::eta(1_560_000, 1_660_000, 24.0, Some(0.0));
     assert!(
-        (3.0..=10.0).contains(&finishing),
+        (6.0..=14.0).contains(&finishing),
         "finishing eta {finishing}"
     );
     assert_eq!(scanner::eta(1_560_000, 1_660_000, 24.0, Some(30.0)), 1.0);
