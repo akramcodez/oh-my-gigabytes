@@ -539,6 +539,10 @@ mod linux {
         }
         if publishable(&report.state) {
             tx.execute("INSERT INTO active VALUES(1,?) ON CONFLICT(singleton) DO UPDATE SET scan_id=excluded.scan_id",[id])?;
+            // A complete scan re-reads every folder, so earlier partial-deletion totals are current again.
+            if report.state == "complete" {
+                tx.execute("DELETE FROM settings WHERE key='reconcile_needed'", [])?;
+            }
         }
         tx.execute("DELETE FROM jobs", [])?;
         tx.commit()?;

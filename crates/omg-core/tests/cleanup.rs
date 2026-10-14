@@ -259,6 +259,8 @@ fn scans_suggest_regenerable_caches_but_never_large_files_and_respect_dismissal(
     // The user can still add it explicitly.
     assert_eq!(index.mark(b".cache/uv", 1, h).unwrap(), Gate::Allowed);
     assert_eq!(index.marked().unwrap()[0].source, "user");
+    assert!(!index.auto_trash().unwrap(), "auto-fill is off by default");
+    index.set_auto_trash(true).unwrap();
     assert!(index.auto_trash().unwrap());
     index.set_auto_trash(false).unwrap();
     assert!(!index.auto_trash().unwrap());
@@ -409,4 +411,269 @@ fn reviewed_plan_is_one_use_and_does_not_survive_a_new_session() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("already used"), "{error}");
+}
+
+fn history_targets(index: &Index, kind_outcome: &str) -> Vec<(Vec<u8>, String)> {
+    index
+        .history()
+        .unwrap()
+        .into_iter()
+        .find(|h| h.kind == "delete" && h.outcome == kind_outcome)
+        .map(|h| h.targets.into_iter().map(|t| (t.path, t.outcome)).collect())
+        .unwrap_or_default()
+}
+
+/// Intent write failure: the operation and its target rows are one transaction. When it fails,
+/// nothing is deleted and no operation is recorded.
+#[test]
+fn failed_intent_write_means_zero_mutations_and_no_operation() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"keep").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER fail_targets BEFORE INSERT ON delete_targets BEGIN SELECT RAISE(ABORT,'injected intent failure'); END;",
+    )
+    .unwrap();
+    let error = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("injected intent failure"), "{error}");
+    assert_eq!(fs::read(h.join("scratch/a.bin")).unwrap(), b"keep");
+    let operations: i64 = db
+        .query_row("SELECT COUNT(*) FROM operations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(operations, 0);
+}
+
+/// Cancellation stops before the next target. Nothing new starts, and the remaining targets are
+/// recorded as `unattempted` rather than silently dropped.
+#[test]
+fn cancellation_before_a_target_records_it_as_unattempted() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("one")).unwrap();
+    fs::write(h.join("one/a.bin"), b"1").unwrap();
+    fs::create_dir(h.join("two")).unwrap();
+    fs::write(h.join("two/b.bin"), b"2").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"one", 4096, h).unwrap();
+    index.mark(b"two", 4096, h).unwrap();
+    let ids = [id_of(&index, b"one"), id_of(&index, b"two")];
+    let plan = index.prepare_delete(&ids, h).unwrap();
+
+    let cancel = AtomicBool::new(true);
+    let report = index
+        .delete_with_control(&plan, &plan.fingerprint, h, Some(&cancel), |_| {})
+        .unwrap();
+    assert!(report.cancelled);
+    assert!(report.deleted.is_empty());
+    assert!(h.join("one/a.bin").exists() && h.join("two/b.bin").exists());
+    let targets = history_targets(&index, "cancelled");
+    assert_eq!(targets.len(), 2);
+    assert!(targets.iter().all(|(_, outcome)| outcome == "unattempted"));
+}
+
+/// An attempt that never finished (process killed after intent) is labelled honestly after restart.
+/// Its targets are not replayed by the next delete.
+#[test]
+fn interrupted_attempt_is_labelled_after_restart_and_never_replayed() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+    drop(index);
+
+    // Simulate a killed run: an operation and target left at `intent`.
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    db.execute(
+        "INSERT INTO operations(created,kind,fingerprint,outcome,detail) VALUES(1,'delete','x','intent','{}')",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO delete_targets(operation,item,path,outcome,detail,updated) VALUES(last_insert_rowid(),?,?,'intent','',1)",
+        rusqlite::params![id, b"scratch".to_vec()],
+    )
+    .unwrap();
+    drop(db);
+
+    let mut index = Index::open(state.path()).unwrap();
+    let fresh = index.prepare_delete(&[id], h).unwrap();
+    index
+        .delete_permanently(&fresh, &fresh.fingerprint, h)
+        .unwrap();
+    let interrupted: Vec<String> = index
+        .history()
+        .unwrap()
+        .into_iter()
+        .filter(|h| h.kind == "delete")
+        .flat_map(|h| h.targets.into_iter().map(|t| t.outcome))
+        .collect();
+    assert!(
+        interrupted.contains(&"interrupted-outcome-unknown".to_string()),
+        "{interrupted:?}"
+    );
+    assert!(
+        !h.join("scratch").exists(),
+        "the fresh review still deletes"
+    );
+}
+
+/// A removal that fails partway is `partial`, not `skipped`, and marks the totals for a rescan.
+#[test]
+fn partial_removal_is_reported_as_partial_and_flags_reconcile() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir_all(h.join("scratch/locked")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"removable").unwrap();
+    fs::write(h.join("scratch/locked/b.bin"), b"stuck").unwrap();
+    fs::set_permissions(h.join("scratch/locked"), fs::Permissions::from_mode(0o555)).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+
+    let result = index.delete_permanently(&plan, &plan.fingerprint, h);
+    // Restore before asserting so the temporary home can always be removed.
+    fs::set_permissions(h.join("scratch/locked"), fs::Permissions::from_mode(0o755)).unwrap();
+    let report = result.unwrap();
+    assert!(report.deleted.is_empty());
+    assert!(report.removed_entries >= 1, "{report:?}");
+    assert!(report.needs_reconcile);
+    assert!(
+        !h.join("scratch/a.bin").exists(),
+        "removed entries stay removed"
+    );
+    assert!(h.join("scratch/locked/b.bin").exists());
+    let targets = history_targets(&index, "partial");
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].1, "partial");
+}
+
+/// Race barriers. The target is changed after validation and before mutation. The mutation must
+/// judge the object it finds, so a substituted object survives.
+#[test]
+fn directory_replaced_after_validation_survives() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"original").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+
+    let report = index
+        .delete_with_control(&plan, &plan.fingerprint, h, None, |path| {
+            if path == b"scratch" {
+                fs::rename(h.join("scratch"), h.join("moved")).unwrap();
+                fs::create_dir(h.join("scratch")).unwrap();
+                fs::write(h.join("scratch/new.txt"), b"new important data").unwrap();
+            }
+        })
+        .unwrap();
+    assert!(report.deleted.is_empty(), "{report:?}");
+    assert_eq!(
+        fs::read(h.join("scratch/new.txt")).unwrap(),
+        b"new important data"
+    );
+}
+
+#[test]
+fn directory_swapped_for_symlink_never_leads_outside_home() {
+    let (home, state) = setup();
+    let h = home.path();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret.txt"), b"secret").unwrap();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+
+    index
+        .delete_with_control(&plan, &plan.fingerprint, h, None, |path| {
+            if path == b"scratch" {
+                fs::remove_dir_all(h.join("scratch")).unwrap();
+                symlink(outside.path(), h.join("scratch")).unwrap();
+            }
+        })
+        .unwrap();
+    assert_eq!(
+        fs::read(outside.path().join("secret.txt")).unwrap(),
+        b"secret"
+    );
+}
+
+#[test]
+fn protected_child_inserted_after_validation_stops_the_delete() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+
+    let report = index
+        .delete_with_control(&plan, &plan.fingerprint, h, None, |path| {
+            if path == b"scratch" {
+                fs::create_dir(h.join("scratch/.ssh")).unwrap();
+                fs::write(h.join("scratch/.ssh/id_ed25519"), b"key").unwrap();
+            }
+        })
+        .unwrap();
+    assert!(report.deleted.is_empty(), "{report:?}");
+    assert_eq!(fs::read(h.join("scratch/.ssh/id_ed25519")).unwrap(), b"key");
+}
+
+/// Hard links: deleting one name must not remove the other name's data, and the totals must match
+/// an independent fresh scan afterwards (WP07 oracle).
+#[test]
+fn deleting_one_hard_link_name_keeps_data_and_totals_match_a_fresh_scan() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::create_dir(h.join("keep")).unwrap();
+    fs::write(h.join("keep/data.bin"), vec![7u8; 8192]).unwrap();
+    fs::hard_link(h.join("keep/data.bin"), h.join("scratch/alias.bin")).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(fs::read(h.join("keep/data.bin")).unwrap().len(), 8192);
+
+    let after_delete = index.subtree(b"").unwrap().unwrap();
+    let fresh_state = tempfile::tempdir().unwrap();
+    fs::set_permissions(fresh_state.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut fresh = Index::open(fresh_state.path()).unwrap();
+    scan(&mut fresh, h);
+    let fresh_totals = fresh.subtree(b"").unwrap().unwrap();
+    assert_eq!(after_delete.allocated, fresh_totals.allocated);
+    assert_eq!(after_delete.apparent, fresh_totals.apparent);
+    assert_eq!(after_delete.files, fresh_totals.files);
 }

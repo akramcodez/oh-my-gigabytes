@@ -835,6 +835,8 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
             Span::styled(
                 if item.warning.is_some() {
                     "  ⚠ in a Git repo"
+                } else if item.source == "auto" {
+                    "  · suggested by scan (you did not add this)"
                 } else {
                     ""
                 },

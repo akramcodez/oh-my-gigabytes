@@ -79,7 +79,6 @@ pub enum Action {
     Go(Tab),
     Help,
     Quit,
-    Close,
     Mark,
     DeleteNow,
     DeleteSelected,
@@ -90,7 +89,11 @@ pub enum Action {
     /// The single "are you sure?" confirmation (warnings are shown in the same dialog).
     Confirm(Box<DeletePlan>),
     /// Dismissed a plan that was created by "delete now": take the item back out of OMG Trash.
-    CancelPlan(Vec<i64>),
+    /// Cancel a delete confirmation: take back items it added, and tell the backend to discard the plan.
+    CancelPlan {
+        ids: Vec<i64>,
+        fingerprint: String,
+    },
     AcknowledgePreview,
     ToggleAutoTrash,
 }
@@ -299,7 +302,7 @@ impl App {
             );
         }
         push("Scan now", Some('r'), Action::Scan(false), Tone::Normal);
-        let auto = s.summary.as_ref().is_none_or(|x| x.auto_trash);
+        let auto = s.summary.as_ref().is_some_and(|x| x.auto_trash);
         push(
             if auto {
                 "Auto-add caches to OMG Trash on scan: ON (turn off)"
@@ -374,10 +377,9 @@ impl App {
         let mut choices = vec![Choice {
             label: "Cancel".into(),
             key: None,
-            action: if undo.is_empty() {
-                Action::Close
-            } else {
-                Action::CancelPlan(undo)
+            action: Action::CancelPlan {
+                ids: undo,
+                fingerprint: plan.fingerprint.clone(),
             },
             tone: Tone::Normal,
         }];
@@ -401,11 +403,11 @@ impl App {
         self.state.menu = None;
         match action {
             Action::Quit => return Ok(true),
-            Action::Close => {}
-            Action::CancelPlan(ids) => {
+            Action::CancelPlan { ids, fingerprint } => {
                 if !ids.is_empty() {
                     self.request(Request::Unmark(ids), None);
                 }
+                self.request(Request::DiscardPlan(fingerprint), None);
                 self.state.message = "Cancelled. Nothing was deleted.".into();
             }
             Action::Scan(full) => self.start_scan(full)?,
@@ -499,7 +501,7 @@ impl App {
             // One confirmation is enough: warnings were already shown in that dialog.
             Action::Confirm(plan) => self.request(Request::Delete(plan), Some("Deleting")),
             Action::ToggleAutoTrash => {
-                let on = !self.state.summary.as_ref().is_none_or(|x| x.auto_trash);
+                let on = !self.state.summary.as_ref().is_some_and(|x| x.auto_trash);
                 self.request(Request::SetAutoTrash(on), None);
             }
         }
@@ -583,8 +585,18 @@ impl App {
                         )
                     })
                     .unwrap_or_default();
+                let stop = if report.cancelled {
+                    " · cancelled: remaining items were not started"
+                } else {
+                    ""
+                };
+                let stale = if report.needs_reconcile {
+                    " · some entries were removed from a partly deleted folder; run a scan to refresh totals"
+                } else {
+                    ""
+                };
                 s.message = format!(
-                    "Deleted {} item(s), ≈ {}{observed}{}{}",
+                    "Deleted {} item(s), ≈ {}{observed}{stop}{stale}{}{}",
                     report.deleted.len(),
                     omg_core::bytes(report.estimated_bytes),
                     if report.skipped.is_empty() {
@@ -634,7 +646,7 @@ impl App {
                         .choices
                         .first()
                         .map(|c| c.action.clone())
-                        .filter(|a| matches!(a, Action::CancelPlan(_)));
+                        .filter(|a| matches!(a, Action::CancelPlan { .. }));
                     self.state.menu = None;
                     if let Some(action) = cancel {
                         return self.run_action(action);

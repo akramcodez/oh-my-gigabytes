@@ -111,13 +111,19 @@ fn delete_confirmation_defaults_to_cancel_and_shows_warnings() {
             Choice {
                 label: "Cancel".into(),
                 key: None,
-                action: Action::Close,
+                action: Action::CancelPlan {
+                    ids: vec![],
+                    fingerprint: String::new(),
+                },
                 tone: Tone::Normal,
             },
             Choice {
                 label: "Yes, delete permanently".into(),
                 key: None,
-                action: Action::Close,
+                action: Action::CancelPlan {
+                    ids: vec![],
+                    fingerprint: String::new(),
+                },
                 tone: Tone::Danger,
             },
         ],

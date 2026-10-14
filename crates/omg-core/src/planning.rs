@@ -39,6 +39,16 @@ pub struct History {
     pub fingerprint: String,
     pub outcome: String,
     pub detail: String,
+    /// Per-target outcomes of a permanent-delete operation; empty for other kinds.
+    pub targets: Vec<Target>,
+}
+
+/// Outcome of one target of a permanent-delete operation, as last recorded.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Target {
+    pub path: Vec<u8>,
+    pub outcome: String,
+    pub detail: String,
 }
 
 impl Index {
@@ -121,7 +131,7 @@ impl Index {
     }
     pub fn history(&self) -> Result<Vec<History>> {
         let mut statement=self.db.prepare("SELECT id,created,kind,fingerprint,outcome,detail FROM operations ORDER BY id DESC LIMIT 100")?;
-        Ok(statement
+        let mut rows: Vec<History> = statement
             .query_map([], |r| {
                 Ok(History {
                     id: r.get(0)?,
@@ -130,9 +140,25 @@ impl Index {
                     fingerprint: r.get(3)?,
                     outcome: r.get(4)?,
                     detail: r.get(5)?,
+                    targets: Vec::new(),
                 })
             })?
-            .collect::<rusqlite::Result<_>>()?)
+            .collect::<rusqlite::Result<_>>()?;
+        let mut targets = self.db.prepare(
+            "SELECT path,outcome,detail FROM delete_targets WHERE operation=? ORDER BY id",
+        )?;
+        for row in rows.iter_mut().filter(|r| r.kind == "delete") {
+            row.targets = targets
+                .query_map([row.id], |r| {
+                    Ok(Target {
+                        path: r.get(0)?,
+                        outcome: r.get(1)?,
+                        detail: r.get(2)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<_>>()?;
+        }
+        Ok(rows)
     }
     /// Fail closed even if a caller supplies a forged/confirmed plan.
     pub fn execute(&self, _plan: &Plan) -> Result<()> {

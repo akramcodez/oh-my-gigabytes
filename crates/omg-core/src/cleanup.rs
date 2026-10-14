@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 /// Plans issued by this session, keyed by fingerprint, with the scan id they were prepared on.
@@ -103,6 +104,10 @@ pub struct DeleteReport {
     pub estimated_bytes: u64,
     /// Observed change in available bytes on the volume (other activity can affect it).
     pub observed_free_change: Option<i64>,
+    /// Some entries were removed from a target that stays listed. Totals are stale until a scan.
+    pub needs_reconcile: bool,
+    /// Cancellation stopped the run; the remaining targets are `unattempted`.
+    pub cancelled: bool,
 }
 
 /// How a deletable target's contents are judged at deletion time.
@@ -377,7 +382,9 @@ impl Index {
                 |r| r.get(0),
             )
             .optional()?;
-        Ok(value.is_none_or(|v| v != b"off"))
+        // Off unless the user turned it on: suggestions must never be the only thing between a
+        // scan and a deletion list the user did not review.
+        Ok(value.as_deref() == Some(b"on".as_slice()))
     }
     pub fn set_auto_trash(&self, on: bool) -> Result<()> {
         self.db.execute(
@@ -418,6 +425,10 @@ impl Index {
         self.db
             .execute("DELETE FROM marked WHERE id=? AND source='user'", [id])?;
         Ok(())
+    }
+    /// Forget an issued plan that the user cancelled. Unknown fingerprints are ignored.
+    pub fn discard_plan(&mut self, fingerprint: &str) {
+        self.issued.remove(fingerprint);
     }
     /// Freeze the exact set to delete and issue it to this session. The interface shows it and must
     /// pass the same plan back. The issued copy is the only one `delete_permanently` will accept.
@@ -479,6 +490,19 @@ impl Index {
         confirmed: &str,
         home: &Path,
     ) -> Result<DeleteReport> {
+        self.delete_with_control(plan, confirmed, home, None, |_| {})
+    }
+    /// `delete_permanently` with two test and runtime controls. `cancel` is checked before each
+    /// target: once set, the remaining targets are recorded as `unattempted` and nothing new starts.
+    /// `before_mutate` runs after a target has been validated and just before it is changed.
+    pub fn delete_with_control<F: FnMut(&[u8])>(
+        &mut self,
+        plan: &DeletePlan,
+        confirmed: &str,
+        home: &Path,
+        cancel: Option<&AtomicBool>,
+        mut before_mutate: F,
+    ) -> Result<DeleteReport> {
         let (scan, plan) = take_issued(&mut self.issued, plan, confirmed, now())?;
         let _cleanup = crate::index::lock(&self.state, "cleanup.lock")?;
         let _scan = crate::index::lock(&self.state, "scan.lock").map_err(|_| {
@@ -492,16 +516,9 @@ impl Index {
         if delete_support(&root)? == crate::capability::Support::Unsupported {
             bail!("permanent deletion is not available on this filesystem");
         }
-        // Unresolved older attempts are never replayed; they are labelled honestly.
-        self.db.execute(
-            "UPDATE operations SET outcome='interrupted-outcome-unknown' WHERE kind='delete' AND outcome='intent'",
-            [],
-        )?;
-        self.db.execute(
-            "INSERT INTO operations(created,kind,fingerprint,outcome,detail) VALUES(?,'delete',?,'intent',?)",
-            params![now(), plan.fingerprint, serde_json::to_string(&plan)?],
-        )?;
-        let operation = self.db.last_insert_rowid();
+        // Intent and every target row are written in one transaction before anything is touched.
+        // If that write fails, no file has changed and no operation exists.
+        let operation = self.record_intent(&plan)?;
         let mut report = DeleteReport {
             skipped: plan.denied.clone(),
             ..Default::default()
@@ -510,25 +527,39 @@ impl Index {
         {
             let root_fd = platform::linux::root(&root)?;
             let before = platform::linux::volume(&root_fd).ok().map(|v| v.1);
-            for item in &plan.items {
+            for (position, item) in plan.items.iter().enumerate() {
+                if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                    report.cancelled = true;
+                    for rest in &plan.items[position..] {
+                        self.record_target(
+                            operation,
+                            rest.id,
+                            "unattempted",
+                            "cancelled before this target",
+                        )?;
+                    }
+                    break;
+                }
                 let kind = match self.entry(&item.path)? {
                     Some(entry) => match self.verdict_for(&entry, home)? {
                         Verdict {
                             gate: Gate::Denied(reason),
                             ..
                         } => {
+                            self.record_target(operation, item.id, "skipped", &reason)?;
                             report.skipped.push((item.path.clone(), reason));
                             continue;
                         }
                         v => v.kind,
                     },
                     None => {
-                        report
-                            .skipped
-                            .push((item.path.clone(), "no longer in the index".into()));
+                        let reason = "no longer in the index".to_string();
+                        self.record_target(operation, item.id, "skipped", &reason)?;
+                        report.skipped.push((item.path.clone(), reason));
                         continue;
                     }
                 };
+                before_mutate(&item.path);
                 match linux::delete_one(&root_fd, &root, home, item, kind) {
                     Ok((removed, failed)) => {
                         report.removed_entries += removed;
@@ -536,17 +567,25 @@ impl Index {
                         if failed == 0 {
                             report.deleted.push(item.path.clone());
                             report.estimated_bytes += item.allocated;
+                            self.record_target(operation, item.id, "deleted", "")?;
                             self.forget(&item.path)?;
                             self.db
                                 .execute("DELETE FROM marked WHERE id=?", [item.id])?;
                         } else {
-                            report.skipped.push((
-                                item.path.clone(),
-                                format!("{failed} entries could not be removed; partially deleted"),
-                            ));
+                            // Some entries are gone but the target is not. The published totals
+                            // still include them, so the index must be reconciled by a scan.
+                            report.needs_reconcile |= removed > 0;
+                            let detail = format!(
+                                "{failed} entries could not be removed; {removed} removed before the failure"
+                            );
+                            self.record_target(operation, item.id, "partial", &detail)?;
+                            report.skipped.push((item.path.clone(), detail));
                         }
                     }
-                    Err(reason) => report.skipped.push((item.path.clone(), reason)),
+                    Err(reason) => {
+                        self.record_target(operation, item.id, "skipped", &reason)?;
+                        report.skipped.push((item.path.clone(), reason));
+                    }
                 }
             }
             let after = platform::linux::volume(&root_fd).ok().map(|v| v.1);
@@ -557,17 +596,24 @@ impl Index {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (home, &root);
-            report.skipped.extend(plan.items.iter().map(|i| {
-                (
-                    i.path.clone(),
-                    "deletion is not supported on this platform".into(),
-                )
-            }));
+            let _ = (home, &root, &mut before_mutate);
+            for item in &plan.items {
+                let reason = "deletion is not supported on this platform".to_string();
+                self.record_target(operation, item.id, "skipped", &reason)?;
+                report.skipped.push((item.path.clone(), reason));
+            }
         }
-        let outcome = if report.skipped.is_empty() {
+        if report.needs_reconcile {
+            self.db.execute(
+                "INSERT INTO settings VALUES('reconcile_needed','1') ON CONFLICT(key) DO UPDATE SET value='1'",
+                [],
+            )?;
+        }
+        let outcome = if report.cancelled {
+            "cancelled"
+        } else if report.skipped.is_empty() {
             "deleted"
-        } else if report.deleted.is_empty() {
+        } else if report.deleted.is_empty() && report.removed_entries == 0 {
             "skipped"
         } else {
             "partial"
@@ -577,6 +623,46 @@ impl Index {
             params![outcome, serde_json::to_string(&report)?, operation],
         )?;
         Ok(report)
+    }
+    /// Write the operation, its targets, and the labelled outcome of any older unresolved attempt.
+    /// Unresolved attempts are never replayed.
+    fn record_intent(&self, plan: &DeletePlan) -> Result<i64> {
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE operations SET outcome='interrupted-outcome-unknown' WHERE kind='delete' AND outcome='intent'",
+            [],
+        )?;
+        tx.execute(
+            "UPDATE delete_targets SET outcome='interrupted-outcome-unknown',updated=?1 WHERE outcome='intent'",
+            [now()],
+        )?;
+        tx.execute(
+            "INSERT INTO operations(created,kind,fingerprint,outcome,detail) VALUES(?,'delete',?,'intent',?)",
+            params![now(), plan.fingerprint, serde_json::to_string(plan)?],
+        )?;
+        let operation = tx.last_insert_rowid();
+        for item in &plan.items {
+            tx.execute(
+                "INSERT INTO delete_targets(operation,item,path,outcome,detail,updated) VALUES(?,?,?,'intent','',?)",
+                params![operation, item.id, item.path, now()],
+            )?;
+        }
+        for (path, reason) in &plan.denied {
+            // Denied at review: no marked item to refer to, so the reference is 0.
+            tx.execute(
+                "INSERT INTO delete_targets(operation,item,path,outcome,detail,updated) VALUES(?,0,?,'skipped',?,?)",
+                params![operation, path, reason, now()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(operation)
+    }
+    fn record_target(&self, operation: i64, item: i64, outcome: &str, detail: &str) -> Result<()> {
+        self.db.execute(
+            "UPDATE delete_targets SET outcome=?,detail=?,updated=? WHERE operation=? AND item=?",
+            params![outcome, detail, now(), operation, item],
+        )?;
+        Ok(())
     }
     #[cfg(target_os = "linux")]
     /// Drop a deleted subtree from the published index and subtract it from ancestor totals, so the

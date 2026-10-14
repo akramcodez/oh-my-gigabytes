@@ -31,6 +31,8 @@ pub enum Request {
         allocated: u64,
     },
     Delete(Box<DeletePlan>),
+    /// The user cancelled a confirmation: the backend forgets that plan.
+    DiscardPlan(String),
     SetAutoTrash(bool),
     /// Progress of a scan run by another process.
     PollRunning,
@@ -204,8 +206,23 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                                 .find(|m| m.path == path)
                                 .map(|m| m.id)
                                 .ok_or_else(|| anyhow::anyhow!("could not stage the item"))?;
+                            // Staging is undone when the review cannot proceed, so a failed or
+                            // empty review never leaves an item behind in OMG Trash.
+                            let plan = match index.prepare_delete(&[id], &home) {
+                                Ok(plan) => plan,
+                                Err(error) => {
+                                    if !existed {
+                                        index.unmark(id)?;
+                                    }
+                                    refresh = true;
+                                    return Err(error);
+                                }
+                            };
+                            if plan.items.is_empty() && !existed {
+                                index.unmark(id)?;
+                            }
                             send(Response::DeletePlan {
-                                plan: Box::new(index.prepare_delete(&[id], &home)?),
+                                plan: Box::new(plan),
                                 added_now: !existed,
                             });
                             refresh = true;
@@ -219,6 +236,7 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                             }));
                             refresh = true;
                         }
+                        Request::DiscardPlan(fingerprint) => index.discard_plan(&fingerprint),
                         Request::Delete(plan) => {
                             let fingerprint = plan.fingerprint.clone();
                             send(Response::Deleted(Box::new(index.delete_permanently(
