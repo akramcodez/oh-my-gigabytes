@@ -31,26 +31,15 @@ pub enum Tab {
     Browse,
     Findings,
     Trash,
-    History,
-    Ignores,
 }
 impl Tab {
-    pub const ALL: [Tab; 6] = [
-        Tab::Overview,
-        Tab::Browse,
-        Tab::Findings,
-        Tab::Trash,
-        Tab::History,
-        Tab::Ignores,
-    ];
+    pub const ALL: [Tab; 4] = [Tab::Overview, Tab::Browse, Tab::Findings, Tab::Trash];
     pub fn name(self) -> &'static str {
         match self {
             Tab::Overview => "Overview",
             Tab::Browse => "Browse",
             Tab::Findings => "Findings",
             Tab::Trash => "OMG Trash",
-            Tab::History => "History",
-            Tab::Ignores => "Ignores",
         }
     }
 }
@@ -97,8 +86,6 @@ pub enum Action {
     EmptyTrash,
     Unmark,
     Preview,
-    Ignore,
-    RemoveIgnore,
     Open,
     /// The single "are you sure?" confirmation (warnings are shown in the same dialog).
     Confirm(Box<DeletePlan>),
@@ -284,12 +271,6 @@ impl App {
         }
         if s.tab == Tab::Findings && s.target().is_some() {
             push("Dry-run preview", Some('p'), Action::Preview, Tone::Normal);
-            push(
-                "Ignore this finding",
-                Some('i'),
-                Action::Ignore,
-                Tone::Normal,
-            );
             push(
                 "Show in file manager",
                 Some('o'),
@@ -491,23 +472,6 @@ impl App {
             Action::AcknowledgePreview => {
                 if let Some(plan) = self.state.plan.take() {
                     self.request(Request::RecordPreview(Box::new(plan)), None);
-                }
-            }
-            Action::Ignore => {
-                if let Some(f) = visible_findings(&self.state).get(self.state.cursor) {
-                    let finding = Box::new((*f).clone());
-                    self.request(Request::Ignore(finding), None);
-                }
-            }
-            Action::RemoveIgnore => {
-                if let Some(i) = self
-                    .state
-                    .summary
-                    .as_ref()
-                    .and_then(|s| s.ignores.get(self.state.cursor))
-                {
-                    let id = i.id;
-                    self.request(Request::RemoveIgnore(id), None);
                 }
             }
             Action::Open => {
@@ -716,7 +680,7 @@ impl App {
                     self.go_up();
                 }
             }
-            KeyCode::Char(c @ '1'..='6') => self
+            KeyCode::Char(c @ '1'..='4') => self
                 .run_action(Action::Go(Tab::ALL[c as usize - '1' as usize]))
                 .map(|_| ())?,
             KeyCode::Tab => {
@@ -781,18 +745,12 @@ impl App {
             KeyCode::Char('u') if tab == Tab::Trash => {
                 self.run_action(Action::Unmark).map(|_| ())?
             }
-            KeyCode::Char('u') if tab == Tab::Ignores => {
-                self.run_action(Action::RemoveIgnore).map(|_| ())?
-            }
             KeyCode::Char('t') if tab == Tab::Findings => {
                 self.state.tier = (self.state.tier + 1) % 4;
                 self.state.cursor = 0;
             }
             KeyCode::Char('p') if tab == Tab::Findings => {
                 self.run_action(Action::Preview).map(|_| ())?
-            }
-            KeyCode::Char('i') if tab == Tab::Findings => {
-                self.run_action(Action::Ignore).map(|_| ())?
             }
             KeyCode::Char('o') if tab == Tab::Findings => {
                 self.run_action(Action::Open).map(|_| ())?

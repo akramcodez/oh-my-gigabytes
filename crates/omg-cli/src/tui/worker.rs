@@ -2,10 +2,10 @@
 //! requests and renders whatever has arrived, so a slow query can never freeze a keypress.
 use omg_core::{
     Index, Status,
-    catalog::{Finding, Ignore},
+    catalog::Finding,
     cleanup::{DeletePlan, DeleteReport, Marked},
     cleanup::{Gate, Kind},
-    planning::{History, Plan},
+    planning::Plan,
     platform,
     rollup::{Child, Totals},
 };
@@ -19,8 +19,6 @@ pub enum Request {
     Dir(Vec<u8>),
     Preview(String),
     RecordPreview(Box<Plan>),
-    Ignore(Box<Finding>),
-    RemoveIgnore(i64),
     Mark {
         path: Vec<u8>,
         allocated: u64,
@@ -53,8 +51,6 @@ pub struct Summary {
     pub rollups: bool,
     pub findings: Vec<Finding>,
     pub top: Vec<Child>,
-    pub history: Vec<History>,
-    pub ignores: Vec<Ignore>,
     pub marked: Vec<Marked>,
     pub trend_delta: Option<i64>,
     pub root: Option<PathBuf>,
@@ -93,8 +89,6 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
         } else {
             vec![]
         },
-        history: index.history()?,
-        ignores: index.ignores()?,
         marked: index.marked()?,
         trend_delta: index
             .trend(30)
@@ -166,17 +160,6 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                             send(Response::Info(
                                 "Preview recorded. Nothing was changed.".into(),
                             ));
-                            refresh = true;
-                        }
-                        Request::Ignore(finding) => {
-                            index.ignore_finding(&finding, false)?;
-                            send(Response::Info(
-                                "Ignored. Undo it in the Ignores tab.".into(),
-                            ));
-                            refresh = true;
-                        }
-                        Request::RemoveIgnore(id) => {
-                            index.remove_ignore(id)?;
                             refresh = true;
                         }
                         Request::Mark { path, allocated } => {

@@ -42,8 +42,6 @@ pub fn row_count(state: &AppState) -> usize {
         Tab::Browse => visible_children(state).len(),
         Tab::Findings => visible_findings(state).len(),
         Tab::Trash => state.summary.as_ref().map_or(0, |s| s.marked.len()),
-        Tab::History => state.summary.as_ref().map_or(0, |s| s.history.len()),
-        Tab::Ignores => state.summary.as_ref().map_or(0, |s| s.ignores.len()),
     }
 }
 
@@ -86,8 +84,6 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
             Tab::Browse => browse(state, theme, width, height),
             Tab::Findings => findings(state, theme, width, height),
             Tab::Trash => trash(state, theme, width, height),
-            Tab::History => history(state, theme),
-            Tab::Ignores => ignores(state, theme),
         }
     };
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), rows[2]);
@@ -95,7 +91,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
     options_bar(frame, rows[4], state, theme);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "  m options · ? shortcuts · 1-6 views · q quit",
+            "  m options · ? shortcuts · 1-4 views · q quit",
             theme.dim(),
         ))),
         rows[5],
@@ -342,7 +338,6 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
                 ("␣", "add to OMG Trash"),
                 ("d", "delete…"),
                 ("p", "preview"),
-                ("i", "ignore"),
                 ("t", "tier"),
             ],
             Tab::Trash => &[
@@ -351,8 +346,6 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
                 ("D", "empty all…"),
                 ("u", "remove from list"),
             ],
-            Tab::History => &[("j/k", "move"), ("m", "options")],
-            Tab::Ignores => &[("u", "remove ignore"), ("m", "options")],
         }
     };
     let mut spans = vec![Span::raw(" ")];
@@ -820,67 +813,6 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
     out
 }
 
-fn history(state: &AppState, theme: &Theme) -> Lines {
-    let mut out: Lines = vec![Line::from("")];
-    let entries = state
-        .summary
-        .as_ref()
-        .map(|s| s.history.as_slice())
-        .unwrap_or_default();
-    if entries.is_empty() {
-        out.push(Line::from(Span::styled(
-            "  Nothing yet. Deletions and previews are logged here.",
-            theme.dim(),
-        )));
-    }
-    for (n, h) in entries.iter().enumerate() {
-        let style = match h.outcome.as_str() {
-            "deleted" => theme.good(),
-            "partial" | "skipped" | "interrupted-outcome-unknown" => theme.warn(),
-            _ => theme.dim(),
-        };
-        out.push(Line::from(vec![
-            Span::styled(
-                if n == state.cursor { "❯ " } else { "  " },
-                theme.selected(),
-            ),
-            Span::styled(
-                format!("{:<10}", ago(state.now, Some(h.created))),
-                theme.dim(),
-            ),
-            Span::raw(format!("{:<9}", h.kind)),
-            Span::styled(h.outcome.clone(), style),
-        ]));
-    }
-    out
-}
-
-fn ignores(state: &AppState, theme: &Theme) -> Lines {
-    let mut out: Lines = vec![Line::from("")];
-    let entries = state
-        .summary
-        .as_ref()
-        .map(|s| s.ignores.as_slice())
-        .unwrap_or_default();
-    if entries.is_empty() {
-        out.push(Line::from(Span::styled(
-            "  No ignored findings. Press i on a finding to hide it.",
-            theme.dim(),
-        )));
-    }
-    for (n, i) in entries.iter().enumerate() {
-        out.push(Line::from(vec![
-            Span::styled(
-                if n == state.cursor { "❯ " } else { "  " },
-                theme.selected(),
-            ),
-            Span::styled(format!("{}  ", i.rule), theme.cyan()),
-            Span::raw(clean(&i.path)),
-        ]));
-    }
-    out
-}
-
 fn plan_view(plan: &Plan, theme: &Theme) -> Lines {
     let mut out: Lines = vec![
         Line::from(""),
@@ -919,10 +851,7 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
         Line::from(""),
         Line::from(Span::styled("  Shortcuts (any key closes)", theme.bold())),
         row("m", "options menu for the selected item and the app"),
-        row(
-            "1-6  Tab",
-            "Overview · Browse · Findings · OMG Trash · History · Ignores",
-        ),
+        row("1-4  Tab", "Overview · Browse · Findings · OMG Trash"),
         row("j k ↑ ↓", "move        PgUp/PgDn jump"),
         row("⏎ →  ⌫ ←", "open folder / details  ·  up one folder"),
         row(
@@ -931,12 +860,9 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
         ),
         row("d", "delete permanently… (always asks; cannot be undone)"),
         row("D", "in OMG Trash: delete everything listed…"),
-        row("u", "remove from OMG Trash / remove an ignore"),
+        row("u", "remove from OMG Trash"),
         row("r  R", "scan  ·  full rescan        esc stops a scan"),
-        row(
-            "p i o t",
-            "preview · ignore · show in file manager · tier filter",
-        ),
+        row("p i o t", "preview · show in file manager · tier filter"),
         Line::from(""),
         Line::from(Span::styled(
             "  Protected forever: .git, credentials, databases, disk images, anything outside your home.",
