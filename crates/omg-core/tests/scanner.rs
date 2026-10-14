@@ -296,3 +296,17 @@ fn live_volume_sample_tracks_real_free_space() {
         "used space shrank: {used_before} -> {used_after}"
     );
 }
+
+#[test]
+fn eta_matches_the_measured_scan_speed() {
+    // 1.56 M entries total, half walked after 12 s: about 12 s of walking left plus ~6 s to finish.
+    let left = scanner::eta(780_000, 1_660_000, 12.0, None);
+    assert!((14.0..=34.0).contains(&left), "walking eta {left}");
+    // Once the walk ends, finishing 1.56 M entries is a few seconds, not a minute.
+    let finishing = scanner::eta(1_560_000, 1_660_000, 24.0, Some(0.0));
+    assert!(
+        (3.0..=10.0).contains(&finishing),
+        "finishing eta {finishing}"
+    );
+    assert_eq!(scanner::eta(1_560_000, 1_660_000, 24.0, Some(30.0)), 1.0);
+}

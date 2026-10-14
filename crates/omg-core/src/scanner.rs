@@ -30,8 +30,12 @@ pub fn scan(
 /// (comparison, folder totals, publication). Readers mask it off to get the entry count.
 pub const FINISHING: u64 = 1 << 63;
 
-/// Entries per second the finishing phase processes (measured: ~1.5 M entries in 60–70 s).
-const FINISH_RATE: f64 = 22_000.0;
+/// Fixed cost after folder totals: bounded pruning of the previous scan, checkpoint, trend sample.
+const FINISH_FIXED: f64 = 4.0;
+
+/// Entries per second the finishing phase processes (measured: ~1.5 M entries in about 6 s now
+/// that folder totals are accumulated during the walk).
+const FINISH_RATE: f64 = 250_000.0;
 
 /// Estimated seconds left. `walking_secs` is time spent walking so far; `finishing_secs` is time
 /// since finishing began, if it has. The inode total is an upper bound (it includes skipped
@@ -39,11 +43,11 @@ const FINISH_RATE: f64 = 22_000.0;
 pub fn eta(done: u64, total: u64, walking_secs: f64, finishing_secs: Option<f64>) -> f64 {
     let done = done as f64;
     if let Some(since) = finishing_secs {
-        return (done / FINISH_RATE - since).max(2.0);
+        return (done / FINISH_RATE + FINISH_FIXED - since).max(1.0);
     }
     let rate = (done / walking_secs.max(0.001)).max(1.0);
     let expected = done.max(total as f64 * 0.94);
-    (expected - done) / rate + expected / FINISH_RATE
+    (expected - done) / rate + expected / FINISH_RATE + FINISH_FIXED
 }
 
 /// Sensible default parallelism: filesystem metadata is I/O-latency bound, so use most cores
