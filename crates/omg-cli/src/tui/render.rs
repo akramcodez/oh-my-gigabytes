@@ -895,6 +895,14 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
         row("d", "delete permanently… (always asks; cannot be undone)"),
         row("D", "in OMG Trash: delete everything listed…"),
         row("u", "remove from OMG Trash"),
+        row(
+            "capability",
+            &format!(
+                "permanent delete: {} · OS Trash: {}",
+                omg_core::capability::platform_permanent_delete().as_str(),
+                omg_core::capability::os_trash().as_str()
+            ),
+        ),
         row("r  R", "scan  ·  full rescan        esc stops a scan"),
         row("p i o t", "preview · show in file manager · tier filter"),
         Line::from(""),

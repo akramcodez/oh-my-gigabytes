@@ -123,6 +123,31 @@ Not done:
 - Cancel in the TUI does not tell the backend to discard the plan. The plan stays in memory until it expires or the session ends. Harmless: the TUI no longer holds the fingerprint, but a discard call would be cleaner.
 - Concurrent reuse across two TUI processes cannot happen, because each process has its own in-memory store. Within one process the `&mut self` borrow serialises calls.
 
+## Session 2026-10-15 (second pass): remaining work packages
+
+Commits on `main`: `05e624a` (WP04), `cc54459` (WP06/WP07/WP10 parts). Further changes are uncommitted at the time of writing; see git log.
+
+| WP | Result | Evidence |
+| --- | --- | --- |
+| WP04 | Done. Auto-fill off by default; Cancel discards the issued plan; a failed or empty review undoes staging | Unit and integration tests; TUI test with real Cancel action |
+| WP05 | Partial. Barrier tests via `delete_with_control`: replaced directory, symlink swap, protected child inserted | `tests/cleanup.rs` (deterministic hooks; tmpfs) |
+| WP06 | Core done. Migration 011 (`delete_targets`); intent and targets in one transaction; per-target outcomes; interrupted labelling; cancel flag; partial labelled `partial` | Tests: failed intent write, cancellation, interrupted attempt, partial removal |
+| WP07 | Partial. Hard-link deletion totals equal an independent fresh scan; partial removal flags `reconcile_needed`, cleared by the next complete scan | Test `deleting_one_hard_link_name_keeps_data_and_totals_match_a_fresh_scan` |
+| WP08 | Synthetic benchmark only: 10,100 entries, cold 27 ms, warm 27 ms, startup query 3 ms, rollup read 0 ms (`cargo run --release -p omg-core --example benchmark`, this host) | Not representative; no RSS/FD measurement; tool-root overrides not implemented |
+| WP09 | Investigation delivered. Source: freedesktop Trash spec, fetched via agent-reach (Jina Reader) 2026-10-15. Race not resolved; OS Trash kept disabled | `docs/linux-os-trash-investigation.md` |
+| WP10 | Done: auto-filled items labelled in Trash tab; failed `DeleteNow` review undoes staging; capability on help screen (from capability module); cancel reported; stale totals reported | Render and worker changes; CLI tests |
+| WP11 | Findings, not qualification: `notify-send` fails here (`undefined symbol: notify_notification_get_activation_app_launch_context`); D-Bus notification server accepted a test message via `busctl`. Second user, WSL, journald, idle budget missing | Command output in this session |
+| WP12 | Matrix written with observed evidence: birth time reported on tmpfs and Btrfs; ext4, WSL2, ARM64, oldest kernel not available | `docs/linux-qualification.md` |
+| WP13 | Partial: `artifacts.yml` restricted to Linux x86_64 GNU (macOS/Windows stay compile checks). Not run remotely. Actions not SHA-pinned | Workflow edit |
+| WP14 | Partial: governance doc and `SECURITY.md` (no maintainer contact invented). Owner items open | `docs/linux-release-governance.md`, `SECURITY.md` |
+| WP15 | Decision recorded: not a release candidate; not published | `docs/linux-release-checklist.md` |
+
+Also in this session:
+- CLI: a bare `omg` without a terminal now refuses before creating state. A test found that it previously created the state directory first.
+- Checks: fmt, clippy (`-D warnings`), `cargo test --workspace --locked` (all 10 suites, 0 failures, 16 cleanup tests), build, PTY (1 OK), Node release tests (10/10).
+
+Owner items still open: auto-fill default (decided off here, reversible), security contact and private reporting, signing key and publisher identity, native ext4 and WSL2 hosts, second user account, `notify-send` repair or D-Bus change, sudo for the leftover Btrfs subvolume, authorization to publish.
+
 ## WP03 — baseline (2026-10-15, before any code change)
 
 Environment:

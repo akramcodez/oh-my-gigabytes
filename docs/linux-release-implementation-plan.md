@@ -26,21 +26,21 @@ Pending owner decisions are listed under [Prerequisites](#owner-and-environment-
 
 | WP | Title | Status |
 | --- | --- | --- |
-| WP01 | Reconcile implementation status | Closed for docs; small deferred items listed |
-| WP02 | Separate support from cleanup qualification | Implemented, partial (TUI display, non-Linux CI check) |
-| WP03 | Record reproducible baseline | Baseline commands recorded; remaining checks listed |
-| WP04 | Make confirmation exact and one-use | Core implemented 2026-10-15; auto-fill default is an owner decision |
-| WP05 | Prove target and descendant safety | Not started; needs ext4 host |
-| WP06 | Durable per-target outcomes and cancellation | Not started |
-| WP07 | Correct inventory after mutation and failures | Not started |
-| WP08 | Qualify findings and scanner scaling | Not started |
-| WP09 | Investigate and qualify Linux OS Trash | Not started |
-| WP10 | Clear action and outcome UI | Not started |
-| WP11 | Qualify optional scan-only service | Not started |
-| WP12 | Publish a tested compatibility matrix | Not started; needs ext4 and WSL2 hosts |
-| WP13 | Build and install reproducible artifacts | Not started |
-| WP14 | Upgrade, trust, and release governance | Not started; needs production key owner |
-| WP15 | Assemble the release decision | Not started; needs publish authority |
+| WP01 | Reconcile implementation status | Closed for docs |
+| WP02 | Separate support from cleanup qualification | Implemented; TUI status done; CI check of macOS/Windows pending remote run |
+| WP03 | Record reproducible baseline | Baseline recorded; named-check map done; ext4 and Btrfs re-run missing |
+| WP04 | Make confirmation exact and one-use | Done (auto-fill default off; cancel discards plan) |
+| WP05 | Prove target and descendant safety | Partial: barrier tests on tmpfs pass; ext4/Btrfs native cases and birth-time fallback missing |
+| WP06 | Durable per-target outcomes and cancellation | Core done: per-target outcomes, cancel mechanism; not wired to a TUI key |
+| WP07 | Correct inventory after mutation and failures | Partial: hard-link oracle and partial-removal flag done; crash/disk-full tests missing |
+| WP08 | Qualify findings and scanner scaling | Partial: synthetic benchmark recorded; representative trees and tool-root overrides missing |
+| WP09 | Investigate and qualify Linux OS Trash | Investigation delivered (`linux-os-trash-investigation.md`); OS Trash kept disabled |
+| WP10 | Clear action and outcome UI | Mostly done; PTY tests for new screens and real-session review missing |
+| WP11 | Qualify optional scan-only service | Blocked/findings: desktop notify-send broken here; second-user and WSL missing |
+| WP12 | Publish a tested compatibility matrix | Matrix written with observed evidence only; other profiles missing |
+| WP13 | Build and install reproducible artifacts | Partial: artifacts Linux-only; not run remotely; actions not SHA-pinned |
+| WP14 | Upgrade, trust, and release governance | Partial: governance doc and SECURITY.md; owner items open |
+| WP15 | Assemble the release decision | Decision recorded: not a release candidate; not published |
 
 ## Execution rules for a small agent
 

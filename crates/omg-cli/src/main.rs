@@ -241,6 +241,12 @@ fn run() -> Result<()> {
         );
         return Ok(());
     }
+    // Refuse before opening state: a nonterminal run must not create or migrate anything.
+    if cli.command.is_none()
+        && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
+    {
+        bail!("interactive TUI requires a terminal; use omg status or omg scan --root PATH");
+    }
     let mut index = Index::open(&state)?;
     match cli.command {
         Some(Command::Scan {
@@ -455,11 +461,6 @@ fn run() -> Result<()> {
             }
         },
         None => {
-            if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-                bail!(
-                    "interactive TUI requires a terminal; use omg status or omg scan --root PATH"
-                );
-            }
             tui::run(index)?;
         }
         _ => unreachable!(),

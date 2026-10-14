@@ -466,3 +466,25 @@ fn tree_reports_subtree_sizes_and_rejects_escapes() {
     let status = json(&omg(&["status"]));
     assert!(status["explained_estimate_bytes"].is_u64());
 }
+
+/// Without a terminal the interactive TUI must refuse with a clear message, not hang or draw.
+/// Stdin and stdout are pipes here, so the binary sees no terminal.
+#[test]
+#[cfg(target_os = "linux")]
+fn interactive_tui_refuses_without_a_terminal_and_changes_nothing() {
+    let fixture = tempfile::tempdir().unwrap();
+    let state = fixture.path().join("state");
+    let result = Command::new(env!("CARGO_BIN_EXE_omg"))
+        .arg("--state-dir")
+        .arg(&state)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("interactive TUI requires a terminal"),
+        "{stderr}"
+    );
+    assert!(!state.exists(), "refusal must not create state");
+}
