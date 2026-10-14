@@ -466,6 +466,10 @@ fn overview(state: &AppState, theme: &Theme, width: usize) -> Lines {
         )));
         return out;
     }
+    out.push(Line::from(Span::styled(
+        "  Shared clone/snapshot space is unknown; indexed bytes are not space-freed estimates.",
+        theme.warn(),
+    )));
     out.push(Line::from(Span::styled("  Biggest folders", theme.bold())));
     if !summary.rollups {
         out.push(Line::from(Span::styled(

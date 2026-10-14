@@ -140,6 +140,14 @@ pub mod linux {
     };
     use std::{ffi::CStr, os::unix::ffi::OsStrExt};
 
+    const EXT_SUPER_MAGIC: u64 = 0xef53;
+    const TMPFS_MAGIC: u64 = 0x01021994;
+    const BTRFS_SUPER_MAGIC: u64 = 0x9123683e;
+
+    fn supported_filesystem(magic: u64) -> bool {
+        matches!(magic, EXT_SUPER_MAGIC | TMPFS_MAGIC | BTRFS_SUPER_MAGIC)
+    }
+
     pub fn root(path: &Path) -> Result<OwnedFd> {
         let anchor = fs::open(
             "/",
@@ -164,8 +172,10 @@ pub mod linux {
             )
         })?;
         let magic = fs::fstatfs(&fd)?.f_type as u64;
-        if ![0xef53, 0x01021994].contains(&magic) {
-            bail!("unsupported filesystem profile; use a local ext-family/tmpfs Linux root");
+        if !supported_filesystem(magic) {
+            bail!(
+                "unsupported filesystem profile 0x{magic:x}; use a local ext-family/tmpfs/Btrfs Linux root"
+            );
         }
         Ok(fd)
     }
@@ -227,5 +237,18 @@ pub mod linux {
             sample.f_blocks.saturating_mul(sample.f_frsize),
             sample.f_bavail.saturating_mul(sample.f_frsize),
         ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn filesystem_allowlist_includes_btrfs_and_rejects_unknown_profiles() {
+            assert!(supported_filesystem(EXT_SUPER_MAGIC));
+            assert!(supported_filesystem(TMPFS_MAGIC));
+            assert!(supported_filesystem(BTRFS_SUPER_MAGIC));
+            assert!(!supported_filesystem(0xdead_beef));
+        }
     }
 }

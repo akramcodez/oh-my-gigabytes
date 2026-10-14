@@ -146,6 +146,17 @@ fn helpers_format_humanly() {
     assert_eq!(theme::clean(b"a\x1bb"), "a\\u{1b}b");
 }
 
+#[test]
+fn overview_explains_that_shared_extents_are_not_freed_space() {
+    let state = AppState {
+        summary: Some(Box::new(summary_with_marked(b"/cache"))),
+        ..Default::default()
+    };
+    let text = draw(&state, 120, 30);
+    assert!(text.contains("Shared clone/snapshot space is unknown"));
+    assert!(text.contains("not space-freed estimates"));
+}
+
 /// `cargo test -p omg-cli preview_screens -- --ignored --nocapture` prints sample screens.
 #[test]
 #[ignore]

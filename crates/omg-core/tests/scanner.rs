@@ -150,6 +150,74 @@ fn denied_roots_and_private_state() {
     assert!(platform::absolute(Path::new("../unsafe")).is_err());
 }
 
+/// Run explicitly with `OMG_BTRFS_TEST_DIR=/path/on/btrfs cargo test -p omg-core btrfs_root_and_state_are_scannable -- --ignored`.
+#[test]
+#[ignore = "requires an existing writable Btrfs path in OMG_BTRFS_TEST_DIR"]
+fn btrfs_root_and_state_are_scannable() {
+    let base = std::env::var_os("OMG_BTRFS_TEST_DIR")
+        .expect("set OMG_BTRFS_TEST_DIR to an existing writable Btrfs directory");
+    let base = Path::new(&base);
+    let fd = platform::linux::root(base).expect("Btrfs fixture root should be supported");
+    assert_eq!(rustix::fs::fstatfs(&fd).unwrap().f_type as u64, 0x9123_683e);
+
+    let fixture = tempfile::Builder::new()
+        .prefix("omg-btrfs-test-")
+        .tempdir_in(base)
+        .unwrap();
+    let root = fixture.path().join("scan-root");
+    fs::create_dir(&root).unwrap();
+    let state = fixture.path().join("state");
+    fs::create_dir(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(root.join("artifact"), vec![7u8; 64 * 1024]).unwrap();
+    fs::hard_link(root.join("artifact"), root.join("artifact-link")).unwrap();
+
+    let clone_path = root.join("artifact-reflink");
+    let cloned = std::process::Command::new("cp")
+        .args(["--reflink=always", "--"])
+        .arg(root.join("artifact"))
+        .arg(&clone_path)
+        .status()
+        .is_ok_and(|status| status.success());
+    if !cloned {
+        eprintln!("Btrfs reflink fixture unavailable; clone accounting not exercised");
+    }
+
+    let mut index = Index::open(&state).expect("Btrfs state directory should be supported");
+    let report = scan(&mut index, &root);
+    assert_eq!(report.state, "complete");
+    let entries = index.entries(100, 0).unwrap();
+    let artifact = entries
+        .iter()
+        .find(|entry| entry.path == b"artifact")
+        .unwrap();
+    let hard_link = entries
+        .iter()
+        .find(|entry| entry.path == b"artifact-link")
+        .unwrap();
+    assert_eq!(artifact.identity, hard_link.identity);
+    if cloned {
+        let reflink = entries
+            .iter()
+            .find(|entry| entry.path == b"artifact-reflink")
+            .unwrap();
+        assert_ne!(artifact.identity, reflink.identity);
+        assert_eq!(artifact.apparent, reflink.apparent);
+    }
+    assert!(
+        index
+            .status()
+            .unwrap()
+            .scope_note
+            .contains("not reclaimable-space estimates")
+    );
+    drop(index);
+    assert!(
+        Index::open(&state).is_ok(),
+        "Btrfs SQLite index should reopen"
+    );
+}
+
 #[test]
 fn database_corruption_and_future_schema_are_not_overwritten() {
     let state = private_state();

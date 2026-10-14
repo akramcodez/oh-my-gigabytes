@@ -330,7 +330,7 @@ impl Index {
         let volume: Option<(u64,u64,i64)> = self.db.query_row("SELECT capacity,available,sampled FROM scans WHERE capacity IS NOT NULL ORDER BY id DESC LIMIT 1", [], |r| Ok((unsigned(r,0)?,unsigned(r,1)?,r.get(2)?))).optional()?;
         Ok(Status { root, last_successful, last_report, entries,
             unique_apparent: apparent, unique_allocated: allocated, capacity: volume.map(|v|v.0), available: volume.map(|v|v.1), volume_sample_at: volume.map(|v|v.2),
-            scope_note: "Scoped metadata inventory, not whole-volume usage. Exclusions omitted; shared clones/snapshots unknown. Background service state is reported separately.".into() })
+            scope_note: "Scoped metadata inventory, not whole-volume usage. Exclusions omitted; shared clones/snapshots unknown, so indexed bytes are not reclaimable-space estimates. Background service state is reported separately.".into() })
     }
     pub fn entries(&self, limit: usize, offset: usize) -> Result<Vec<Entry>> {
         let mut statement = self.db.prepare("SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=(SELECT scan_id FROM active WHERE singleton=1) ORDER BY allocated DESC,path LIMIT ? OFFSET ?")?;

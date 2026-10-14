@@ -123,7 +123,7 @@ Performance budgets are established **after** measurement, not invented universa
 | Background service | Idle CPU/RSS, scan CPU/I/O, battery-aware behavior where supported, backoff |
 | Cleanup preview | Revalidation cost, completeness/denial, UI responsiveness for large exact target sets |
 
-Representative fixtures: many tiny files, single huge directory, deep nested projects, large sparse files, hard links across roots, permission-denied directories, changing trees, SSD/NVMe and rotating disk where available. Run native Windows NTFS, macOS APFS, Linux ext4 first. Unknown/cloud/network environments are correctness/denial cases, not an opportunity to claim scan speed.
+Representative fixtures: many tiny files, single huge directory, deep nested projects, large sparse files, hard links across roots, permission-denied directories, changing trees, SSD/NVMe and rotating disk where available. Run native Windows NTFS, macOS APFS, Linux ext4 and Btrfs. Unknown/cloud/network environments are correctness/denial cases, not an opportunity to claim scan speed.
 
 Record build/compiler/catalog versions, OS/kernel, CPU/RAM, disk/filesystem, tree entry counts/shape, bytes, cache conditions, exclusions, worker/resource settings, sample count and percentiles/variance. An empty app index is not necessarily an OS cold cache; distinguish these explicitly. Do not drop host caches or disturb user workloads without an explicitly controlled benchmark environment.
 

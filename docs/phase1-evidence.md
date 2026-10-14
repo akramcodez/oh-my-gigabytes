@@ -5,7 +5,7 @@ Status: **Linux analysis development milestone implemented; full Phase 1 accepta
 ## Implemented
 
 - Rust 1.95.0 pinned workspace, `omg` executable, owner-approved MIT OR Apache-2.0 licensing and license texts.
-- Linux ext-family/tmpfs profile with anchored `openat2` no-follow/no-mount descendant acquisition, raw Unix paths, device/inode identity, logical and allocated metadata.
+- Linux local ext-family/tmpfs/Btrfs profile with anchored `openat2` no-follow/no-mount descendant acquisition, raw Unix paths, device/inode identity, logical and allocated metadata. Btrfs nested subvolumes are mount boundaries; shared reflink/snapshot extents are not measured as reclaimable space.
 - OMG-owned fixed worker pool (1–8), one directory stream per active worker, at most 64 queued events with 4096-byte paths; directory backlog lives in SQLite rather than an unbounded in-memory queue. Batches at most 128 events; SQLite page cache budget 4 MiB. No payload contents are opened.
 - Single explicit root per profile, exclusions, last-valid/staging scan generations, atomic publication, kernel scan lock, cancellation token and CLI Ctrl-C handling, visible partial/errors.
 - Bounded generation pruning, schema version checks, corruption refusal and documented preservation/rebuild guidance. Private supported local state, SQLite no-follow opening, WAL/FULL durability.
@@ -37,6 +37,12 @@ Synthetic benchmark: 100 directories × 100 64-byte files, debug build, OS cache
 - Generic root acquisition and private-state checks reduce redirection risks but do not claim a security boundary against a hostile same-account process replacing application state.
 
 The CI workflow compiles on all three OS families, with non-Linux acquisition disabled; it has not been run remotely here. All mandatory native and release gates remain open. Later catalog/review work may build on this development milestone, but the checklist must not call full Phase 1 complete.
+
+## Btrfs support verification (2026-10-15)
+
+On the user's Fedora Linux host, `/home` is Btrfs. The filesystem allowlist now accepts Btrfs magic `0x9123683e` while continuing to reject unknown profiles. An opt-in native test creates disposable root/state fixtures on a verified Btrfs path and checks scan, SQLite reopen, hard-link identity, and reflink identity when `cp --reflink=always` is available. The native CLI fixture also checks `scan`, `status`, `tree`, `findings`, read-only cleanup preview, and that its target file remains unchanged. Both opt-in tests passed on this host.
+
+A nested Btrfs subvolume test fixture reported a distinct device ID. Scanning its parent completed with one excluded boundary and zero traversal errors; `omg tree` showed the subvolume as excluded with no contents counted. The TUI opened against that index and displayed the shared clone/snapshot size limitation. These results cover this Fedora host and fixture only; they do not certify every kernel, mount arrangement, network-backed Btrfs volume, performance profile, or full cross-subvolume inventory. Cleanup remains disabled.
 
 ## Directory rollups (added after Phase 5)
 

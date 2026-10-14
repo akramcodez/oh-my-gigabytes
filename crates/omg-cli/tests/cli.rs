@@ -80,6 +80,76 @@ fn scan_status_findings_and_dry_run_roundtrip() {
     let value: serde_json::Value = serde_json::from_slice(&history.stdout).unwrap();
     assert_eq!(value[0]["outcome"], "evaluated-no-mutation");
 }
+
+/// Run explicitly with `OMG_BTRFS_TEST_DIR=/path/on/btrfs cargo test -p omg-cli btrfs_cli_profile -- --ignored`.
+#[test]
+#[ignore = "requires an existing writable Btrfs path in OMG_BTRFS_TEST_DIR"]
+#[cfg(target_os = "linux")]
+fn btrfs_cli_profile_scans_and_previews_without_mutation() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = std::env::var_os("OMG_BTRFS_TEST_DIR")
+        .expect("set OMG_BTRFS_TEST_DIR to an existing writable Btrfs directory");
+    let base = std::path::Path::new(&base);
+    let fs_type = Command::new("stat")
+        .args(["-f", "--format=%T"])
+        .arg(base)
+        .output()
+        .expect("GNU stat is needed to verify the native fixture filesystem");
+    assert!(fs_type.status.success());
+    assert_eq!(String::from_utf8_lossy(&fs_type.stdout).trim(), "btrfs");
+
+    let fixture = tempfile::Builder::new()
+        .prefix("omg-btrfs-cli-")
+        .tempdir_in(base)
+        .unwrap();
+    let state = fixture.path().join("state");
+    std::fs::create_dir(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let root = fixture.path().join("scan-root");
+    std::fs::create_dir(&root).unwrap();
+    let target = root.join("large.zip");
+    std::fs::File::create(&target)
+        .unwrap()
+        .set_len(101 * 1024 * 1024)
+        .unwrap();
+
+    let binary = env!("CARGO_BIN_EXE_omg");
+    let invoke = |args: &[&str]| {
+        Command::new(binary)
+            .arg("--state-dir")
+            .arg(&state)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let scan = invoke(&["scan", "--root", root.to_str().unwrap()]);
+    assert!(
+        scan.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scan.stderr)
+    );
+    let status = invoke(&["status"]);
+    assert!(status.status.success());
+    let status: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert!(
+        status["scope_note"]
+            .as_str()
+            .unwrap()
+            .contains("not reclaimable-space estimates")
+    );
+    assert!(invoke(&["tree"]).status.success());
+
+    let findings = invoke(&["findings"]);
+    assert!(findings.status.success());
+    let findings: serde_json::Value = serde_json::from_slice(&findings.stdout).unwrap();
+    let candidate = findings[0]["id"].as_str().unwrap();
+    let preview = invoke(&["cleanup", "--dry-run", "--candidate", candidate]);
+    assert!(preview.status.success());
+    assert_eq!(std::fs::metadata(&target).unwrap().len(), 101 * 1024 * 1024);
+    assert!(invoke(&["history"]).status.success());
+}
+
 #[test]
 fn dry_run_requires_explicit_targets_and_no_unattended_execution_flag() {
     let binary = env!("CARGO_BIN_EXE_omg");
