@@ -257,7 +257,7 @@ impl App {
         };
         if s.target().is_some() {
             push(
-                "Add to OMG Trash (saves the path only)",
+                "Add to / remove from OMG Trash (saves the path only)",
                 Some(' '),
                 Action::Mark,
                 Tone::Normal,
@@ -415,9 +415,19 @@ impl App {
                 self.state.details = false;
             }
             Action::Help => self.state.help = true,
+            // Space toggles: a saved item is taken back out of OMG Trash.
             Action::Mark => {
                 if let Some((path, allocated)) = self.state.target() {
-                    self.request(Request::Mark { path, allocated }, None);
+                    let saved = self
+                        .state
+                        .summary
+                        .as_ref()
+                        .and_then(|s| s.marked.iter().find(|m| m.path == path))
+                        .map(|m| m.id);
+                    match saved {
+                        Some(id) => self.request(Request::Unmark(vec![id]), None),
+                        None => self.request(Request::Mark { path, allocated }, None),
+                    }
                 }
             }
             Action::DeleteNow => {

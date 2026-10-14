@@ -342,13 +342,13 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
             Tab::Browse => &[
                 ("⏎", "open"),
                 ("⌫", "up"),
-                ("␣", "add to OMG Trash"),
+                ("␣", "add / remove OMG Trash"),
                 ("d", "delete…"),
                 ("m", "options"),
             ],
             Tab::Findings => &[
                 ("⏎", "details"),
-                ("␣", "add to OMG Trash"),
+                ("␣", "add / remove OMG Trash"),
                 ("d", "delete…"),
                 ("p", "preview"),
                 ("t", "tier"),
@@ -770,7 +770,7 @@ fn details(f: &Finding, theme: &Theme) -> Lines {
         line("Source", f.rule.source.clone()),
         Line::from(""),
         Line::from(Span::styled(
-            "  ⏎ back · space add to OMG Trash · d delete… · p dry-run preview",
+            "  ⏎ back · space add/remove OMG Trash · d delete… · p dry-run preview",
             theme.dim(),
         )),
     ]
@@ -884,7 +884,7 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
         row("⏎ →  ⌫ ←", "open folder / details  ·  up one folder"),
         row(
             "space",
-            "add to OMG Trash (saves the path; nothing changes on disk)",
+            "add / remove from OMG Trash (saves the path; nothing changes on disk)",
         ),
         row("d", "delete permanently… (always asks; cannot be undone)"),
         row("D", "in OMG Trash: delete everything listed…"),
