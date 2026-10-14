@@ -41,7 +41,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
             Ok(_) => (),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(
-                    serde_json::json!({"platform":std::env::consts::OS,"sqlite":sqlite_version(),"state":"not initialized","cleanup":"disabled","service":"see omg service status"}),
+                    serde_json::json!({"platform":std::env::consts::OS,"sqlite":sqlite_version(),"state":"not initialized","cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status"}),
                 );
             }
             Err(error) => return Err(error.into()),
@@ -59,7 +59,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let database = absolute.join("index.sqlite");
     if !database.exists() {
         return Ok(
-            serde_json::json!({"state":"no index","sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status"}),
+            serde_json::json!({"state":"no index","sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status"}),
         );
     }
     for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
@@ -78,7 +78,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=10,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=10,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":"development Linux only"}),
     )
 }
 

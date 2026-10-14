@@ -1,6 +1,6 @@
 # Development distribution, authenticity and installation
 
-Status: Phase 4 development packaging implementation. **No npm package or signed public release is published.** Source wrapper/native packages are private; signing keys and namespace ownership are not provisioned. Native macOS/Windows analysis and all cleanup/services remain disabled.
+Status: Phase 4 development packaging implementation. **No npm package or signed public release is published.** Source wrapper/native packages are private; signing keys and namespace ownership are not provisioned. Native macOS/Windows analysis and all cleanup/services remain disabled. **Update (WP02, 2026-10-15):** Linux packages declare permanent delete as `development-unqualified` (home-only, unqualified). OS Trash is not implemented. Services are unchanged.
 
 ## What exists
 
@@ -50,7 +50,7 @@ Ed25519 signs `OMG-BINARY-MANIFEST-V1\0` followed by the **exact UTF-8 manifest 
 
 - `schema`, application `version`, platform `target`, Rust `triple`.
 - Fixed `file` (`omg` or `omg.exe`), exact `size`, SHA-256 `sha256`, pinned `keyId`.
-- `capabilities`: Linux analysis and service `development-linux` (other OS `disabled`), cleanup `disabled`. The packages still never register or start a service; registration is the user's explicit `omg start`/`omg service install`.
+- `capabilities`: Linux analysis and service `development-linux` (other OS `disabled`), permanent delete `development-unqualified` (Linux only; other OS `disabled`; the binary refuses unknown filesystems). OS Trash is not implemented and is not declared. The manifest field is still named `cleanup`; its value is the permanent-delete capability. The packages still never register or start a service; registration is the user's explicit `omg start`/`omg service install`.
 
 The launcher rejects unsupported fields/schema/capabilities, unsigned/untrusted metadata, signature tampering, mismatched version/target, traversal file names, oversize/redirected files and changed or wrong-format binary payloads. It re-verifies **every launch** and spawns the absolute packaged binary with inherited stdio/argv, no shell or PATH replacement. Signals/exit codes are forwarded. No automatic network fallback.
 

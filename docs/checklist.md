@@ -77,7 +77,7 @@ See [phase2-evidence.md](phase2-evidence.md): bundled inventory rules, policy, f
 - [ ] Verify terminal restoration, narrow screens and truthful processed/space-delta reporting.
 - [ ] Pass Phase 3 safety gates before enabling any cleanup.
 
-See [phase3-evidence.md](phase3-evidence.md): read-only navigation/details/filters/ignores, exact explicit dry-run, revalidation/history and 15 passing Rust tests plus PTY smoke implemented. Actual Trash, native safety, operation outcomes and independent usability acceptance remain blocked; cleanup is disabled.
+See [phase3-evidence.md](phase3-evidence.md): read-only navigation/details/filters/ignores, exact explicit dry-run, revalidation/history and 15 passing Rust tests plus PTY smoke implemented. Actual OS Trash, native safety, operation outcomes and independent usability acceptance remain blocked. Permanent deletion (home-only, confirmed plan) exists as a development implementation and is unqualified; see the [Linux release plan](linux-release-implementation-plan.md).
 
 ## Phase 4 — Cross-platform release
 

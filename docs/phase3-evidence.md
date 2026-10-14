@@ -1,6 +1,10 @@
 # Phase 3 implementation evidence
 
-Status: **read-only review/dry-run milestone implemented; full Phase 3 cleanup acceptance is blocked.** No native Trash handler passed the target-race/descendant certification gate. The executor always denies cleanup, even for a forged plan. No phase-completion or “all safe to delete” claim is made.
+Status: **read-only review/dry-run milestone implemented; full Phase 3 cleanup acceptance is blocked.** No native OS Trash handler passed the target-race/descendant certification gate. The older `planning::execute` Trash executor always denies, even for a forged plan. No phase-completion or “all safe to delete” claim is made.
+
+> **Status note (2026-10-15, WP01):** The sections below record the milestone as built. Later code added `cleanup::Index::delete_permanently` (Linux, home-only, confirmed plan, identity and birth-time revalidation, directory-descriptor removal; see the "Delete permanently" bullet below). That is permanent deletion, not OS Trash. Statements in this file that cleanup is "disabled" describe the milestone at the time and are superseded on that point.
+
+> **WP02 (2026-10-15):** Permanent deletion is gated by `capability::permanent_delete`: `development-unqualified` on ext-family, tmpfs and Btrfs (owner decision: Btrfs allowed), refused on other filesystems. The gate runs in `prepare_delete` and before the intent record in `delete_permanently`. Test: `unsupported_root_refuses_plan_and_delete_with_zero_mutations`. "Qualified" is not reached by any profile.
 
 ## Implemented
 

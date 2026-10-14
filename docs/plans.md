@@ -75,6 +75,7 @@ Background service, growth trends, signed online catalog updates beyond offline 
 | D13 | Ship no Safe rules until evidence/tests qualify them | Narrow reliable recommendations are better than a reassuring unsupported label |
 | D15 | Owner-approved user cleanup: an "OMG Trash" list that only saves paths, and explicit permanent deletion from it (Linux, inside the user's home only) | Requested by the owner 2026-10-14. Hard protections always deny; Git-repository membership is a confirmed warning; targets are revalidated (identity + birth time) and removed through directory descriptors. Supersedes "Trash only" (S07) for this explicit flow; see phase3-evidence.md |
 | D14 | Close Phase 0 as source-backed research/design; defer unavailable native/user sessions | Owner explicitly requested this scope revision; V01–V06 in `phase0-evidence-review.md` retain later usability, safety and release gates |
+| D16 | Permanent deletion (D15) allowed on ext-family, tmpfs and Btrfs as `development-unqualified`; unknown filesystems refused; no bypass flag | Owner decision 2026-10-15 (home is Btrfs). Enforced by `capability::permanent_delete` in the backend. Btrfs freed space may be less than shown (shared extents). No profile is qualified until the Linux release plan's WP05/WP12 evidence exists |
 
 ## 4. Critical-path work packages
 

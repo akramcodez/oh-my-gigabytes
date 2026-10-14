@@ -1,6 +1,6 @@
 # Phase 5 development evidence
 
-Status: **Linux development milestone implemented and verified; full Phase 5 acceptance is not claimed.** The service is scan-only, optional and never installed implicitly. Cleanup remains disabled (Phase 3 gates are unchanged).
+Status: **Linux development milestone implemented and verified; full Phase 5 acceptance is not claimed.** The service is scan-only, optional and never installed implicitly. Cleanup remains disabled (Phase 3 gates are unchanged). *Superseded note (2026-10-15):* the interactive TUI and CLI now include Linux permanent deletion (D15, home-only); the service itself still has no cleanup path (IPC is scan-only).
 
 ## Commands
 

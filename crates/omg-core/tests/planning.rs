@@ -53,6 +53,8 @@ fn explicit_preview_is_read_only_and_execution_cannot_bypass_denial() {
     assert!(planning::revalidate(root.path(), &finding.entry).is_err());
     let stale = index.preview(&[finding.id]).unwrap();
     assert!(stale.items[0].decision.contains("Stale"));
-    assert!(policy::cleanup_denial(root.path(), &finding.entry).contains("disabled"));
+    assert!(
+        policy::cleanup_denial(root.path(), &finding.entry).contains("OS Trash is not implemented")
+    );
     assert!(platform::path(&plan.items[0].path).unwrap().is_relative());
 }

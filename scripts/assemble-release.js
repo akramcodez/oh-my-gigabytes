@@ -28,7 +28,7 @@ function assemble({ binary, target, version, publicKey, privateKey, out }) {
   const filename = target.startsWith('win32-') ? 'omg.exe' : 'omg';
   const manifest = { schema: 1, version, target, triple: TARGETS[target], file: filename,
     size: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), keyId,
-    capabilities: { analysis: target.startsWith('linux-') ? 'development-linux' : 'disabled', cleanup: 'disabled', service: target.startsWith('linux-') ? 'development-linux' : 'disabled' } };
+    capabilities: { analysis: target.startsWith('linux-') ? 'development-linux' : 'disabled', cleanup: target.startsWith('linux-') ? 'development-unqualified' : 'disabled', service: target.startsWith('linux-') ? 'development-linux' : 'disabled' } };
   const bytes = Buffer.from(JSON.stringify(manifest) + '\n');
   const signature = crypto.sign(null, signedMessage(bytes), key);
   const stage = fs.mkdtempSync(path.join(parent, '.omg-release-'));

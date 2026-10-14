@@ -334,3 +334,41 @@ fn stale_project_dependencies_are_suggested_but_tool_installs_are_not() {
             .collect::<Vec<_>>()
     );
 }
+
+/// Capability refusal is enforced in the backend: a scan root whose filesystem is not an accepted
+/// profile (here procfs) refuses both plan creation and permanent deletion, and neither writes an
+/// operation record. The plan is built first, so only the backend check can stop the deletion.
+#[test]
+fn unsupported_root_refuses_plan_and_delete_with_zero_mutations() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::write(h.join("cache.bin"), b"keep me").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"cache.bin", 7, h).unwrap();
+    let id = id_of(&index, b"cache.bin");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    assert_eq!(plan.items.len(), 1);
+
+    // Point the published scan at procfs, which is not an accepted filesystem profile.
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    db.execute(
+        "UPDATE scans SET root=?1 WHERE id=(SELECT scan_id FROM active)",
+        [b"/proc".as_slice()],
+    )
+    .unwrap();
+
+    let error = index.prepare_delete(&[id], h).unwrap_err().to_string();
+    assert!(error.contains("unsupported filesystem"), "{error}");
+    let error = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unsupported filesystem"), "{error}");
+
+    let operations: i64 = db
+        .query_row("SELECT COUNT(*) FROM operations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(operations, 0, "a refused delete must not write intent");
+    assert_eq!(fs::read(h.join("cache.bin")).unwrap(), b"keep me");
+}

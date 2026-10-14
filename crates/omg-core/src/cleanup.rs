@@ -83,6 +83,23 @@ fn is_cache_root(absolute: &Path, home: &Path) -> bool {
         .any(|root| absolute.starts_with(&root))
 }
 
+/// Permanent-delete support for the filesystem holding the scan `root`. Checked in the backend
+/// before a plan is built and again before any mutation, so a forged plan cannot bypass it.
+fn delete_support(root: &Path) -> Result<crate::capability::Support> {
+    #[cfg(target_os = "linux")]
+    {
+        let fd = platform::linux::root(root)?;
+        Ok(crate::capability::permanent_delete(
+            platform::linux::filesystem(&fd)?,
+        ))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        Ok(crate::capability::Support::Unsupported)
+    }
+}
+
 /// Path-level checks shared by the gate and the final revalidation.
 fn target_checks(root: &Path, home: &Path, entry: &Entry) -> std::result::Result<PathBuf, String> {
     let relative =
@@ -360,6 +377,10 @@ impl Index {
         if ids.is_empty() || ids.len() > 10_000 {
             bail!("select 1–10000 items in OMG Trash to delete");
         }
+        let (_, root, _) = self.scope()?;
+        if delete_support(&root)? == crate::capability::Support::Unsupported {
+            bail!("permanent deletion is not available on this filesystem");
+        }
         let all = self.marked()?;
         let mut items: Vec<Marked> = Vec::new();
         let mut denied = Vec::new();
@@ -413,6 +434,10 @@ impl Index {
             anyhow::anyhow!("a scan is running; wait for it to finish, then delete")
         })?;
         let (_, root, _) = self.scope()?;
+        // Refused before the intent record: an unsupported filesystem changes nothing and logs nothing.
+        if delete_support(&root)? == crate::capability::Support::Unsupported {
+            bail!("permanent deletion is not available on this filesystem");
+        }
         // Unresolved older attempts are never replayed; they are labelled honestly.
         self.db.execute(
             "UPDATE operations SET outcome='interrupted-outcome-unknown' WHERE kind='delete' AND outcome='intent'",

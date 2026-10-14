@@ -246,7 +246,7 @@ pub fn repository_of(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) -> O
 
 pub fn cleanup_denial(root: &Path, entry: &Entry) -> String {
     protection(root, entry).unwrap_or_else(|| {
-        "No identity-safe Trash handler is qualified on this build; cleanup disabled".into()
+        "OS Trash is not implemented on this build; permanent deletion works only from OMG Trash".into()
     })
 }
 

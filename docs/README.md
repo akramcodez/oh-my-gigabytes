@@ -6,7 +6,7 @@
 
 ## Status and reading order
 
-Documentation baseline: **2026-10-13**. Rust development milestones now provide scoped Linux metadata scanning/SQLite, inventory catalog/policy, read-only TUI, explicit dry-run and preview history. Full phase acceptance and native release certification remain incomplete. Current evidence: [phase1-evidence.md](phase1-evidence.md), [phase2-evidence.md](phase2-evidence.md), [phase3-evidence.md](phase3-evidence.md). Their implementation limits take precedence over proposed future behavior in the design documents.
+Documentation baseline: **2026-10-15**. Rust development milestones now provide scoped Linux metadata scanning/SQLite, inventory catalog/policy, TUI, explicit dry-run and preview history, an "OMG Trash" saved-paths list, and Linux home-only **permanent** deletion (`development-unqualified`, not recoverable; OS Trash not implemented). Linux release work is tracked in [linux-release-implementation-plan.md](linux-release-implementation-plan.md) and [linux-release-progress.md](linux-release-progress.md). Full phase acceptance and native release certification remain incomplete. Current evidence: [phase1-evidence.md](phase1-evidence.md), [phase2-evidence.md](phase2-evidence.md), [phase3-evidence.md](phase3-evidence.md). Their implementation limits take precedence over proposed future behavior in the design documents.
 
 Track delivery in [checklist.md](checklist.md). **Phase 0 research/design is complete under scope revision D14**; [phase0-evidence-review.md](phase0-evidence-review.md) records source evidence, closure and deferred native/user-validation gates. Available results are in [phase0.md](phase0.md); the later session/fixture protocol is in [phase0-validation.md](phase0-validation.md).
 

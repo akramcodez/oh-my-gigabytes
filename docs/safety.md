@@ -21,6 +21,8 @@ Status: mandatory design baseline; implementation must prove it. [fullcontext.md
 
 No force flag, user exclusion override, or custom rule may weaken these invariants.
 
+> **Current implementation note (2026-10-15, WP01):** S07 is the design baseline for *ordinary* cleanup. Owner decision D15 ([plans.md](plans.md)) adds an explicit, Linux-only, home-only **permanent** deletion flow (`cleanup::Index::delete_permanently`). That flow is not Trash, is not recoverable, and is a development implementation without qualification. S02, S03, S06, S10 and S11 still apply to it. The older `planning::execute` Trash path still always denies. OS Trash is not implemented. See [linux-release-implementation-plan.md](linux-release-implementation-plan.md) for the qualification gates.
+
 ## 2. Protected data
 
 Core policy combines native protected roots, exact sensitive components, positive rule scope, entry types, identities, and adapter evidence. A blocklist alone cannot classify all sensitive files.

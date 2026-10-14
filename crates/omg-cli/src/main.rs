@@ -229,7 +229,11 @@ fn run() -> Result<()> {
     if matches!(cli.command, Some(Command::Doctor)) {
         let diagnosis = omg_core::index::diagnose(&state)?;
         println!("omg: {}", serde_json::to_string_pretty(&diagnosis)?);
-        println!("cleanup disabled; cloud/FUSE/remote profiles excluded");
+        println!(
+            "permanent delete: {} (Linux: ext-family, tmpfs, Btrfs; unknown filesystems refused); OS Trash: {}; cloud/FUSE/remote profiles excluded",
+            omg_core::capability::platform_permanent_delete().as_str(),
+            omg_core::capability::os_trash().as_str()
+        );
         #[cfg(target_os = "linux")]
         println!(
             "service: {}",
@@ -450,16 +454,6 @@ fn run() -> Result<()> {
                 println!("rolled back to previous verified catalog");
             }
         },
-        Some(Command::Doctor) => {
-            println!(
-                "omg: Linux metadata backend; SQLite {}; private local index opened",
-                omg_core::index::sqlite_version()
-            );
-            println!("cleanup disabled; cloud/FUSE/remote filesystems excluded");
-            println!(
-                "No content reads or network requests during scanning; full reconciliation on refresh."
-            );
-        }
         None => {
             if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
                 bail!(

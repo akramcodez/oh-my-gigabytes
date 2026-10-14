@@ -46,7 +46,7 @@ test('signed assembly verifies and offline payload contains no private signing m
   const f = fixture(t);
   const result = verifyArtifact(f.artifact, f.trust, f);
   assert.equal(result.manifest.version, f.version);
-  assert.equal(result.manifest.capabilities.cleanup, 'disabled');
+  assert.equal(result.manifest.capabilities.cleanup, result.manifest.target.startsWith('linux-') ? 'development-unqualified' : 'disabled');
   assert.equal(result.manifest.capabilities.service, result.manifest.target.startsWith('linux-') ? 'development-linux' : 'disabled');
   const offline = path.join(f.out, 'offline-oh-my-gigabytes');
   assert.equal(resolveArtifact(offline, f.target, f.version), path.join(offline, 'vendor', f.target));
@@ -144,7 +144,7 @@ test('offline npm install with scripts disabled runs verified native binary and 
   const version = invoke(process.execPath, [cli, '--version']);
   assert.match(version.stdout, /omg 0\.1\.0/);
   const state = path.join(f.directory, 'state');
-  assert.match(invoke(process.execPath, [cli, '--state-dir', state, 'doctor']).stdout, /cleanup disabled/);
+  assert.match(invoke(process.execPath, [cli, '--state-dir', state, 'doctor']).stdout, /permanent delete: development-unqualified/);
   assert.ok(!fs.existsSync(state));
   const root = path.join(f.directory, 'scan-root');
   fs.mkdirSync(root);

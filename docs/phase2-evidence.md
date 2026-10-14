@@ -19,7 +19,7 @@ Status: **inventory-only catalog/policy development milestone implemented; full 
 ## Limits and unpassed gates
 
 - Tool-root overrides and native macOS/Windows layouts are not yet implemented; unsupported native scanner remains disabled. Known default-root match is inventory evidence, not dependency/removability proof.
-- Findings are paged over indexed metadata and may produce an empty page; complete category/group aggregation is Phase 3 UI work. There is no actionable reclaimable estimate because all action handlers are disabled.
+- Findings are paged over indexed metadata and may produce an empty page; complete category/group aggregation is Phase 3 UI work. There is no actionable reclaimable estimate because all action handlers are disabled. *Milestone-time statement (2026-10-15 note):* Phase 3 later added permanent deletion (D15) and dry-run previews; see [phase3-evidence.md](phase3-evidence.md).
 - Release key governance/provisioning/rotation and re-verification of retained signed artifacts after local-state tampering need release hardening. The owner-controlled SQLite state is not proof against same-account compromise.
 - Fixtures currently are synthetic engine tests; no real supported tool version is promoted to actionable compatibility. No rule executes a tool or reads contents during scanning.
 - Core protections/fixture tests reduce obvious scope errors but full adversarial cross-platform policy/race tests remain required before actions.

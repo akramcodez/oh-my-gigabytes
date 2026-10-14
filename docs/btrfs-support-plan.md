@@ -2,9 +2,11 @@
 
 ## Goal and scope
 
-Make OMG scan and browse an explicitly selected local Btrfs directory on Fedora, with its private SQLite state directory also on Btrfs. Support metadata inventory, findings, read-only cleanup previews, and existing scan-only service behavior. Cleanup execution remains disabled.
+Make OMG scan and browse an explicitly selected local Btrfs directory on Fedora, with its private SQLite state directory also on Btrfs. Support metadata inventory, findings, read-only cleanup previews, and existing scan-only service behavior. Btrfs permanent deletion is not qualified and remains unsupported; OS Trash is not implemented.
 
 This is an implementation plan, not evidence that support has been implemented or verified.
+
+*Superseded wording (2026-10-15, WP01):* completion and handoff items below that say "cleanup stays disabled" describe the original Btrfs milestone. Current state: Btrfs scan/analysis is accepted by native evidence; Btrfs permanent deletion is unqualified and unsupported (WP02 gate); OS Trash is not implemented.
 
 Start with one selected subvolume and preserve the scanner's existing boundary exclusions. Recursive inventory across subvolumes, snapshot management, exclusive/shared extent accounting, and enabling deletion are separate features. Do not add privileged commands, automatic mounts, filesystem formatting, or a Btrfs CLI dependency to ordinary scans.
 

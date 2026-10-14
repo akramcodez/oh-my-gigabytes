@@ -2,6 +2,8 @@
 
 Status: **packaging/authenticity development work implemented; full Phase 4 acceptance incomplete.** Phases 1–3 also retain documented acceptance blockers. No public package, service or destructive capability was enabled.
 
+> **Superseded (WP02, 2026-10-15):** The capability table below and the manifest statement "cleanup disabled" describe the Phase 4 milestone. The current Linux manifest declares `cleanup: development-unqualified` (permanent delete, D15, home-only, unqualified). The binary offers it on ext-family, tmpfs and Btrfs. OS Trash is not implemented. Both are verified by `release.test.js` and `verify.js`. Non-Linux targets remain `disabled`.
+
 ## Implemented
 
 - Private `oh-my-gigabytes` npm launcher, fixed `omg` binary name, Node built-ins only, same-version platform-package resolution and self-contained offline packaging.

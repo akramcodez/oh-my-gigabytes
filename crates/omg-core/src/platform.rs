@@ -140,12 +140,11 @@ pub mod linux {
     };
     use std::{ffi::CStr, os::unix::ffi::OsStrExt};
 
-    const EXT_SUPER_MAGIC: u64 = 0xef53;
-    const TMPFS_MAGIC: u64 = 0x01021994;
-    const BTRFS_SUPER_MAGIC: u64 = 0x9123683e;
-
-    fn supported_filesystem(magic: u64) -> bool {
-        matches!(magic, EXT_SUPER_MAGIC | TMPFS_MAGIC | BTRFS_SUPER_MAGIC)
+    /// Filesystem family of an open root. Scanning accepts only the families in `capability`.
+    pub fn filesystem(fd: &OwnedFd) -> Result<crate::capability::Filesystem> {
+        Ok(crate::capability::Filesystem::from_magic(
+            fs::fstatfs(fd)?.f_type as u64,
+        ))
     }
 
     pub fn root(path: &Path) -> Result<OwnedFd> {
@@ -171,11 +170,8 @@ pub mod linux {
                 "root acquisition denied: missing, inaccessible, redirected or unsupported openat2"
             )
         })?;
-        let magic = fs::fstatfs(&fd)?.f_type as u64;
-        if !supported_filesystem(magic) {
-            bail!(
-                "unsupported filesystem profile 0x{magic:x}; use a local ext-family/tmpfs/Btrfs Linux root"
-            );
+        if filesystem(&fd)? == crate::capability::Filesystem::Other {
+            bail!("unsupported filesystem profile; use a local ext-family/tmpfs/Btrfs Linux root");
         }
         Ok(fd)
     }
@@ -241,14 +237,14 @@ pub mod linux {
 
     #[cfg(test)]
     mod tests {
-        use super::*;
+        use crate::capability::Filesystem;
 
         #[test]
         fn filesystem_allowlist_includes_btrfs_and_rejects_unknown_profiles() {
-            assert!(supported_filesystem(EXT_SUPER_MAGIC));
-            assert!(supported_filesystem(TMPFS_MAGIC));
-            assert!(supported_filesystem(BTRFS_SUPER_MAGIC));
-            assert!(!supported_filesystem(0xdead_beef));
+            assert_eq!(Filesystem::from_magic(0xef53), Filesystem::Ext);
+            assert_eq!(Filesystem::from_magic(0x0102_1994), Filesystem::Tmpfs);
+            assert_eq!(Filesystem::from_magic(0x9123_683e), Filesystem::Btrfs);
+            assert_eq!(Filesystem::from_magic(0xdead_beef), Filesystem::Other);
         }
     }
 }

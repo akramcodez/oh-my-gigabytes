@@ -41,7 +41,10 @@ fn catalog_labels_cannot_override_protected_paths_or_unknown_handler() {
     assert!(policy::protection(root.path(), &entry("node_modules/file")).is_none());
     assert!(policy::protection(root.path(), &entry("target/debug/app")).is_none());
     let plain = tempfile::tempdir().unwrap();
-    assert!(policy::cleanup_denial(plain.path(), &entry("ordinary")).contains("cleanup disabled"));
+    assert!(
+        policy::cleanup_denial(plain.path(), &entry("ordinary"))
+            .contains("OS Trash is not implemented")
+    );
     assert!(!policy::safe_relative(Path::new("../escape")));
     assert!(!policy::safe_relative(Path::new("/")));
 }

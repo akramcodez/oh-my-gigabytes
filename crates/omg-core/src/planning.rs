@@ -137,7 +137,7 @@ impl Index {
     /// Fail closed even if a caller supplies a forged/confirmed plan.
     pub fn execute(&self, _plan: &Plan) -> Result<()> {
         bail!(
-            "cleanup disabled: no certified identity-safe Trash handler; selection/confirmation cannot bypass policy"
+            "OS Trash is not implemented: no certified identity-safe Trash handler; selection/confirmation cannot bypass policy"
         )
     }
 }
