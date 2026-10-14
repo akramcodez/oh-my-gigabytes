@@ -1,5 +1,6 @@
 //! Local metadata intelligence. Filesystem mutation is not part of scanning.
 pub mod catalog;
+pub mod cleanup;
 pub mod index;
 pub mod model;
 pub mod planning;

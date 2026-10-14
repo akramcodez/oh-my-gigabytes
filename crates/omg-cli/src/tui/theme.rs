@@ -24,10 +24,16 @@ pub const VERBS: [&str; 5] = [
 
 impl Theme {
     pub fn detect() -> Self {
+        let var = |k: &str| std::env::var(k).unwrap_or_default();
+        let (term, program, colorterm) = (var("TERM"), var("TERM_PROGRAM"), var("COLORTERM"));
         let mode = if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
             Mode::Mono
-        } else if std::env::var("COLORTERM")
-            .is_ok_and(|v| v.contains("truecolor") || v.contains("24bit"))
+        } else if colorterm.contains("truecolor")
+            || colorterm.contains("24bit")
+            // Windows Terminal (also inside WSL), VS Code, iTerm2, WezTerm, Ghostty, kitty...
+            || std::env::var_os("WT_SESSION").is_some()
+            || ["vscode", "iTerm.app", "WezTerm", "ghostty"].contains(&program.as_str())
+            || ["kitty", "alacritty", "direct", "truecolor"].iter().any(|t| term.contains(t))
         {
             Mode::TrueColor
         } else {
@@ -188,4 +194,49 @@ pub fn truncate_middle(text: &str, width: usize) -> String {
         chars[..head].iter().collect::<String>(),
         chars[chars.len() - tail..].iter().collect::<String>()
     )
+}
+
+/// Two-row block-letter wordmark. Full "OH MY GIGABYTES" when it fits, otherwise "OMG".
+pub fn banner(width: usize) -> [String; 2] {
+    fn glyph(c: char) -> [&'static str; 2] {
+        match c {
+            'O' => ["█▀█", "█▄█"],
+            'H' => ["█ █", "█▀█"],
+            'M' => ["█▀▄▀█", "█ ▀ █"],
+            'Y' => ["█▄█", " █ "],
+            'G' => ["█▀▀", "█▄█"],
+            'I' => ["█", "█"],
+            'A' => ["▄▀█", "█▀█"],
+            'B' => ["█▄▄", "█▄█"],
+            'T' => ["▀█▀", " █ "],
+            'E' => ["█▀▀", "██▄"],
+            'S' => ["█▀", "▄█"],
+            _ => ["  ", "  "],
+        }
+    }
+    let render = |words: &[&str]| -> [String; 2] {
+        let mut rows = [String::new(), String::new()];
+        for (w, word) in words.iter().enumerate() {
+            if w > 0 {
+                rows[0].push_str("   ");
+                rows[1].push_str("   ");
+            }
+            for (i, c) in word.chars().enumerate() {
+                if i > 0 {
+                    rows[0].push(' ');
+                    rows[1].push(' ');
+                }
+                let [a, b] = glyph(c);
+                rows[0].push_str(a);
+                rows[1].push_str(b);
+            }
+        }
+        rows
+    };
+    let full = render(&["OH", "MY", "GIGABYTES"]);
+    if full[0].chars().count() <= width {
+        full
+    } else {
+        render(&["OMG"])
+    }
 }

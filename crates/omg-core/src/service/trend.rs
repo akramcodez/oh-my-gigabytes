@@ -114,7 +114,8 @@ impl Index {
         }
         let cutoff = now().saturating_sub(i64::try_from(window_days)? * 86_400);
         let mut statement = self.db.prepare(
-            "SELECT id,at,available,indexed_allocated FROM volume_samples WHERE at>=? ORDER BY at,id",
+            // Only samples of the currently published scope are comparable.
+            "SELECT id,at,available,indexed_allocated FROM volume_samples WHERE at>=? AND root=coalesce((SELECT root FROM scans WHERE id=(SELECT scan_id FROM active WHERE singleton=1)),root) ORDER BY at,id",
         )?;
         let samples: Vec<(i64, i64, i64, Option<i64>)> = statement
             .query_map([cutoff], |r| {

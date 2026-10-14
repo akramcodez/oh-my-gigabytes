@@ -73,6 +73,7 @@ Background service, growth trends, signed online catalog updates beyond offline 
 | D11 | Analysis process coordination before background service | Same scan ownership contract later prevents duplicate service work |
 | D12 | Mandatory metadata-only reconciliation after untrusted gaps | Directory mtimes/events cannot establish recursive freshness |
 | D13 | Ship no Safe rules until evidence/tests qualify them | Narrow reliable recommendations are better than a reassuring unsupported label |
+| D15 | Owner-approved user cleanup: an "OMG Trash" list that only saves paths, and explicit permanent deletion from it (Linux, inside the user's home only) | Requested by the owner 2026-10-14. Hard protections always deny; Git-repository membership is a confirmed warning; targets are revalidated (identity + birth time) and removed through directory descriptors. Supersedes "Trash only" (S07) for this explicit flow; see phase3-evidence.md |
 | D14 | Close Phase 0 as source-backed research/design; defer unavailable native/user sessions | Owner explicitly requested this scope revision; V01–V06 in `phase0-evidence-review.md` retain later usability, safety and release gates |
 
 ## 4. Critical-path work packages

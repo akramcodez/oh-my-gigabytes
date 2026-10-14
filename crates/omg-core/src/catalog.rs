@@ -368,10 +368,10 @@ impl Index {
             .find(|r| r.discovery == "large_file")
         {
             let mut statement = self.db.prepare(
-                "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND kind='file' AND apparent>=? ORDER BY allocated DESC,path LIMIT 10000",
+                // Literal threshold so SQLite can use the partial `entry_large` index (migration 007).
+                "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND kind='file' AND apparent>=104857600 ORDER BY allocated DESC,path LIMIT 10000",
             )?;
-            let rows = statement
-                .query_map(params![scan, 100i64 * 1024 * 1024], crate::index::row_entry)?;
+            let rows = statement.query_map(params![scan], crate::index::row_entry)?;
             for entry in rows {
                 let entry = entry?;
                 if directory_roots

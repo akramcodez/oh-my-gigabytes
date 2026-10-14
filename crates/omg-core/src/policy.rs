@@ -23,6 +23,14 @@ pub fn protection(root: &Path, entry: &Entry) -> Option<String> {
 }
 
 pub fn protection_with(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) -> Option<String> {
+    hard_protection(root, entry).or_else(|| {
+        repository_of(root, entry, memo).map(|_| "repository scope protected".to_string())
+    })
+}
+
+/// Protection that never depends on repository membership: exclusions, scope, entry type,
+/// sensitive component names (including `.git`) and database/credential/disk-image names.
+pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
     if let Some(reason) = &entry.excluded {
         return Some(reason.clone());
     }
@@ -93,11 +101,17 @@ pub fn protection_with(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) ->
     {
         return Some("database, disk image, credential or active download".into());
     }
-    // Whole known repositories are protected. This observes markers only, never runs Git.
+    None
+}
+
+/// The nearest enclosing repository (a directory with a `.git` marker or bare-repository layout),
+/// if any. Observes markers only, never runs Git.
+pub fn repository_of(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) -> Option<PathBuf> {
+    let absolute = root.join(platform::path(&entry.path).ok()?);
     let mut current = Some(absolute.as_path());
     while let Some(parent) = current {
         if memo.is_repository(parent) {
-            return Some("repository scope protected".into());
+            return Some(parent.to_path_buf());
         }
         current = parent.parent();
     }

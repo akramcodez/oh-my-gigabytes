@@ -275,17 +275,19 @@ fn trends_explain_growth_and_retention_is_bounded() {
 
     // Count and age bounds, with snapshot rows following their sample.
     let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    // Trends only compare samples of the published scope, so synthetic rows use the real root.
+    let root_raw = omg_core::platform::raw(root.path()).unwrap();
     let insert = "INSERT INTO volume_samples(at,root,capacity,available,scan_state) VALUES(?,?,1,1,'complete')";
     for i in 0..30 {
         db.execute(
             insert,
-            rusqlite::params![omg_core::now() - 1000 + i, b"/r".to_vec()],
+            rusqlite::params![omg_core::now() - 1000 + i, root_raw.clone()],
         )
         .unwrap();
     }
     db.execute(
         insert,
-        rusqlite::params![omg_core::now() - 400 * 86_400, b"/r".to_vec()],
+        rusqlite::params![omg_core::now() - 400 * 86_400, root_raw.clone()],
     )
     .unwrap();
     index.prune_samples(365, 10).unwrap();

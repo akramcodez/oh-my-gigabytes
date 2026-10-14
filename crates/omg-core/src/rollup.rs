@@ -174,7 +174,8 @@ impl Index {
             )
             .optional()?)
     }
-    /// Largest direct children (subdirectory subtrees and files) of a directory.
+    /// Largest direct children (subdirectory subtrees and files) of a directory. The planner would
+    /// otherwise pick the size index and scan every entry, so the parent index is forced.
     pub fn children(&self, path: &[u8], limit: usize, offset: usize) -> Result<Vec<Child>> {
         let Some(id) = self.active_scan()? else {
             return Ok(vec![]);
@@ -182,7 +183,7 @@ impl Index {
         let mut statement = self.db.prepare(
             "SELECT path,'directory',allocated,apparent,files,dirs,protected FROM dir_totals WHERE scan_id=?1 AND parent=?2 AND path<>x''
              UNION ALL
-             SELECT path,kind,allocated,apparent,0,0,CASE WHEN excluded IS NULL THEN 0 ELSE 1 END FROM entries WHERE scan_id=?1 AND parent=?2 AND kind<>'directory'
+             SELECT path,kind,allocated,apparent,0,0,CASE WHEN excluded IS NULL THEN 0 ELSE 1 END FROM entries INDEXED BY entry_parent WHERE scan_id=?1 AND parent=?2 AND kind<>'directory'
              ORDER BY 3 DESC,1 LIMIT ?3 OFFSET ?4",
         )?;
         let rows = statement.query_map(

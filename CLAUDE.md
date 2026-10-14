@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 OMG (Oh My Gigabytes) is a local-first, keyboard-first storage analyzer for developers. A Rust engine scans filesystem metadata into SQLite, a versioned catalog explains possible cleanup candidates, and an independent policy engine decides what may ever be acted on. Distribution is the npm package `oh-my-gigabytes`. The executable is always `omg`.
 
 It is a **development preview**:
-- **Cleanup is disabled.** `Index::execute` always fails closed.
+- **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. The older `planning::execute` still always fails closed.
 - **Linux only.** Native scanning, state and the background service work only on Linux. Other targets compile with those adapters disabled.
 - **Phases ship as development milestones.** Phases 0–5 are recorded as milestones with unpassed acceptance gates. See `docs/checklist.md`.
 
@@ -64,7 +64,7 @@ Constraints that affect tests and running:
 - **`crates/omg-core`** contains all logic. It has no UI.
 - **`crates/omg-cli`** builds the `omg` binary:
   - `main.rs`: clap commands.
-  - `tui/`: ratatui interface (`mod.rs` state/loop, `render.rs` pure rendering that must never query SQLite, `theme.rs`).
+  - `tui/`: ratatui interface. `worker.rs` owns the SQLite connection and answers requests over channels; `mod.rs` holds `AppState`, menus/actions and a redraw-on-change loop; `render.rs` is pure rendering that must never query SQLite; `theme.rs` has colours, the block-letter banner and formatting.
   - `svc.rs`: service control surface, Linux only.
 - **`catalog/bundled.toml`** is the known-good rule catalog. It is compiled in with `include_str!`.
 - **`migrations/NNN.sql`** holds the schema migrations.
@@ -141,7 +141,7 @@ Only `config`, `notify`, `schedule` and `trend` are portable. `daemon`, `ipc` an
 
 ## Rules that are easy to break
 
-- **No mutation paths.** Do not add code that deletes, renames or trashes user files, or that bypasses `policy` or `planning::execute`. Phase 3 Trash certification is a blocking gate.
+- **One mutation path.** User file deletion exists only in `crates/omg-core/src/cleanup.rs`: `gate` (home-only, `policy::hard_protection` denies, repository is a warning), `prepare_delete` → confirmed fingerprint → `delete_permanently` (revalidates identity *and* statx birth time, re-checks descendants, removes through directory fds). Never add another deletion path, never follow links, and keep `planning::execute` failing closed. Run `crates/omg-core/tests/cleanup.rs` after any change there.
 - **Structural guard test.** `service_logic_contains_no_deletion_or_cleanup_calls` in `crates/omg-core/tests/service.rs` greps the service sources for `remove_file`, `remove_dir`, `rename(`, `planning`, `Trash`, `unlink` and `authoriz`. **Comments count too.** Choose wording that avoids those words in `daemon.rs`, `notify.rs`, `trend.rs`, `schedule.rs` and `config.rs`.
 - **Unknown is not zero.** Represent unknown sizes and identities as unknown. Keep paths as raw bytes; display strings are never path authority. Notifications and default diagnostics must not contain paths or filenames.
 - **Strict, bounded parsers.** All external input — catalog, config, IPC, release manifests — is size-bounded and rejects unknown fields. Keep it that way.

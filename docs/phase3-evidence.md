@@ -35,3 +35,15 @@ Fifteen Rust tests passed: 6 scanner, 3 catalog, 2 policy, 1 planning, 2 CLI and
 - Comprehensive event-sequence/panic restoration, hostile filename/IPC/state substitution, representative responsiveness/resource and platform file-manager tests: pending.
 
 These blockers mean the requested complete Phases 1–3/all-good release confirmation cannot be supplied. The commits identify development milestones, not full roadmap completion. No Phase 4/service/packaging implementation has been started.
+
+## User cleanup (decision D15, 2026-10-14)
+
+At the owner's request, OMG now offers cleanup on Linux, scoped to the user's home folder:
+
+- **OMG Trash** is a list of saved paths (schema 7, table `marked`). Adding an item changes nothing on disk. Items are revalidated against the live filesystem when added (identity must match the index) and record the file's birth time.
+- **Delete permanently** works from OMG Trash or directly from Browse/Findings. The interface freezes an exact plan (`Index::prepare_delete`), shows every item, size, skipped item and warning, defaults to **Cancel**, and asks a second time when an item is inside a Git repository. `Index::delete_permanently` requires the plan's fingerprint, holds the cleanup and scan locks, records an intent before mutating, revalidates each target (device+inode **and** birth time, owner, type, gates), freshly re-checks every descendant of a directory for protected names and mount points, then removes contents through directory descriptors without following links. A replaced, protected or changed target is skipped, never retried. The published index is adjusted for removed subtrees without a rescan.
+- **Always denied:** anything outside home, the home folder itself, links/special files as targets, mandatory exclusions (cloud, credentials, `.ssh`, `.git`...), databases, disk images, keys, active downloads. Being inside a Git repository is a warning, not a block; `.git` itself is always protected.
+- Found by testing: ext4 reuses a freed inode number immediately, so device+inode alone deleted a recreated file in a test. Birth time (statx) is now compared too; filesystems without birth time fall back to identity only, which is a documented residual risk. Removing a single file is still path-based after the checks (Linux has no unlink-by-descriptor); directory contents are descriptor-anchored and the final `rmdir` only removes an empty directory.
+- `planning::execute` (the older Trash-plan path) still always fails closed. Native OS Trash integration was not implemented; permanent deletion frees space immediately. On WSL the Windows drive regains space only after the virtual disk is compacted, which the TUI explains.
+
+Verification: `crates/omg-core/tests/cleanup.rs` (saved-paths-only marking, fingerprint requirement, link not followed, replaced target skipped, protected/outside-home denied, Git warning, `.git` never deleted, index adjusted) and an end-to-end PTY run of the TUI deleting a folder in a temporary home.
