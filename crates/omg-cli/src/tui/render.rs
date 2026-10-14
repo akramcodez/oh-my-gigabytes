@@ -170,12 +170,12 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                 Some((cap, free)) if cap > 0 => {
                     let used_bytes = cap.saturating_sub(free);
                     let used = used_bytes as f64 / cap as f64;
-                    let (caption, style) = if used >= 0.9 {
-                        ("OMG, it's full!", theme.danger())
+                    let style = if used >= 0.9 {
+                        theme.danger()
                     } else if used >= 0.7 {
-                        ("getting chunky", theme.warn())
+                        theme.warn()
                     } else {
-                        ("plenty of room", theme.brand())
+                        theme.brand()
                     };
                     let filled = bar(used, gauge).trim_end().to_string();
                     Line::from(vec![
@@ -189,8 +189,6 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                             format!(" {} used of {}", bytes(used_bytes), bytes(cap)),
                             Style::new().patch(theme.bold()),
                         ),
-                        Span::styled(format!(" · {} free · ", bytes(free)), theme.dim()),
-                        Span::styled(caption, style),
                     ])
                 }
                 _ => Line::from(Span::styled("  disk usage unknown", theme.dim())),
