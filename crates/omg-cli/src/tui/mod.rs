@@ -59,10 +59,21 @@ pub struct ScanView {
     pub progress: Arc<AtomicU64>,
     pub total: u64,
     pub started: Instant,
+    /// When traversal ended and the finishing phase began.
+    pub finishing_since: Option<Instant>,
+}
+
+/// A scan run by another process, polled from the database.
+pub struct OtherScan {
+    pub progress: u64,
+    pub total: u64,
+    pub walking_secs: f64,
+    pub finishing_secs: Option<f64>,
 }
 
 pub struct DirView {
     pub children: Vec<Child>,
+    pub marks: Vec<worker::RowMark>,
     pub total: Option<Totals>,
 }
 
@@ -127,6 +138,8 @@ pub struct AppState {
     pub help: bool,
     pub message: String,
     pub scan: Option<ScanView>,
+    pub other: Option<OtherScan>,
+    pub watching: bool,
     pub busy: Option<String>,
     pub tick: usize,
     pub now: i64,
@@ -203,7 +216,9 @@ impl App {
         }
         if omg_core::index::lock_held(&self.state_path, "scan.lock") {
             self.state.message =
-                "Another omg scan is running; showing the last published results.".into();
+                "Another omg scan is running; showing the last published results until it finishes.".into();
+            self.state.watching = true;
+            self.request(Request::PollRunning, None);
             return Ok(());
         }
         let index = Index::open(&self.state_path)?;
@@ -225,6 +240,7 @@ impl App {
             progress: progress.clone(),
             total: omg_core::scanner::estimate_entries(&options.root).unwrap_or(0),
             started: Instant::now(),
+            finishing_since: None,
         });
         let (path, flag) = (self.state_path.clone(), self.cancel.clone());
         self.job = Some(std::thread::spawn(move || {
@@ -528,13 +544,47 @@ impl App {
                 });
                 s.cursor = s.cursor.min(row_count(s).saturating_sub(1));
             }
+            Response::Running(running) => match running {
+                Some(r) => {
+                    let now = omg_core::now();
+                    let since_phase = r.phase_at.map(|t| (now - t).max(0) as f64);
+                    s.other = Some(OtherScan {
+                        progress: r.progress,
+                        total: r.estimated_total,
+                        walking_secs: if r.finishing {
+                            ((r.phase_at.unwrap_or(now) - r.started).max(1)) as f64
+                        } else {
+                            ((now - r.started).max(1)) as f64
+                        },
+                        finishing_secs: if r.finishing { since_phase } else { None },
+                    });
+                }
+                None => {
+                    if s.watching && s.other.take().is_some() {
+                        s.message = "The other scan finished; showing its results.".into();
+                        s.dirs.clear();
+                        let dir = s.dir.clone();
+                        let _ = self.tx.send(Request::Summary);
+                        let _ = self.tx.send(Request::Dir(dir));
+                    }
+                    s.watching = false;
+                }
+            },
             Response::Dir {
                 path,
                 children,
+                marks,
                 total,
             } => {
                 s.busy = None;
-                s.dirs.insert(path, DirView { children, total });
+                s.dirs.insert(
+                    path,
+                    DirView {
+                        children,
+                        marks,
+                        total,
+                    },
+                );
                 s.cursor = s.cursor.min(row_count(s).saturating_sub(1));
             }
             Response::Plan(plan) => {
@@ -792,12 +842,17 @@ pub fn run(index: Index) -> Result<()> {
         job: None,
         state_path,
     };
-    if !has_scan {
+    if omg_core::index::lock_held(&app.state_path, "scan.lock") {
+        app.state.watching = true;
+        app.state.message = "Another omg scan is running; results refresh when it finishes.".into();
+        app.request(Request::PollRunning, None);
+    } else if !has_scan {
         app.start_scan(false)?;
     }
     ratatui::run(|terminal| {
         let mut dirty = true;
         let started = Instant::now();
+        let mut last_poll = Instant::now();
         let result = (|| -> Result<()> {
             loop {
                 while let Ok(response) = rx.try_recv() {
@@ -829,7 +884,18 @@ pub fn run(index: Index) -> Result<()> {
                     app.request(Request::Dir(dir), None);
                     dirty = true;
                 }
-                let animating = app.state.scan.is_some() || app.state.busy.is_some();
+                if let Some(scan) = &mut app.state.scan
+                    && scan.finishing_since.is_none()
+                    && scan.progress.load(Ordering::Relaxed) & omg_core::scanner::FINISHING != 0
+                {
+                    scan.finishing_since = Some(Instant::now());
+                }
+                if app.state.watching && last_poll.elapsed() >= Duration::from_millis(800) {
+                    last_poll = Instant::now();
+                    app.request(Request::PollRunning, None);
+                }
+                let animating =
+                    app.state.scan.is_some() || app.state.busy.is_some() || app.state.watching;
                 // Spinner speed follows the clock, so the loop can poll quickly for worker replies.
                 let tick = (started.elapsed().as_millis() / 100) as usize;
                 if animating && tick != app.state.tick {

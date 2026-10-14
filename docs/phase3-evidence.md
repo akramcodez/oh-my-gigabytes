@@ -55,3 +55,11 @@ Verification: `crates/omg-core/tests/cleanup.rs` (saved-paths-only marking, fing
 - Deleting now asks **once** ("Are you sure?", Cancel default); any Git-repository warning is shown in that same dialog.
 - Found while testing on the real index: a TUI housekeeping thread deleting old scan rows in large batches held the write lock long enough to fail a concurrent scan ("database is locked"). Housekeeping now yields to running scans, uses small batches, writers wait up to 20 s, and rollup writes take the write lock up front.
 
+### Smarter locking and live ETA (2026-10-14)
+
+- **What is locked now:** hard protections (outside home, `.ssh`/`.gnupg`/`.aws`/credentials, `.git` metadata, databases/keys/disk images in ordinary folders, cloud folders, mount points) and **active** Git repositories (changed within 30 days; unknown age counts as active).
+- **Not locked any more:** everything under a Git repository located at the home folder itself (dotfiles repositories); build/dependency folders inside any repository (`node_modules`, `target`, `dist`, `build`, `.next`, `.venv`, `__pycache__`, …; deletable after a warning); repositories untouched for 30+ days (deletable as a whole, `.git` included, after a warning about uncommitted or unpushed work).
+- **Caches** (rule roots and dependency folders) may contain files that merely look like keys or databases (package contents); only always-sensitive folders and mount points block their deletion. Ordinary folders still refuse deletion when anything inside is protected.
+- Rollups store the newest change time per folder (schema 9); Findings tiers and Browse markers (🔒 locked, ⚠ warning, ♻ regenerable) use the same verdict as deletion. New rule `dev.stale-dependencies` finds `node_modules` (next to `package.json`), Cargo `target` (next to `Cargo.toml`) and virtual environments (with `pyvenv.cfg`) of projects untouched for 30+ days; scans suggest them into OMG Trash too.
+- **ETA:** the scanner records progress and phase (walking/finishing) in the database each batch; any OMG window shows a live time-left estimate, including for a scan running in another process, and the "finishing up" phase has its own estimate instead of a frozen counter.
+

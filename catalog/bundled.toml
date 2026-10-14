@@ -208,3 +208,26 @@ compatibility = "inventory-only"
 deprecated = false
 fixtures = ["gradle-positive", "gradle-near-miss"]
 source = "https://docs.gradle.org/current/userguide/directory_layout.html"
+
+[[rules]]
+id = "dev.stale-dependencies"
+name = "Dependencies of a project untouched for 30+ days"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "build_artifacts"
+tier = "review"
+action = "info"
+discovery = "stale_dependencies"
+explanation = "Installed dependencies or build output (node_modules, Cargo target, Python virtualenv) of a project nobody has changed in at least 30 days."
+side_effects = "The project needs a reinstall or rebuild (npm/pnpm install, cargo build, pip install) before it runs again."
+regeneration = "Recreated from the project's manifest and lock file by its package manager or build tool."
+warnings = ["Only the dependency folder is affected; your source code and Git history stay."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["stale-node-modules", "fresh-project-near-miss"]
+source = "https://docs.npmjs.com/cli/v11/configuring-npm/folders"

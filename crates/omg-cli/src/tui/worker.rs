@@ -4,6 +4,7 @@ use omg_core::{
     Index, Status,
     catalog::{Finding, Ignore},
     cleanup::{DeletePlan, DeleteReport, Marked},
+    cleanup::{Gate, Kind},
     planning::{History, Plan},
     platform,
     rollup::{Child, Totals},
@@ -33,6 +34,18 @@ pub enum Request {
     },
     Delete(Box<DeletePlan>),
     SetAutoTrash(bool),
+    /// Progress of a scan run by another process.
+    PollRunning,
+}
+
+/// What the user can do with a row in Browse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowMark {
+    Deletable,
+    /// A cache or build/dependency folder its tool recreates.
+    Regenerable,
+    Warn(String),
+    Locked(String),
 }
 
 pub struct Summary {
@@ -54,8 +67,10 @@ pub enum Response {
     Dir {
         path: Vec<u8>,
         children: Vec<Child>,
+        marks: Vec<RowMark>,
         total: Option<Totals>,
     },
+    Running(Option<omg_core::index::RunningScan>),
     Plan(Box<Plan>),
     DeletePlan {
         plan: Box<DeletePlan>,
@@ -116,11 +131,30 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                         Request::Dir(path) => {
                             let children = index.children(&path, 500, 0)?;
                             let total = index.subtree(&path)?;
+                            let marks = children
+                                .iter()
+                                .map(|child| match index.entry(&child.path) {
+                                    Ok(Some(entry)) => match index.verdict_for(&entry, &home) {
+                                        Ok(v) => match (v.gate, v.kind) {
+                                            (Gate::Denied(why), _) => RowMark::Locked(why),
+                                            (Gate::Warn(why), _) => RowMark::Warn(why),
+                                            (Gate::Allowed, Kind::Cache) => RowMark::Regenerable,
+                                            (Gate::Allowed, _) => RowMark::Deletable,
+                                        },
+                                        Err(e) => RowMark::Locked(e.to_string()),
+                                    },
+                                    _ => RowMark::Locked("not in the index".into()),
+                                })
+                                .collect();
                             send(Response::Dir {
                                 path,
                                 children,
+                                marks,
                                 total,
                             });
+                        }
+                        Request::PollRunning => {
+                            send(Response::Running(index.running_scan()?));
                         }
                         Request::Preview(id) => {
                             send(Response::Plan(Box::new(

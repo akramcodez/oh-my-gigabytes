@@ -64,6 +64,7 @@ fn browse_shows_sizes_escapes_names_and_progress() {
         files: 1200,
         dirs: 3,
         protected: 1,
+        newest: 0,
     };
     let mut state = AppState {
         tab: Tab::Browse,
@@ -71,6 +72,7 @@ fn browse_shows_sizes_escapes_names_and_progress() {
             progress: Arc::new(AtomicU64::new(500)),
             total: 1000,
             started: Instant::now(),
+            finishing_since: None,
         }),
         ..Default::default()
     };
@@ -78,6 +80,7 @@ fn browse_shows_sizes_escapes_names_and_progress() {
         Vec::new(),
         DirView {
             children: vec![hostile],
+            marks: vec![],
             total: Some(Totals {
                 allocated: 6 << 30,
                 ..Default::default()
@@ -155,6 +158,7 @@ fn preview_screens() {
         files,
         dirs: 2,
         protected,
+        newest: 0,
     };
     let mut state = AppState {
         now: 10_000,
@@ -169,6 +173,7 @@ fn preview_screens() {
                 child("projects", 14.1, 90_000, 3),
                 child("Downloads", 3.4, 120, 0),
             ],
+            marks: vec![],
             total: None,
         },
     );

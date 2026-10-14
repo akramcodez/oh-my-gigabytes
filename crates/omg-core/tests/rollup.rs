@@ -118,10 +118,16 @@ fn protected_descendants_are_flagged_up_the_tree() {
         "excluded .git and sqlite name: {proj:?}"
     );
     assert!(index.subtree(b"").unwrap().unwrap().protected >= proj.protected);
-    // Whole repositories are protected by policy, so everything inside `proj` is flagged...
-    assert!(index.subtree(b"proj/src").unwrap().unwrap().protected > 0);
-    // ...while an ordinary sibling directory is not.
+    // Counts are hard protections only (.git, database names); repository age is judged when a
+    // decision is made, so ordinary source folders are not flagged.
+    assert_eq!(index.subtree(b"proj/src").unwrap().unwrap().protected, 0);
     assert_eq!(index.subtree(b"other").unwrap().unwrap().protected, 0);
+    // Newest change time is tracked per subtree (used to tell stale repositories apart).
+    let newest = index.subtree(b"proj").unwrap().unwrap().newest;
+    assert!(
+        (omg_core::now() - newest).abs() < 600,
+        "freshly written fixture: {newest}"
+    );
     let git = index
         .children(b"proj", 10, 0)
         .unwrap()

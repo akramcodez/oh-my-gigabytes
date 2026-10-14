@@ -10,6 +10,16 @@ use std::{
     time::Duration,
 };
 
+/// Progress of a scan, as recorded by whichever process is running it.
+#[derive(Debug, Clone)]
+pub struct RunningScan {
+    pub started: i64,
+    pub progress: u64,
+    pub estimated_total: u64,
+    pub finishing: bool,
+    pub phase_at: Option<i64>,
+}
+
 pub struct Index {
     pub(crate) db: Connection,
     pub state: PathBuf,
@@ -68,7 +78,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=8,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=9,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
     )
 }
 
@@ -190,7 +200,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 8 {
+        if version > 9 {
             bail!("index schema is newer than this omg build");
         }
         // quick_check reads the whole file (seconds on a multi-GB index), so very large indexes
@@ -238,6 +248,9 @@ impl Index {
         }
         if version < 8 {
             db.execute_batch(include_str!("../../../migrations/008.sql"))?;
+        }
+        if version < 9 {
+            db.execute_batch(include_str!("../../../migrations/009.sql"))?;
         }
         #[cfg(unix)]
         {
@@ -334,6 +347,28 @@ impl Index {
         )?;
         self.db.execute("DELETE FROM jobs", [])?;
         Ok(())
+    }
+    /// The scan currently running in any process, if one holds the scan lock.
+    pub fn running_scan(&self) -> Result<Option<RunningScan>> {
+        if !lock_held(&self.state, "scan.lock") {
+            return Ok(None);
+        }
+        Ok(self
+            .db
+            .query_row(
+                "SELECT started,coalesce(progress,0),coalesce(estimated_total,0),coalesce(phase,'walking'),phase_at FROM scans WHERE state='running' ORDER BY id DESC LIMIT 1",
+                [],
+                |r| {
+                    Ok(RunningScan {
+                        started: r.get(0)?,
+                        progress: unsigned(r, 1)?,
+                        estimated_total: unsigned(r, 2)?,
+                        finishing: r.get::<_, String>(3)? == "finishing",
+                        phase_at: r.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
     }
     /// Delete rows of scans that are neither published nor the latest record, in chunks, stopping
     /// after `budget`. Returns true when nothing stale remains. Safe to call repeatedly.

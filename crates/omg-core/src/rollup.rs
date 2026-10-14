@@ -4,6 +4,17 @@
 //! rule as `Index::status`). `protected` counts descendants (and the directory itself) that policy
 //! would deny, so an apparently ordinary cache directory containing protected data is visible.
 use crate::{Entry, Index, index::unsigned, platform, policy};
+
+/// Newest modification time of a directory subtree, for an absolute path inside the scan root.
+pub fn newest_at(index: &Index, root: &Path, absolute: &Path) -> Option<i64> {
+    let relative = platform::raw(absolute.strip_prefix(root).ok()?).ok()?;
+    index
+        .subtree(&relative)
+        .ok()
+        .flatten()
+        .map(|t| t.newest)
+        .filter(|n| *n > 0)
+}
 use anyhow::Result;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -16,6 +27,9 @@ pub struct Totals {
     pub files: u64,
     pub dirs: u64,
     pub protected: u64,
+    /// Newest modification time (Unix seconds) anywhere in the subtree; 0 when unknown.
+    #[serde(default)]
+    pub newest: i64,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct Child {
@@ -27,6 +41,8 @@ pub struct Child {
     pub dirs: u64,
     /// Directories: protected/excluded entries inside. Files: 1 when excluded.
     pub protected: u64,
+    /// Newest modification time (Unix seconds) in the subtree (or of the file).
+    pub newest: i64,
 }
 
 fn parent_of(path: &[u8]) -> &[u8] {
@@ -51,13 +67,14 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
     bucket(&mut totals, b"");
     {
         let mut statement = index.db.prepare(
-            "SELECT min(path),max(apparent),max(allocated),kind FROM entries WHERE scan_id=? AND path<>x'' GROUP BY identity",
+            "SELECT min(path),max(apparent),max(allocated),kind,max(modified_ns) FROM entries WHERE scan_id=? AND path<>x'' GROUP BY identity",
         )?;
         let mut rows = statement.query([scan_id])?;
         while let Some(row) = rows.next()? {
             let path: Vec<u8> = row.get(0)?;
             let (apparent, allocated) = (unsigned(row, 1)?, unsigned(row, 2)?);
             let directory = row.get::<_, String>(3)? == "directory";
+            let modified = row.get::<_, i64>(4)? / 1_000_000_000;
             // Derived from the path: bare columns are unreliable with several min/max aggregates.
             let t = bucket(&mut totals, parent_of(&path));
             t.dirs += u64::from(directory);
@@ -72,6 +89,7 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
             let t = bucket(&mut totals, owner);
             t.allocated += allocated;
             t.apparent += apparent;
+            t.newest = t.newest.max(modified);
         }
     }
     {
@@ -80,10 +98,10 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
             "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND path<>x''",
         )?;
         let mut rows = statement.query([scan_id])?;
-        let mut memo = policy::RepositoryMemo::default();
+        // Hard protections only: repository age and build folders are judged at decision time.
         while let Some(row) = rows.next()? {
             let entry: Entry = crate::index::row_entry(row)?;
-            if policy::protection_with(root, &entry, &mut memo).is_none() {
+            if policy::hard_protection(root, &entry).is_none() {
                 continue;
             }
             bucket(&mut totals, &entry.parent).protected += 1;
@@ -103,6 +121,7 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
         parent.files += child.files;
         parent.dirs += child.dirs;
         parent.protected += child.protected;
+        parent.newest = parent.newest.max(child.newest);
     }
     let mut rows: Vec<_> = totals.into_iter().collect();
     rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -113,7 +132,9 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
             rusqlite::TransactionBehavior::Immediate,
         )?;
         {
-            let mut insert = tx.prepare("INSERT INTO dir_totals VALUES(?,?,?,?,?,?,?,?)")?;
+            let mut insert = tx.prepare(
+                "INSERT INTO dir_totals(scan_id,path,parent,allocated,apparent,files,dirs,protected,newest) VALUES(?,?,?,?,?,?,?,?,?)",
+            )?;
             for (path, t) in chunk {
                 insert.execute(params![
                     scan_id,
@@ -123,7 +144,8 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
                     i64::try_from(t.apparent)?,
                     i64::try_from(t.files)?,
                     i64::try_from(t.dirs)?,
-                    i64::try_from(t.protected)?
+                    i64::try_from(t.protected)?,
+                    t.newest
                 ])?;
             }
         }
@@ -164,7 +186,7 @@ impl Index {
         Ok(self
             .db
             .query_row(
-                "SELECT allocated,apparent,files,dirs,protected FROM dir_totals WHERE scan_id=? AND path=?",
+                "SELECT allocated,apparent,files,dirs,protected,coalesce(newest,0) FROM dir_totals WHERE scan_id=? AND path=?",
                 params![id, path],
                 |r| {
                     Ok(Totals {
@@ -173,6 +195,7 @@ impl Index {
                         files: unsigned(r, 2)?,
                         dirs: unsigned(r, 3)?,
                         protected: unsigned(r, 4)?,
+                        newest: r.get(5)?,
                     })
                 },
             )
@@ -185,9 +208,9 @@ impl Index {
             return Ok(vec![]);
         };
         let mut statement = self.db.prepare(
-            "SELECT path,'directory',allocated,apparent,files,dirs,protected FROM dir_totals WHERE scan_id=?1 AND parent=?2 AND path<>x''
+            "SELECT path,'directory',allocated,apparent,files,dirs,protected,coalesce(newest,0) FROM dir_totals WHERE scan_id=?1 AND parent=?2 AND path<>x''
              UNION ALL
-             SELECT path,kind,allocated,apparent,0,0,CASE WHEN excluded IS NULL THEN 0 ELSE 1 END FROM entries INDEXED BY entry_parent WHERE scan_id=?1 AND parent=?2 AND kind<>'directory'
+             SELECT path,kind,allocated,apparent,0,0,CASE WHEN excluded IS NULL THEN 0 ELSE 1 END,modified_ns/1000000000 FROM entries INDEXED BY entry_parent WHERE scan_id=?1 AND parent=?2 AND kind<>'directory'
              ORDER BY 3 DESC,1 LIMIT ?3 OFFSET ?4",
         )?;
         let rows = statement.query_map(
@@ -201,6 +224,7 @@ impl Index {
                     files: unsigned(r, 4)?,
                     dirs: unsigned(r, 5)?,
                     protected: unsigned(r, 6)?,
+                    newest: r.get(7)?,
                 })
             },
         )?;

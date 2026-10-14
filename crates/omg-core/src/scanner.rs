@@ -26,6 +26,26 @@ pub fn scan(
     }
 }
 
+/// Set on the shared progress counter once traversal ends and the scan is finishing
+/// (comparison, folder totals, publication). Readers mask it off to get the entry count.
+pub const FINISHING: u64 = 1 << 63;
+
+/// Entries per second the finishing phase processes (measured: ~1.5 M entries in 60–70 s).
+const FINISH_RATE: f64 = 22_000.0;
+
+/// Estimated seconds left. `walking_secs` is time spent walking so far; `finishing_secs` is time
+/// since finishing began, if it has. The inode total is an upper bound (it includes skipped
+/// locations), so about 94% of it is expected to be visited.
+pub fn eta(done: u64, total: u64, walking_secs: f64, finishing_secs: Option<f64>) -> f64 {
+    let done = done as f64;
+    if let Some(since) = finishing_secs {
+        return (done / FINISH_RATE - since).max(2.0);
+    }
+    let rate = (done / walking_secs.max(0.001)).max(1.0);
+    let expected = done.max(total as f64 * 0.94);
+    (expected - done) / rate + expected / FINISH_RATE
+}
+
 /// Sensible default parallelism: filesystem metadata is I/O-latency bound, so use most cores
 /// but stay bounded.
 pub fn default_workers() -> usize {
@@ -286,6 +306,10 @@ mod linux {
         let (capacity, available) = platform::linux::volume(&root)?;
         index.db.execute("INSERT INTO scans(root,started,state,mode,capacity,available,sampled) VALUES(?,?,'running',?,?,?,?)",params![platform::raw(&root_path)?,now(),if options.full {"full"} else {"reconcile"},i64::try_from(capacity)?,i64::try_from(available)?,now()])?;
         let id = index.db.last_insert_rowid();
+        index.db.execute(
+            "UPDATE scans SET phase='walking',phase_at=?,progress=0,estimated_total=? WHERE id=?",
+            params![now(), i64::try_from(estimated_total)?, id],
+        )?;
         let previous: Option<i64> = {
             use rusqlite::OptionalExtension;
             index
@@ -389,6 +413,15 @@ mod linux {
                         pending.push(next);
                     }
                 }
+                // Published for other processes (another OMG window shows this scan's progress).
+                tx.execute(
+                    "UPDATE scans SET progress=?,estimated_total=? WHERE id=?",
+                    params![
+                        i64::try_from(report.entries)?,
+                        i64::try_from(estimated_total)?,
+                        id
+                    ],
+                )?;
                 tx.commit()?;
             }
             Ok(())
@@ -403,6 +436,11 @@ mod linux {
             }
         }
         report.peak_pending_directories = shared.queue.peak.load(Ordering::Relaxed);
+        progress.store(report.entries | super::FINISHING, Ordering::Relaxed);
+        let _ = index.db.execute(
+            "UPDATE scans SET phase='finishing',phase_at=?,progress=? WHERE id=?",
+            params![now(), i64::try_from(report.entries)?, id],
+        );
         report.elapsed_ms = started.elapsed().as_millis() as u64;
         report.state = if result.is_err() {
             "failed"

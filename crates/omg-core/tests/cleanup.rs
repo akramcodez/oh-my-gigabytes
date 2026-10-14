@@ -138,47 +138,91 @@ fn protected_outside_home_and_replaced_targets_are_never_deleted() {
 }
 
 #[test]
-fn git_repositories_warn_and_git_metadata_is_never_deleted() {
+fn active_repos_lock_but_build_folders_and_stale_repos_are_deletable() {
     let (home, state) = setup();
     let h = home.path();
     fs::create_dir_all(h.join("proj/.git")).unwrap();
     fs::write(h.join("proj/.git/HEAD"), b"ref").unwrap();
+    fs::write(h.join("proj/main.rs"), b"fn main() {}").unwrap();
     fs::create_dir_all(h.join("proj/target/debug")).unwrap();
     fs::write(h.join("proj/target/debug/app"), vec![0u8; 50_000]).unwrap();
+    fs::create_dir_all(h.join("old/.git")).unwrap();
+    fs::write(h.join("old/.git/HEAD"), b"ref").unwrap();
+    fs::write(h.join("old/notes.md"), b"old work").unwrap();
+    // Make "old" untouched for 60 days.
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    for path in ["old/notes.md", "old/.git/HEAD", "old/.git", "old"] {
+        let file = fs::File::open(h.join(path)).unwrap();
+        file.set_modified(past).unwrap();
+    }
     let mut index = Index::open(state.path()).unwrap();
     scan(&mut index, h);
-    // Inside a repository: allowed only with a warning.
+
+    // Active repository: its own files and the repository itself are locked...
     assert!(
-        matches!(index.mark(b"proj/target", 50_000, h).unwrap(), Gate::Warn(w) if w.contains("Git repository"))
+        index
+            .mark(b"proj/main.rs", 1, h)
+            .unwrap_err()
+            .to_string()
+            .contains("active Git repository")
     );
-    // The whole repository (contains .git) can be listed but deletion refuses at the fresh check.
-    assert!(matches!(
-        index.mark(b"proj", 50_000, h).unwrap(),
-        Gate::Warn(_)
-    ));
-    let plan = index.prepare_delete(&[id_of(&index, b"proj")], h).unwrap();
-    let report = index
-        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
-        .unwrap();
-    assert!(report.deleted.is_empty());
+    assert!(index.mark(b"proj", 1, h).is_err());
+    // ...but its build output is deletable after a warning.
     assert!(
-        report.skipped[0].1.contains("protected"),
-        "{:?}",
-        report.skipped
+        matches!(index.mark(b"proj/target", 50_000, h).unwrap(), Gate::Warn(w) if w.contains("build/dependency"))
     );
-    assert!(h.join("proj/.git/HEAD").exists());
     let plan = index
         .prepare_delete(&[id_of(&index, b"proj/target")], h)
         .unwrap();
-    assert!(
-        plan.items[0].warning.is_some(),
-        "the plan carries the warning to show"
-    );
     let report = index
         .delete_permanently(&plan, &plan.fingerprint.clone(), h)
         .unwrap();
-    assert_eq!(report.deleted.len(), 1);
-    assert!(!h.join("proj/target").exists() && h.join("proj/.git").exists());
+    assert_eq!(report.deleted.len(), 1, "{:?}", report.skipped);
+    assert!(!h.join("proj/target").exists() && h.join("proj/.git/HEAD").exists());
+
+    // A repository untouched for 60 days can be deleted as a whole, .git included.
+    assert!(
+        matches!(index.mark(b"old", 1, h).unwrap(), Gate::Warn(w) if w.contains("untouched for"))
+    );
+    let plan = index.prepare_delete(&[id_of(&index, b"old")], h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 1, "{:?}", report.skipped);
+    assert!(!h.join("old").exists());
+}
+
+#[test]
+fn caches_may_contain_key_like_files_but_never_sensitive_folders() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir_all(h.join(".cache/uv/pkg/tests")).unwrap();
+    fs::write(h.join(".cache/uv/pkg/tests/fixture.pem"), b"test cert").unwrap();
+    fs::write(h.join(".cache/uv/pkg/data.sqlite"), b"package data").unwrap();
+    fs::create_dir_all(h.join("Documents/project")).unwrap();
+    fs::write(h.join("Documents/project/app.db"), b"real data").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b".cache/uv", 1, h).unwrap();
+    index.mark(b"Documents/project", 1, h).unwrap();
+    let ids = [
+        id_of(&index, b".cache/uv"),
+        id_of(&index, b"Documents/project"),
+    ];
+    let plan = index.prepare_delete(&ids, h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    // The cache goes despite package files that look like keys/databases...
+    assert!(!h.join(".cache/uv").exists());
+    // ...an ordinary folder with a real database inside does not.
+    assert!(h.join("Documents/project/app.db").exists());
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|(p, why)| p == b"Documents/project" && why.contains("protected"))
+    );
 }
 
 #[test]

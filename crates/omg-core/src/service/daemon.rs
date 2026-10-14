@@ -71,7 +71,7 @@ impl Runtime {
         json!({
             "phase": self.phase,
             "scan_active": self.active.is_some(),
-            "scan_progress_entries": self.active.as_ref().map(|a| a.progress.load(Ordering::Relaxed)),
+            "scan_progress_entries": self.active.as_ref().map(|a| a.progress.load(Ordering::Relaxed) & !scanner::FINISHING),
             "failures": self.failures,
             "next_run": self.next_run,
             "last_scan": self.last_scan,

@@ -241,29 +241,66 @@ fn tabs(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
 
 fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
     let frame = FRAMES[state.tick % FRAMES.len()];
-    if let Some(scan) = &state.scan {
-        let done = scan.progress.load(Ordering::Relaxed);
-        let secs = scan.started.elapsed().as_secs_f64().max(0.001);
-        let rate = done as f64 / secs;
-        let verb = VERBS[(secs as usize / 4) % VERBS.len()];
-        let detail = if scan.total > 0 && done > 0 {
-            let pct = (done as f64 / scan.total as f64).min(1.0);
-            format!(
-                "{} {} / ~{} · ≤{:.0}% · {:.0}/s · ~{} left (esc stops)",
-                bar(pct, 12),
-                count(done),
-                short_count(scan.total),
-                pct * 100.0,
-                rate,
-                duration((scan.total.saturating_sub(done)) as f64 / rate.max(1.0))
-            )
-        } else {
-            format!("{} entries · {:.0}/s (esc stops)", count(done), rate)
+    let progress_line =
+        |label: String, done: u64, total: u64, left: f64, finishing: bool, rate: f64| {
+            let detail = if finishing {
+                format!(
+                    "finishing up: comparing, totalling folders, saving · ~{} left",
+                    duration(left)
+                )
+            } else if total > 0 && done > 0 {
+                let pct = (done as f64 / total as f64).min(1.0);
+                format!(
+                    "{} {} / ~{} · ≤{:.0}% · {:.0}/s · ~{} left",
+                    bar(pct, 12),
+                    count(done),
+                    short_count(total),
+                    pct * 100.0,
+                    rate,
+                    duration(left)
+                )
+            } else {
+                format!("{} entries · {:.0}/s", count(done), rate)
+            };
+            Line::from(vec![
+                Span::styled(format!(" {frame} {label}… "), theme.accent()),
+                Span::styled(detail, theme.dim()),
+            ])
         };
-        return Line::from(vec![
-            Span::styled(format!(" {frame} {verb}… "), theme.accent()),
-            Span::styled(detail, theme.dim()),
-        ]);
+    if let Some(scan) = &state.scan {
+        let raw = scan.progress.load(Ordering::Relaxed);
+        let done = raw & !omg_core::scanner::FINISHING;
+        let secs = scan.started.elapsed().as_secs_f64().max(0.001);
+        let finishing = scan.finishing_since.map(|t| t.elapsed().as_secs_f64());
+        let walking = finishing.map_or(secs, |f| secs - f);
+        let left = omg_core::scanner::eta(done, scan.total, walking, finishing);
+        let verb = VERBS[(secs as usize / 4) % VERBS.len()];
+        let mut line = progress_line(
+            verb.to_string(),
+            done,
+            scan.total,
+            left,
+            finishing.is_some(),
+            done as f64 / walking.max(0.001),
+        );
+        line.spans.push(Span::styled(" (esc stops)", theme.dim()));
+        return line;
+    }
+    if let Some(other) = &state.other {
+        let left = omg_core::scanner::eta(
+            other.progress,
+            other.total,
+            other.walking_secs,
+            other.finishing_secs,
+        );
+        return progress_line(
+            "Another omg scan is running".into(),
+            other.progress,
+            other.total,
+            left,
+            other.finishing_secs.is_some(),
+            other.progress as f64 / other.walking_secs.max(1.0),
+        );
     }
     if let Some(busy) = &state.busy {
         return Line::from(vec![
@@ -584,10 +621,15 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
         let selected = n == state.cursor;
         let flag = if marked.contains(&child.path.as_slice()) {
             Span::styled(" ✗ in OMG Trash", theme.danger())
-        } else if child.protected > 0 {
-            Span::styled(" 🔒", theme.dim())
         } else {
-            Span::raw("")
+            match view.marks.get(n) {
+                Some(super::worker::RowMark::Locked(_)) => Span::styled(" 🔒", theme.dim()),
+                Some(super::worker::RowMark::Warn(_)) => Span::styled(" ⚠", theme.warn()),
+                Some(super::worker::RowMark::Regenerable) => {
+                    Span::styled(" ♻ regenerable", theme.good())
+                }
+                _ => Span::raw(""),
+            }
         };
         let filled = bar(child.allocated as f64 / max as f64, bar_width)
             .trim_end()

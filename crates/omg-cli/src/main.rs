@@ -152,22 +152,36 @@ fn progress_meter(root: &std::path::Path, progress: Arc<std::sync::atomic::Atomi
         let started = std::time::Instant::now();
         let frames = ["·", "✢", "✳", "✶", "✻", "✽"];
         let mut tick = 0usize;
+        let mut walked: Option<f64> = None;
         while !flag.load(std::sync::atomic::Ordering::Relaxed) {
-            let done = progress.load(std::sync::atomic::Ordering::Relaxed);
+            let raw = progress.load(std::sync::atomic::Ordering::Relaxed);
+            let done = raw & !omg_core::scanner::FINISHING;
             let secs = started.elapsed().as_secs_f64().max(0.001);
-            let rate = done as f64 / secs;
-            let detail = if total > 0 && done > 0 {
-                let left = (total.saturating_sub(done)) as f64 / rate.max(1.0);
+            let finishing = raw & omg_core::scanner::FINISHING != 0;
+            if finishing && walked.is_none() {
+                walked = Some(secs);
+            }
+            let left = omg_core::scanner::eta(
+                done,
+                total,
+                walked.unwrap_or(secs),
+                walked.map(|w| secs - w),
+            );
+            let detail = if finishing {
+                format!(
+                    "finishing up: comparing, totalling folders, saving · {done} entries · ~{left:.0}s left"
+                )
+            } else if total > 0 && done > 0 {
                 format!(
                     "{} / ~{} · ≤{:.0}% · {:.0}/s · ~{:.0}s left",
                     done,
                     total,
                     (done as f64 / total as f64 * 100.0).min(100.0),
-                    rate,
+                    done as f64 / secs,
                     left
                 )
             } else {
-                format!("{done} entries · {rate:.0}/s")
+                format!("{done} entries · {:.0}/s", done as f64 / secs)
             };
             eprint!("\r\x1b[2K{} Weighing gigabytes… {detail}", frames[tick % 6]);
             tick += 1;

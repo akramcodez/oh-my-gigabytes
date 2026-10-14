@@ -58,34 +58,137 @@ pub struct DeleteReport {
     pub observed_free_change: Option<i64>,
 }
 
-/// Whether `entry` (relative to the scan `root`) may be deleted, and with what warning.
-pub fn gate(root: &Path, home: &Path, entry: &Entry) -> Gate {
-    let Ok(relative) = platform::path(&entry.path) else {
-        return Gate::Denied("unsupported native path".into());
-    };
+/// How a deletable target's contents are judged at deletion time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Kind {
+    /// Ordinary folder: every descendant must pass hard protection.
+    Plain,
+    /// Known tool cache or build/dependency folder: package contents may look like keys or
+    /// databases, so only always-sensitive names and mount points block it.
+    Cache,
+    /// The root of a Git repository untouched for `policy::STALE_DAYS`: its `.git` goes with it.
+    StaleRepo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Verdict {
+    pub gate: Gate,
+    pub kind: Kind,
+}
+
+fn is_cache_root(absolute: &Path, home: &Path) -> bool {
+    crate::catalog::DISCOVERIES
+        .iter()
+        .filter_map(|kind| crate::catalog::discovery_root(kind, home))
+        .any(|root| absolute.starts_with(&root))
+}
+
+/// Path-level checks shared by the gate and the final revalidation.
+fn target_checks(root: &Path, home: &Path, entry: &Entry) -> std::result::Result<PathBuf, String> {
+    let relative =
+        platform::path(&entry.path).map_err(|_| "unsupported native path".to_string())?;
     if !policy::safe_relative(&relative) {
-        return Gate::Denied("the scan root itself or an unsafe path".into());
+        return Err("the scan root itself or an unsafe path".into());
     }
     let absolute = root.join(&relative);
     if !absolute.starts_with(home) || absolute == home {
-        return Gate::Denied("outside your home folder; OMG never deletes system data".into());
+        return Err("outside your home folder; OMG never deletes system data".into());
     }
     if !matches!(entry.kind.as_str(), "file" | "directory") {
-        return Gate::Denied("links and special files are not deletable here".into());
+        return Err("links and special files are not deletable here".into());
     }
     if let Some(reason) = policy::hard_protection(root, entry) {
-        return Gate::Denied(reason);
+        return Err(reason);
     }
-    match policy::repository_of(root, entry, &mut policy::RepositoryMemo::default()) {
-        Some(repo) => Gate::Warn(format!(
-            "inside the Git repository at {}; uncommitted work there would be lost",
-            repo.display()
-        )),
-        None => Gate::Allowed,
+    Ok(absolute)
+}
+
+/// Whether `entry` (relative to the scan `root`) may be deleted, with what warning, and how its
+/// contents will be checked. `memo.newest` supplies repository ages; unknown age means active.
+pub fn verdict(
+    root: &Path,
+    home: &Path,
+    entry: &Entry,
+    memo: &mut policy::RepositoryMemo,
+) -> Verdict {
+    let absolute = match target_checks(root, home, entry) {
+        Ok(path) => path,
+        Err(reason) => {
+            return Verdict {
+                gate: Gate::Denied(reason),
+                kind: Kind::Plain,
+            };
+        }
+    };
+    let cache = is_cache_root(&absolute, home);
+    match policy::repository_status(root, entry, memo) {
+        policy::RepoStatus::Outside => {
+            let regenerable = absolute.file_name().is_some_and(|n| {
+                [
+                    "node_modules",
+                    "__pycache__",
+                    ".pytest_cache",
+                    ".mypy_cache",
+                    ".ruff_cache",
+                ]
+                .contains(&n.to_string_lossy().as_ref())
+            });
+            Verdict {
+                gate: Gate::Allowed,
+                kind: if cache || regenerable {
+                    Kind::Cache
+                } else {
+                    Kind::Plain
+                },
+            }
+        }
+        policy::RepoStatus::Regenerable(repo) => Verdict {
+            gate: Gate::Warn(format!(
+                "build/dependency folder of the Git repository at {}; its tool recreates it",
+                repo.display()
+            )),
+            kind: Kind::Cache,
+        },
+        policy::RepoStatus::Stale { repo, days } => Verdict {
+            gate: Gate::Warn(format!(
+                "Git repository at {} untouched for {days} days; uncommitted or unpushed work would be lost",
+                repo.display()
+            )),
+            kind: if absolute == repo {
+                Kind::StaleRepo
+            } else {
+                Kind::Plain
+            },
+        },
+        policy::RepoStatus::Active { .. } if cache => Verdict {
+            gate: Gate::Allowed,
+            kind: Kind::Cache,
+        },
+        policy::RepoStatus::Active { repo, days } => Verdict {
+            gate: Gate::Denied(format!(
+                "active Git repository at {}{}; only build/dependency folders inside are deletable",
+                repo.display(),
+                days.map(|d| format!(" (changed {d} day(s) ago)"))
+                    .unwrap_or_default()
+            )),
+            kind: Kind::Plain,
+        },
     }
 }
 
+/// `verdict` without repository age information (unknown age counts as active).
+pub fn gate(root: &Path, home: &Path, entry: &Entry) -> Gate {
+    verdict(root, home, entry, &mut policy::RepositoryMemo::default()).gate
+}
+
 impl Index {
+    /// Delete verdict using repository ages from the published rollups.
+    pub fn verdict_for(&self, entry: &Entry, home: &Path) -> Result<Verdict> {
+        let (_, root, _) = self.scope()?;
+        let lookup = |dir: &Path| crate::rollup::newest_at(self, &root, dir);
+        let mut memo = policy::RepositoryMemo::with_ages(&lookup);
+        Ok(verdict(&root, home, entry, &mut memo))
+    }
     fn scope(&self) -> Result<(i64, PathBuf, Vec<u8>)> {
         let (scan, root): (i64, Vec<u8>) = self
             .db
@@ -125,7 +228,7 @@ impl Index {
         let entry = self
             .entry(path)?
             .ok_or_else(|| anyhow::anyhow!("not in the current index; rescan first"))?;
-        let verdict = gate(&root, home, &entry);
+        let verdict = self.verdict_for(&entry, home)?.gate;
         #[cfg(target_os = "linux")]
         let birth = linux::live_identity(&root, &entry.path)
             .ok()
@@ -154,8 +257,8 @@ impl Index {
         }
         Ok(verdict)
     }
-    /// Add regenerable cache findings to OMG Trash as suggestions (never large files, never
-    /// anything a gate denies). Returns how many are listed after the refresh.
+    /// Add regenerable findings (tool caches, dependency folders of stale projects) to OMG Trash
+    /// as suggestions (never large files, never anything a gate denies). Returns how many are listed after the refresh.
     pub fn suggest(&self, home: &Path) -> Result<usize> {
         let (scan, _, root_raw) = self.scope()?;
         // Suggestions whose folder vanished from the index are stale.
@@ -165,7 +268,10 @@ impl Index {
         )?;
         let mut listed = 0;
         for finding in self.findings_in(1000, 0, false, home)? {
-            if finding.rule.category != "package_caches" {
+            // Regenerable things only: tool caches and dependency folders of stale projects.
+            if !["package_caches", "build_artifacts"].contains(&finding.rule.category.as_str())
+                || finding.effective_tier == "protected"
+            {
                 continue;
             }
             if self
@@ -234,7 +340,6 @@ impl Index {
         if ids.is_empty() || ids.len() > 10_000 {
             bail!("select 1–10000 items in OMG Trash to delete");
         }
-        let (_, root, _) = self.scope()?;
         let all = self.marked()?;
         let mut items: Vec<Marked> = Vec::new();
         let mut denied = Vec::new();
@@ -251,7 +356,7 @@ impl Index {
             }
             items.retain(|i| !policy::inside(&i.path, &item.path, true));
             match self.entry(&item.path)? {
-                Some(entry) => match gate(&root, home, &entry) {
+                Some(entry) => match self.verdict_for(&entry, home)?.gate {
                     Gate::Denied(reason) => denied.push((item.path.clone(), reason)),
                     Gate::Warn(text) => items.push(Marked {
                         warning: Some(text),
@@ -307,7 +412,25 @@ impl Index {
             let root_fd = platform::linux::root(&root)?;
             let before = platform::linux::volume(&root_fd).ok().map(|v| v.1);
             for item in &plan.items {
-                match linux::delete_one(&root_fd, &root, home, item) {
+                let kind = match self.entry(&item.path)? {
+                    Some(entry) => match self.verdict_for(&entry, home)? {
+                        Verdict {
+                            gate: Gate::Denied(reason),
+                            ..
+                        } => {
+                            report.skipped.push((item.path.clone(), reason));
+                            continue;
+                        }
+                        v => v.kind,
+                    },
+                    None => {
+                        report
+                            .skipped
+                            .push((item.path.clone(), "no longer in the index".into()));
+                        continue;
+                    }
+                };
+                match linux::delete_one(&root_fd, &root, home, item, kind) {
                     Ok((removed, failed)) => {
                         report.removed_entries += removed;
                         report.failed_entries += failed;
@@ -461,6 +584,7 @@ mod linux {
         root: &Path,
         home: &Path,
         item: &Marked,
+        kind: Kind,
     ) -> std::result::Result<(u64, u64), String> {
         let relative = platform::path(&item.path).map_err(|e| e.to_string())?;
         let (parent, cname) = open_parent(root_fd, &relative)?;
@@ -478,9 +602,7 @@ mod linux {
         if fresh.kind != item.kind {
             return Err("type changed since it was added; skipped".into());
         }
-        if let Gate::Denied(reason) = gate(root, home, &fresh) {
-            return Err(reason);
-        }
+        target_checks(root, home, &fresh)?;
         if fresh.kind == "file" {
             fs::unlinkat(&parent, &cname, AtFlags::empty()).map_err(|e| e.to_string())?;
             return Ok((1, 0));
@@ -498,7 +620,7 @@ mod linux {
         }
         // Fresh descendant check right before deletion: no protected names, no mounts.
         let mut seen = 0u64;
-        check_tree(&dir, root, &relative, opened.st_dev, &mut seen)?;
+        check_tree(&dir, root, &relative, opened.st_dev, kind, &mut seen)?;
         let (removed, failed) = remove_tree(&dir, opened.st_dev);
         if failed == 0 {
             // rmdir only removes an empty directory, so a late swap cannot take anything with it.
@@ -529,6 +651,7 @@ mod linux {
         root: &Path,
         relative: &Path,
         dev: u64,
+        kind: Kind,
         seen: &mut u64,
     ) -> std::result::Result<(), String> {
         for (name, stat) in
@@ -544,7 +667,15 @@ mod linux {
             if entry.kind == "symlink" || entry.kind == "special" {
                 entry.kind = "file".into();
             }
-            if let Some(reason) = policy::hard_protection(root, &entry) {
+            let name_text = platform::linux::name(&name).to_string_lossy().into_owned();
+            if policy::always_sensitive(&name_text) {
+                return Err(format!("contains a sensitive item ({})", child.display()));
+            }
+            // Caches and stale repositories may legitimately contain `.git`, keys or databases
+            // (package contents, the repository itself); ordinary folders may not.
+            if kind == Kind::Plain
+                && let Some(reason) = policy::hard_protection(root, &entry)
+            {
                 return Err(format!(
                     "contains a protected item ({}): {reason}",
                     child.display()
@@ -561,7 +692,7 @@ mod linux {
                     Mode::empty(),
                 )
                 .map_err(|_| "a folder inside could not be opened".to_string())?;
-                check_tree(&sub, root, &child, dev, seen)?;
+                check_tree(&sub, root, &child, dev, kind, seen)?;
             }
         }
         Ok(())

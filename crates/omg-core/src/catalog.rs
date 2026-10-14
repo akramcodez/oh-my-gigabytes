@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
 /// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
-pub const DISCOVERIES: [&str; 9] = [
+pub const DISCOVERIES: [&str; 10] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -16,6 +16,7 @@ pub const DISCOVERIES: [&str; 9] = [
     "cargo_registry",
     "go_build_cache",
     "gradle_caches",
+    "stale_dependencies",
     "large_file",
 ];
 
@@ -173,7 +174,7 @@ pub fn parse(payload: &str) -> Result<Catalog> {
         {
             bail!("unsupported evidence/policy predicate");
         }
-        if !["package_caches", "large_files"].contains(&rule.category.as_str()) {
+        if !["package_caches", "build_artifacts", "large_files"].contains(&rule.category.as_str()) {
             bail!("unsupported category");
         }
         for text in [
@@ -334,18 +335,22 @@ impl Index {
             {
                 return Ok(None);
             }
-            let mut protected = policy::protection(&root, &entry);
-            if protected.is_none() && subtree.as_ref().is_some_and(|t| t.protected > 0) {
-                protected = Some(
-                    "contains protected, excluded or uncertain descendants; no cleanup action"
-                        .into(),
-                );
-            }
+            // The same verdict that gates deletion decides the tier, so "protected" means the
+            // item really cannot be deleted (not merely "somewhere under a Git repository").
+            let lookup = |dir: &std::path::Path| crate::rollup::newest_at(self, &root, dir);
+            let verdict = crate::cleanup::verdict(
+                &root,
+                &home,
+                &entry,
+                &mut policy::RepositoryMemo::with_ages(&lookup),
+            );
             let estimate = subtree.as_ref().map_or(entry.allocated, |t| t.allocated);
-            let effective = if protected.is_some() {
-                "protected"
-            } else {
-                rule.tier.as_str()
+            let (effective, reason) = match &verdict.gate {
+                crate::cleanup::Gate::Denied(why) => ("protected", why.clone()),
+                crate::cleanup::Gate::Warn(why) => {
+                    (rule.tier.as_str(), format!("{} ⚠ {why}", rule.explanation))
+                }
+                crate::cleanup::Gate::Allowed => (rule.tier.as_str(), rule.explanation.clone()),
             };
             let totals = match (&subtree, rollups) {
                 (Some(t), _) => format!(
@@ -378,7 +383,7 @@ impl Index {
                 estimate,
                 effective_tier: effective.into(),
                 action: "info".into(),
-                reason: protected.unwrap_or_else(|| rule.explanation.clone()),
+                reason,
                 evidence,
             }))
         };
@@ -406,6 +411,35 @@ impl Index {
             directory_roots.push(entry.path.clone());
             let subtree = self.subtree(&entry.path)?;
             output.extend(assemble(rule, entry, subtree)?);
+        }
+        if let Some(rule) = catalog
+            .rules
+            .iter()
+            .filter(applicable)
+            .find(|r| r.discovery == "stale_dependencies")
+        {
+            for path in self.stale_dependencies(scan)? {
+                if directory_roots
+                    .iter()
+                    .any(|d| policy::inside(&path, d, true))
+                {
+                    continue;
+                }
+                let Some(entry) = self
+                    .db
+                    .query_row(
+                        "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND path=?",
+                        params![scan, path],
+                        crate::index::row_entry,
+                    )
+                    .optional()?
+                else {
+                    continue;
+                };
+                directory_roots.push(entry.path.clone());
+                let subtree = self.subtree(&entry.path)?;
+                output.extend(assemble(rule, entry, subtree)?);
+            }
         }
         if let Some(rule) = catalog
             .rules
@@ -439,6 +473,58 @@ impl Index {
             .skip(offset)
             .take(limit.min(1000))
             .collect())
+    }
+    /// Top-level dependency folders (`node_modules` next to `package.json`, `target` next to
+    /// `Cargo.toml`, Python virtual environments) of projects untouched for `policy::STALE_DAYS`.
+    fn stale_dependencies(&self, scan: i64) -> Result<Vec<Vec<u8>>> {
+        let mut statement = self.db.prepare(
+            "SELECT path FROM dir_totals WHERE scan_id=? AND allocated>=1048576 AND path<>x''",
+        )?;
+        let mut candidates: Vec<Vec<u8>> = statement
+            .query_map([scan], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        candidates.sort_by_key(|p| p.len());
+        let exists = |path: Vec<u8>| -> Result<bool> {
+            Ok(self
+                .db
+                .query_row(
+                    "SELECT 1 FROM entries WHERE scan_id=? AND path=?",
+                    params![scan, path],
+                    |r| r.get::<_, i64>(0),
+                )
+                .optional()?
+                .is_some())
+        };
+        let cutoff = crate::now() - policy::STALE_DAYS * 86_400;
+        let mut chosen: Vec<Vec<u8>> = Vec::new();
+        for path in candidates {
+            let (parent, name) = match path.iter().rposition(|b| *b == b'/') {
+                Some(n) => (path[..n].to_vec(), &path[n + 1..]),
+                None => (Vec::new(), path.as_slice()),
+            };
+            let join = |base: &[u8], leaf: &str| {
+                let mut out = base.to_vec();
+                if !out.is_empty() {
+                    out.push(b'/');
+                }
+                out.extend_from_slice(leaf.as_bytes());
+                out
+            };
+            let evidence = match name {
+                b"node_modules" => exists(join(&parent, "package.json"))?,
+                b"target" => exists(join(&parent, "Cargo.toml"))?,
+                b".venv" | b"venv" => exists(join(&path, "pyvenv.cfg"))?,
+                _ => false,
+            };
+            if !evidence || chosen.iter().any(|c| policy::inside(&path, c, true)) {
+                continue;
+            }
+            let newest = self.subtree(&parent)?.map_or(0, |t| t.newest);
+            if newest > 0 && newest < cutoff {
+                chosen.push(path);
+            }
+        }
+        Ok(chosen)
     }
     pub fn ignores(&self) -> Result<Vec<Ignore>> {
         let mut statement = self
@@ -487,7 +573,7 @@ mod tests {
     #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 9);
+        assert_eq!(parse(payload).unwrap().rules.len(), 10);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());
@@ -590,13 +676,11 @@ mod tests {
                 .effective_tier
                 .as_str()
         };
-        assert_eq!(tier(b".cache/uv"), "protected");
-        // The fixture scope is the real home directory, which may itself be a Git repository
-        // (then everything under it is rightly protected), so only assert the info tier otherwise.
-        if home.join(".git").symlink_metadata().is_err() {
-            assert_eq!(tier(b".npm/_cacache"), "info");
-            assert_eq!(tier(b".cache/pip"), "info");
-        }
+        // Package contents that merely look like databases do not lock a known cache, and a Git
+        // repository at the home folder (dotfiles) does not lock what lives under home.
+        assert_eq!(tier(b".cache/uv"), "info");
+        assert_eq!(tier(b".npm/_cacache"), "info");
+        assert_eq!(tier(b".cache/pip"), "info");
         let selected = findings
             .iter()
             .find(|f| f.entry.path == b"ordinary")
