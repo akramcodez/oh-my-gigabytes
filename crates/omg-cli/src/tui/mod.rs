@@ -265,12 +265,14 @@ impl App {
                 Action::Mark,
                 Tone::Normal,
             );
-            push(
-                "Delete permanently…",
-                Some('d'),
-                Action::DeleteNow,
-                Tone::Danger,
-            );
+            if omg_core::PERMANENT_DELETE {
+                push(
+                    "Delete permanently…",
+                    Some('d'),
+                    Action::DeleteNow,
+                    Tone::Danger,
+                );
+            }
         }
         if s.tab == Tab::Findings && s.target().is_some() {
             push("Dry-run preview", Some('p'), Action::Preview, Tone::Normal);
@@ -281,7 +283,7 @@ impl App {
                 Tone::Normal,
             );
         }
-        if s.tab == Tab::Trash && !s.marked_ids().is_empty() {
+        if s.tab == Tab::Trash && !s.marked_ids().is_empty() && omg_core::PERMANENT_DELETE {
             push(
                 "Delete selected permanently…",
                 Some('d'),
@@ -401,6 +403,14 @@ impl App {
     }
     fn run_action(&mut self, action: Action) -> Result<bool> {
         self.state.menu = None;
+        if matches!(
+            action,
+            Action::DeleteNow | Action::DeleteSelected | Action::EmptyTrash | Action::Confirm(_)
+        ) && !omg_core::PERMANENT_DELETE
+        {
+            self.state.message = "Permanent delete is not available in this build.".into();
+            return Ok(false);
+        }
         match action {
             Action::Quit => return Ok(true),
             Action::CancelPlan { ids, fingerprint } => {

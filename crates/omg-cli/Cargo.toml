@@ -10,13 +10,18 @@ name = "omg"
 path = "src/main.rs"
 
 [dependencies]
-omg-core = { path = "../omg-core" }
+omg-core = { path = "../omg-core", default-features = false }
 anyhow.workspace = true
 clap.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 serde_json.workspace = true
 ctrlc.workspace = true
+
+[features]
+# Analysis-only build: cargo build -p omg-cli --no-default-features
+default = ["permanent-delete"]
+permanent-delete = ["omg-core/permanent-delete"]
 
 [dev-dependencies]
 tempfile.workspace = true

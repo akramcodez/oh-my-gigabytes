@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(all(target_os = "linux", feature = "permanent-delete"))]
 use omg_core::{Index, ScanOptions, cleanup::Gate, scanner};
 use std::{
     fs,

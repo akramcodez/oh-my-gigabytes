@@ -12,7 +12,16 @@ Decision as of 2026-10-15: **not a release candidate. Not published.** Linux rem
 | Scan-only service | Development, opt-in | Desktop notification path broken on the test host (`notify-send` library error). Second-user IPC test missing |
 | npm/binary distribution | Not published | No production signing key or publisher identity; `artifacts.yml` never run remotely |
 
-An analysis-only beta is possible once the owner decides to publish. A full cleanup release is not, because no permanent-delete profile is qualified.
+An analysis-only beta is possible once the owner decides to publish.
+
+### Analysis-only build (built 2026-10-15, not published)
+
+- Build: `cargo build --release -p omg-cli --no-default-features --locked`. The `permanent-delete` Cargo feature is off; the default build keeps it on.
+- What it does: scan, browse, findings, dry-run preview, history, doctor, service status. Permanent delete is refused in the backend and hidden in the TUI. Doctor reports `permanent delete: unsupported`.
+- Tests: default suite and analysis-only suite both pass (`cargo test --workspace --no-default-features`).
+- Checksum (local copy, outside the repo): `sha256 5fdc6e4c3c4f64b5b0df0fff19f68fb0799d03d0866065add07ed4859462cd4c`.
+- Not done for the beta: the package manifest still declares `cleanup: development-unqualified` for Linux. `assemble-release.js` and `verify.js` must be taught the analysis-only capability before any packaging. The delete code is still compiled into this binary, but it is unreachable through the backend gate and the UI.
+ A full cleanup release is not, because no permanent-delete profile is qualified.
 
 ## Gate status
 

@@ -229,8 +229,13 @@ fn run() -> Result<()> {
     if matches!(cli.command, Some(Command::Doctor)) {
         let diagnosis = omg_core::index::diagnose(&state)?;
         println!("omg: {}", serde_json::to_string_pretty(&diagnosis)?);
+        let scope = if omg_core::PERMANENT_DELETE {
+            "(Linux: ext-family, tmpfs, Btrfs; unknown filesystems refused)"
+        } else {
+            "(not included in this analysis-only build)"
+        };
         println!(
-            "permanent delete: {} (Linux: ext-family, tmpfs, Btrfs; unknown filesystems refused); OS Trash: {}; cloud/FUSE/remote profiles excluded",
+            "permanent delete: {} {scope}; OS Trash: {}; cloud/FUSE/remote profiles excluded",
             omg_core::capability::platform_permanent_delete().as_str(),
             omg_core::capability::os_trash().as_str()
         );

@@ -14,6 +14,9 @@ pub mod service;
 pub use index::Index;
 pub use model::{Entry, ScanOptions, ScanReport, Status};
 
+/// Whether this build contains permanent delete at all. The analysis-only build sets this false.
+pub const PERMANENT_DELETE: bool = cfg!(feature = "permanent-delete");
+
 pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

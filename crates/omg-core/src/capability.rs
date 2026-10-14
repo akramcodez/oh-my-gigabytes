@@ -56,6 +56,9 @@ impl Filesystem {
 /// as `DevelopmentUnqualified`, because the owner's home is Btrfs. Btrfs shared extents and
 /// snapshots mean freed space may be less than shown. Unknown filesystems are refused.
 pub fn permanent_delete(filesystem: Filesystem) -> Support {
+    if !crate::PERMANENT_DELETE {
+        return Support::Unsupported;
+    }
     match filesystem {
         Filesystem::Ext | Filesystem::Tmpfs | Filesystem::Btrfs => Support::DevelopmentUnqualified,
         Filesystem::Other => Support::Unsupported,
@@ -70,7 +73,7 @@ pub fn os_trash() -> Support {
 /// Permanent-delete support of this platform as reported by `omg doctor`, the status JSON and the
 /// release manifest. Cleanup code exists only on Linux; other platforms are unsupported.
 pub fn platform_permanent_delete() -> Support {
-    if cfg!(target_os = "linux") {
+    if crate::PERMANENT_DELETE && cfg!(target_os = "linux") {
         Support::DevelopmentUnqualified
     } else {
         Support::Unsupported
@@ -83,11 +86,14 @@ mod tests {
 
     #[test]
     fn permanent_delete_is_unqualified_on_known_filesystems_and_refused_elsewhere() {
+        // The analysis-only build (feature off) refuses everything; the default build allows the three families.
+        let allowed = if crate::PERMANENT_DELETE {
+            Support::DevelopmentUnqualified
+        } else {
+            Support::Unsupported
+        };
         for magic in [EXT_SUPER_MAGIC, TMPFS_MAGIC, BTRFS_SUPER_MAGIC] {
-            assert_eq!(
-                permanent_delete(Filesystem::from_magic(magic)),
-                Support::DevelopmentUnqualified
-            );
+            assert_eq!(permanent_delete(Filesystem::from_magic(magic)), allowed);
         }
         assert_eq!(
             permanent_delete(Filesystem::from_magic(0xdead_beef)),

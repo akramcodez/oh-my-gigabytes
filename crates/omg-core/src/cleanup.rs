@@ -438,7 +438,7 @@ impl Index {
         }
         let (scan, root, _) = self.scope()?;
         if delete_support(&root)? == crate::capability::Support::Unsupported {
-            bail!("permanent deletion is not available on this filesystem");
+            bail!("permanent deletion is not available in this build or on this filesystem");
         }
         let all = self.marked()?;
         let mut items: Vec<Marked> = Vec::new();
