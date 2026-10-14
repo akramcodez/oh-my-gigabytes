@@ -287,6 +287,7 @@ impl Index {
         )?;
         Ok(report)
     }
+    #[cfg(target_os = "linux")]
     /// Drop a deleted subtree from the published index and subtract it from ancestor totals, so the
     /// views stay truthful without a full rescan.
     fn forget(&self, path: &[u8]) -> Result<()> {
