@@ -29,7 +29,7 @@ Pending owner decisions are listed under [Prerequisites](#owner-and-environment-
 | WP01 | Reconcile implementation status | Closed for docs; small deferred items listed |
 | WP02 | Separate support from cleanup qualification | Implemented, partial (TUI display, non-Linux CI check) |
 | WP03 | Record reproducible baseline | Baseline commands recorded; remaining checks listed |
-| WP04 | Make confirmation exact and one-use | Not started; owner decision on auto-fill pending |
+| WP04 | Make confirmation exact and one-use | Core implemented 2026-10-15; auto-fill default is an owner decision |
 | WP05 | Prove target and descendant safety | Not started; needs ext4 host |
 | WP06 | Durable per-target outcomes and cancellation | Not started |
 | WP07 | Correct inventory after mutation and failures | Not started |
@@ -116,8 +116,8 @@ Acceptance: altered, expired, future-dated, replayed or unacknowledged-warning p
 
 Added (2026-10-15):
 - **Auto-filled items.** Scans add suggestions to OMG Trash (`auto_trash` is on by default), and `D` deletes the whole list after one confirmation. A user can delete items they never picked. Owner decision pending: turn auto-fill off by default, or require a separate confirmation for auto-filled items. Either way, the confirmation must list every item and show which ones were auto-filled.
-- Today `delete_permanently` only compares two caller-supplied values (`confirmed == plan.fingerprint`). It never recomputes the fingerprint from the items, and the TUI worker passes `plan.fingerprint` itself as `confirmed`. Make the backend hold the plan it issued (session-bound) and recompute or look it up, so a caller cannot submit modified items.
-- Reject future-dated plans (`created` later than now), not only expired ones.
+- **Done 2026-10-15:** the backend holds each issued plan (`Index.issued`, memory only). `delete_permanently` consumes it once and compares the caller's plan with the stored one, including items, warnings, denials and times. A reopened index cannot use a plan from an earlier session. A scan change after review is refused.
+- **Done 2026-10-15:** future-dated and expired plans are refused (unit tests with an injected clock). Still open: the owner decision on auto-fill (below).
 
 ### WP05 — Prove target and descendant safety
 

@@ -372,3 +372,41 @@ fn unsupported_root_refuses_plan_and_delete_with_zero_mutations() {
     assert_eq!(operations, 0, "a refused delete must not write intent");
     assert_eq!(fs::read(h.join("cache.bin")).unwrap(), b"keep me");
 }
+
+/// A reviewed plan is one-use and session-bound. Replaying it, or presenting it to a reopened
+/// index (a new session), deletes nothing. A fresh review of the same item still works.
+#[test]
+fn reviewed_plan_is_one_use_and_does_not_survive_a_new_session() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    let id = id_of(&index, b"scratch");
+
+    // Plan from the first session, then reopen: the plan must not work there.
+    let stale = index.prepare_delete(&[id], h).unwrap();
+    drop(index);
+    let mut index = Index::open(state.path()).unwrap();
+    let error = index
+        .delete_permanently(&stale, &stale.fingerprint, h)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("not issued by this session"), "{error}");
+    assert!(h.join("scratch/a.bin").exists());
+
+    // A fresh review in this session deletes once; replaying that plan does nothing.
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted, vec![b"scratch".to_vec()]);
+    assert!(!h.join("scratch").exists());
+    let error = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("already used"), "{error}");
+}

@@ -6,6 +6,8 @@ Status: **read-only review/dry-run milestone implemented; full Phase 3 cleanup a
 
 > **WP02 (2026-10-15):** Permanent deletion is gated by `capability::permanent_delete`: `development-unqualified` on ext-family, tmpfs and Btrfs (owner decision: Btrfs allowed), refused on other filesystems. The gate runs in `prepare_delete` and before the intent record in `delete_permanently`. Test: `unsupported_root_refuses_plan_and_delete_with_zero_mutations`. "Qualified" is not reached by any profile.
 
+> **WP04 (2026-10-15):** Confirmation is bound to the plan the backend issued in this session. The plan is consumed on first use, expires after 900 s, and must match the issued items and warnings exactly. Tests: `reviewed_plan_is_one_use_and_does_not_survive_a_new_session` and four unit tests in `cleanup.rs`. Auto-filled items are still not separated in the UI (owner decision pending).
+
 ## Implemented
 
 - Keyboard-first ratatui findings grouped by category within pages, detail/evidence/effects/regeneration/source views, path/name search, tier/category/minimum-size filters and page navigation.

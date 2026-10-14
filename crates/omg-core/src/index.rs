@@ -23,6 +23,9 @@ pub struct RunningScan {
 pub struct Index {
     pub(crate) db: Connection,
     pub state: PathBuf,
+    /// Delete plans issued by this session and not yet used. Memory only: a reopened index cannot
+    /// delete a plan that a previous session showed.
+    pub(crate) issued: crate::cleanup::IssuedPlans,
 }
 pub fn sqlite_version() -> String {
     rusqlite::version().to_string()
@@ -264,7 +267,11 @@ impl Index {
                 }
             }
         }
-        Ok(Self { db, state })
+        Ok(Self {
+            db,
+            state,
+            issued: Default::default(),
+        })
     }
     pub fn status(&self) -> Result<Status> {
         let active: Option<i64> = self

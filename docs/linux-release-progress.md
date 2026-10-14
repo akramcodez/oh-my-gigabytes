@@ -10,7 +10,8 @@ Last updated: 2026-10-15.
 - **WP02:** implemented and committed on `main`. Partial: no TUI capability display; the non-Linux build was not checked locally (CI only).
 - **WP03 baseline:** recorded before any code change (see WP03 section).
 - **Plan:** `docs/linux-release-implementation-plan.md` updated 2026-10-15 with every remaining Linux item (status table, owner decisions, "Remaining"/"Added" lists per WP, prerequisites).
-- **Next:** WP04. Waiting on the owner's auto-fill decision.
+- **WP04:** core done (session-bound, one-use plans; see WP04 section). Open: owner decision on auto-fill.
+- **Next:** WP06 (durable outcomes), the next package that does not need an owner decision or native host. WP05 waits for an ext4 host.
 
 ## Owner decisions
 
@@ -101,6 +102,26 @@ Acceptance status:
 - Btrfs analysis vs deletion distinguished: `capability` unit test asserts Btrfs is `development-unqualified`, never `qualified`. No profile is `qualified`.
 - Manifest/runtime agreement: `release.test.js` checks the manifest value and the doctor string; `verify.js` rejects a mismatch.
 - UI refusal: **partial.** The worker turns backend errors into `Response::Error` and keeps running (verified in `worker.rs`). No TUI test covers it.
+
+## WP04 — exact, one-use confirmation (2026-10-15)
+
+Changes (`crates/omg-core/src/cleanup.rs`, `index.rs`):
+- `prepare_delete` now takes `&mut self` and stores the plan it issues in `Index.issued` (memory only), keyed by fingerprint, with the scan id.
+- The fingerprint now covers scan id, items (including warnings), denials and creation time.
+- `delete_permanently` calls `take_issued`, which removes the stored plan before any check. It refuses: an unknown or already-used plan, a future-dated plan, an expired plan (900 s), and any difference between the caller's plan and the issued one. It also refuses if the active scan changed since review.
+- Stored plans older than the TTL are pruned on each new `prepare_delete`.
+
+Checks: fmt, clippy (`-D warnings`) and `cargo test --workspace --locked` all pass. New tests: four unit tests in `cleanup.rs` (replay, modified warning, expired and future-dated, unknown fingerprint) and one integration test, `reviewed_plan_is_one_use_and_does_not_survive_a_new_session`.
+
+Acceptance:
+- Altered, expired, future-dated, replayed and warning-stripped plans are refused before any mutation (unit and integration tests).
+- Cancel stays the default in the TUI (existing test `delete_confirmation_defaults_to_cancel_and_shows_warnings`).
+- A plan from another session is refused (integration test).
+
+Not done:
+- **Auto-fill default** (owner decision). `D` still deletes everything in the list after one confirmation, and auto-filled items are not marked separately (WP10).
+- Cancel in the TUI does not tell the backend to discard the plan. The plan stays in memory until it expires or the session ends. Harmless: the TUI no longer holds the fingerprint, but a discard call would be cleaner.
+- Concurrent reuse across two TUI processes cannot happen, because each process has its own in-memory store. Within one process the `&mut self` borrow serialises calls.
 
 ## WP03 — baseline (2026-10-15, before any code change)
 

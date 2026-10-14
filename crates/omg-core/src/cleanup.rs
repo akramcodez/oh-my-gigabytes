@@ -12,7 +12,54 @@ use crate::{Entry, Index, index::unsigned, now, platform, policy};
 use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
+/// Plans issued by this session, keyed by fingerprint, with the scan id they were prepared on.
+pub(crate) type IssuedPlans = HashMap<String, (i64, DeletePlan)>;
+
+/// Seconds a reviewed plan may wait for confirmation before it must be reviewed again.
+const PLAN_TTL: i64 = 900;
+
+fn fingerprint_of(
+    scan: i64,
+    items: &[Marked],
+    denied: &[(Vec<u8>, String)],
+    created: i64,
+) -> Result<String> {
+    Ok(crate::catalog::digest(&serde_json::to_vec(&(
+        scan, items, denied, created,
+    ))?))
+}
+
+/// Consume an issued plan. It is accepted once, only as issued by this session, and only while
+/// fresh. The stored copy is removed before any check, so a refused attempt also needs a new review.
+/// Any difference in items, warnings, denials or times is refused, so the warnings the user saw are
+/// part of what was confirmed.
+fn take_issued(
+    issued: &mut IssuedPlans,
+    plan: &DeletePlan,
+    confirmed: &str,
+    current: i64,
+) -> Result<(i64, DeletePlan)> {
+    let Some((scan, stored)) = issued.remove(confirmed) else {
+        bail!(
+            "this plan was not issued by this session, was already used, or was discarded; review it again"
+        );
+    };
+    if stored.created > current {
+        bail!("plan is dated in the future; review it again");
+    }
+    if current - stored.created > PLAN_TTL {
+        bail!("confirmation has expired; review it again");
+    }
+    if serde_json::to_vec(plan)? != serde_json::to_vec(&stored)? {
+        bail!("the plan was changed after review; review it again");
+    }
+    Ok((scan, stored))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Gate {
@@ -372,12 +419,13 @@ impl Index {
             .execute("DELETE FROM marked WHERE id=? AND source='user'", [id])?;
         Ok(())
     }
-    /// Freeze the exact set to delete. The interface shows it and must pass the same plan back.
-    pub fn prepare_delete(&self, ids: &[i64], home: &Path) -> Result<DeletePlan> {
+    /// Freeze the exact set to delete and issue it to this session. The interface shows it and must
+    /// pass the same plan back. The issued copy is the only one `delete_permanently` will accept.
+    pub fn prepare_delete(&mut self, ids: &[i64], home: &Path) -> Result<DeletePlan> {
         if ids.is_empty() || ids.len() > 10_000 {
             bail!("select 1–10000 items in OMG Trash to delete");
         }
-        let (_, root, _) = self.scope()?;
+        let (scan, root, _) = self.scope()?;
         if delete_support(&root)? == crate::capability::Support::Unsupported {
             bail!("permanent deletion is not available on this filesystem");
         }
@@ -409,14 +457,19 @@ impl Index {
             }
         }
         let estimated = items.iter().map(|i| i.allocated).sum();
-        let fingerprint = crate::catalog::digest(&serde_json::to_vec(&(&items, &denied))?);
-        Ok(DeletePlan {
-            fingerprint,
+        let created = now();
+        let fingerprint = fingerprint_of(scan, &items, &denied, created)?;
+        let plan = DeletePlan {
+            fingerprint: fingerprint.clone(),
             items,
             denied,
             estimated,
-            created: now(),
-        })
+            created,
+        };
+        self.issued
+            .retain(|_, (_, held)| now() - held.created <= PLAN_TTL);
+        self.issued.insert(fingerprint, (scan, plan.clone()));
+        Ok(plan)
     }
     /// Permanently delete the items of a confirmed plan. `confirmed` must be the fingerprint the
     /// user saw; every target is revalidated again here and skipped if anything changed.
@@ -426,14 +479,15 @@ impl Index {
         confirmed: &str,
         home: &Path,
     ) -> Result<DeleteReport> {
-        if confirmed != plan.fingerprint || now() - plan.created > 900 {
-            bail!("confirmation does not match this plan or has expired; review it again");
-        }
+        let (scan, plan) = take_issued(&mut self.issued, plan, confirmed, now())?;
         let _cleanup = crate::index::lock(&self.state, "cleanup.lock")?;
         let _scan = crate::index::lock(&self.state, "scan.lock").map_err(|_| {
             anyhow::anyhow!("a scan is running; wait for it to finish, then delete")
         })?;
-        let (_, root, _) = self.scope()?;
+        let (current, root, _) = self.scope()?;
+        if current != scan {
+            bail!("the scan changed after review; review it again");
+        }
         // Refused before the intent record: an unsupported filesystem changes nothing and logs nothing.
         if delete_support(&root)? == crate::capability::Support::Unsupported {
             bail!("permanent deletion is not available on this filesystem");
@@ -445,7 +499,7 @@ impl Index {
         )?;
         self.db.execute(
             "INSERT INTO operations(created,kind,fingerprint,outcome,detail) VALUES(?,'delete',?,'intent',?)",
-            params![now(), plan.fingerprint, serde_json::to_string(plan)?],
+            params![now(), plan.fingerprint, serde_json::to_string(&plan)?],
         )?;
         let operation = self.db.last_insert_rowid();
         let mut report = DeleteReport {
@@ -783,5 +837,88 @@ mod linux {
             }
         }
         (removed, failed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(warning: Option<&str>) -> Marked {
+        Marked {
+            id: 1,
+            path: b"projects/build".to_vec(),
+            identity: "1:2".into(),
+            kind: "directory".into(),
+            allocated: 4096,
+            added: 0,
+            warning: warning.map(str::to_string),
+            birth: None,
+            source: "user".into(),
+        }
+    }
+
+    fn issue(issued: &mut IssuedPlans, created: i64, items: Vec<Marked>) -> DeletePlan {
+        let denied = Vec::new();
+        let fingerprint = fingerprint_of(7, &items, &denied, created).unwrap();
+        let plan = DeletePlan {
+            fingerprint: fingerprint.clone(),
+            items,
+            denied,
+            estimated: 4096,
+            created,
+        };
+        issued.insert(fingerprint, (7, plan.clone()));
+        plan
+    }
+
+    #[test]
+    fn issued_plan_is_accepted_once_then_refused_as_replay() {
+        let mut issued = IssuedPlans::new();
+        let plan = issue(&mut issued, 1000, vec![item(None)]);
+        let fingerprint = plan.fingerprint.clone();
+        let (scan, _) = take_issued(&mut issued, &plan, &fingerprint, 1001).unwrap();
+        assert_eq!(scan, 7);
+        let error = take_issued(&mut issued, &plan, &fingerprint, 1002).unwrap_err();
+        assert!(error.to_string().contains("not issued by this session"));
+    }
+
+    #[test]
+    fn modified_items_or_warnings_are_refused_and_the_plan_is_consumed() {
+        let mut issued = IssuedPlans::new();
+        let plan = issue(
+            &mut issued,
+            1000,
+            vec![item(Some("inside a Git repository"))],
+        );
+        let fingerprint = plan.fingerprint.clone();
+
+        // A caller that drops the warning the user saw must not get the plan through.
+        let mut softened = plan.clone();
+        softened.items[0].warning = None;
+        assert!(take_issued(&mut issued, &softened, &fingerprint, 1001).is_err());
+        // The attempt consumed the stored plan, so the original cannot be used afterwards either.
+        assert!(take_issued(&mut issued, &plan, &fingerprint, 1001).is_err());
+    }
+
+    #[test]
+    fn expired_and_future_dated_plans_are_refused() {
+        let mut issued = IssuedPlans::new();
+        let plan = issue(&mut issued, 1000, vec![item(None)]);
+        let fingerprint = plan.fingerprint.clone();
+        let error = take_issued(&mut issued, &plan, &fingerprint, 1000 + PLAN_TTL + 1).unwrap_err();
+        assert!(error.to_string().contains("expired"));
+
+        let plan = issue(&mut issued, 2000, vec![item(None)]);
+        let fingerprint = plan.fingerprint.clone();
+        let error = take_issued(&mut issued, &plan, &fingerprint, 1999).unwrap_err();
+        assert!(error.to_string().contains("future"));
+    }
+
+    #[test]
+    fn unknown_fingerprint_is_refused() {
+        let mut issued = IssuedPlans::new();
+        let plan = issue(&mut issued, 1000, vec![item(None)]);
+        assert!(take_issued(&mut issued, &plan, "not-a-real-fingerprint", 1001).is_err());
     }
 }
