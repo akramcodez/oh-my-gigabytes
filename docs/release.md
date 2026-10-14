@@ -101,3 +101,55 @@ Uninstall removes the launcher/platform package; it **preserves the local index/
 - Certify native metadata/cloud/Trash/state permissions, recovery and every advertised capability. macOS/Windows stub builds are not cross-platform cleaner support.
 
 No production release or automatic publishing workflow is enabled by this milestone.
+
+
+## Local signed Linux build (0.1.0, analysis-only, not published)
+
+Status: a local, signed test artifact. Nothing is uploaded or published. It is not qualified and it does not run on glibc older than 2.39.
+
+| Item | Value |
+| --- | --- |
+| Location | `dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/omg` (git-ignored by `/dist/`) |
+| Files | `artifact/omg`, `artifact/manifest.json`, `artifact/manifest.sig`, `SHA256SUMS` |
+| Variant | `analysis-only` (built with `--no-default-features`; permanent delete is compiled off) |
+| Target | `linux-x64-gnu` (x86_64-unknown-linux-gnu) |
+| Size | 6050792 bytes |
+| SHA-256 | `5fdc6e4c3c4f64b5b0df0fff19f68fb0799d03d0866065add07ed4859462cd4c` |
+| Signing key ID | `22dd52bb7e7e006092f50d05abdb38e8019402c4d45b6f3a53c6cc96c23dff25` |
+| Claimed capabilities | analysis `development-linux`, cleanup `disabled`, service `development-linux` |
+| Minimum glibc | 2.39 (the build host has 2.43) |
+
+### How it was produced
+
+```sh
+# 1. Build the analysis-only binary (permanent delete compiled off).
+cargo build --release -p omg-cli --no-default-features --locked
+cp target/release/omg ~/omg-builds/omg-analysis-only
+
+# 2. Sign it. Keys live outside the repo. The private key must be 0600.
+node scripts/assemble-release.js \
+  --binary ~/omg-builds/omg-analysis-only --target linux-x64-gnu --version 0.1.0 \
+  --variant analysis-only \
+  --public-key ~/omg-release-keys/release-public.pem \
+  --private-key ~/omg-release-keys/release-private.pem \
+  --out /tmp/omg-release-0.1.0-analysis
+
+# 3. Copy the signed artifact into the repo (git-ignored) and verify the copy.
+mkdir -p dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact
+cp /tmp/omg-release-0.1.0-analysis/oh-my-gigabytes-linux-x64-gnu/artifact/* dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/
+sha256sum dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/omg > dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/SHA256SUMS
+node scripts/verify-release.js \
+  --artifact dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact \
+  --public-key ~/omg-release-keys/release-public.pem --target linux-x64-gnu --version 0.1.0
+```
+
+### Checks performed
+
+- `assemble-release.js` refuses a `full` claim for the analysis-only binary and refuses to write anything. It runs the binary's own `doctor` to confirm the claim.
+- `verify-release.js` passes on the copy in `dist/`.
+
+### Limits
+
+- The test key in `~/omg-release-keys` is for dry runs. Do not publish with it. A real release needs a new key, held by the owner.
+- Not built with an older glibc. Use a container baseline before any public upload (see the checklist).
+- The copy in `dist/` is local only. Publishing requires explicit authorization.

@@ -194,3 +194,11 @@ Gaps: cleanup tests run on tmpfs, not ext4 or Btrfs. Those are native gates stil
 ## Next package
 
 WP04: make confirmation exact and one-use (`cleanup.rs`, `tui/mod.rs`, `tui/worker.rs`), including the "Added" items in the plan. Start after the owner decides the auto-fill default.
+
+
+## Signed local Linux artifact (2026-10-15)
+
+- Analysis-only build signed with the dry-run key: `dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/omg`, SHA-256 `5fdc6e4c3c4f64b5b0df0fff19f68fb0799d03d0866065add07ed4859462cd4c`.
+- Manifest claims `cleanup: disabled`. The release script now checks this against the binary's own `doctor` output before signing (commit `5609f81`).
+- Verified with `scripts/verify-release.js`.
+- Remaining before upload: older-glibc build (WP13), owner-held signing key (WP14), explicit publishing authorization (WP15).

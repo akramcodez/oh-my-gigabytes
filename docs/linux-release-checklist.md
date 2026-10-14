@@ -56,3 +56,9 @@ An analysis-only beta is possible once the owner decides to publish.
 - No profile is qualified. No platform is certified.
 - Permanent delete is not recoverable and does not guarantee freed space on Btrfs or WSL.
 - Notifications are not verified end to end.
+
+
+### Local signed artifact (2026-10-15)
+
+- Built, signed and verified: `dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/omg` (analysis-only, `cleanup: disabled`, SHA-256 `5fdc6e4c3c4f64b5…`). Full steps are in [release.md](release.md#local-signed-linux-build-010-analysis-only-not-published).
+- Still open before any upload: older-glibc container build, a real owner-held signing key, and explicit authorization to publish.
