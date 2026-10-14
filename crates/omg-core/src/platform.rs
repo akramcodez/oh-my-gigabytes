@@ -25,11 +25,19 @@ pub fn default_config() -> Result<PathBuf> {
         .unwrap_or(home()?.join(".config"))
         .join("omg/config.toml"))
 }
-/// Live (capacity, available) bytes of the filesystem holding `root`, or `None` when unsupported.
+/// Live (capacity, used) bytes of the filesystem holding `root`, or `None` when unsupported.
+/// "Used" matches `df`: blocks holding data, excluding space the filesystem reserves for root.
 pub fn volume_sample(root: &Path) -> Option<(u64, u64)> {
     #[cfg(target_os = "linux")]
     {
-        linux::volume(&linux::root(root).ok()?).ok()
+        let sample = rustix::fs::fstatvfs(&linux::root(root).ok()?).ok()?;
+        Some((
+            sample.f_blocks.saturating_mul(sample.f_frsize),
+            sample
+                .f_blocks
+                .saturating_sub(sample.f_bfree)
+                .saturating_mul(sample.f_frsize),
+        ))
     }
     #[cfg(not(target_os = "linux"))]
     {

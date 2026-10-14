@@ -165,10 +165,14 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
             ]));
             let gauge = inner.saturating_sub(70).clamp(10, 36);
             // Live numbers (read fresh from the filesystem) win over the scan-time sample.
-            let disk = summary_volume(state).or(status.capacity.zip(status.available));
+            let disk = summary_volume(state).or_else(|| {
+                status
+                    .capacity
+                    .zip(status.available)
+                    .map(|(c, a)| (c, c.saturating_sub(a)))
+            });
             lines.push(match disk {
-                Some((cap, free)) if cap > 0 => {
-                    let used_bytes = cap.saturating_sub(free);
+                Some((cap, used_bytes)) if cap > 0 => {
                     let used = used_bytes as f64 / cap as f64;
                     let style = if used >= 0.9 {
                         theme.danger()

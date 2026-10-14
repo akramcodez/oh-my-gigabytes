@@ -285,13 +285,14 @@ fn explicit_partial_publication_is_labelled_and_opt_in() {
 #[test]
 fn live_volume_sample_tracks_real_free_space() {
     let dir = tempfile::tempdir().unwrap();
-    let (capacity, before) = platform::volume_sample(dir.path()).expect("supported filesystem");
-    assert!(capacity > 0 && before <= capacity);
+    let (capacity, used_before) =
+        platform::volume_sample(dir.path()).expect("supported filesystem");
+    assert!(capacity > 0 && used_before <= capacity);
     fs::write(dir.path().join("big"), vec![7u8; 8 << 20]).unwrap();
-    let (_, after) = platform::volume_sample(dir.path()).unwrap();
-    // Other activity can only add noise; a deliberate 8 MiB write must not leave free space higher.
+    let (_, used_after) = platform::volume_sample(dir.path()).unwrap();
+    // Other activity adds noise, but a deliberate 8 MiB write must not leave used space lower.
     assert!(
-        after <= before + (1 << 20),
-        "free space did not shrink: {before} -> {after}"
+        used_after + (1 << 20) >= used_before,
+        "used space shrank: {used_before} -> {used_after}"
     );
 }

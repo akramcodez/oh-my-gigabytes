@@ -56,7 +56,7 @@ pub struct Summary {
     pub root: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub auto_trash: bool,
-    /// (capacity, available) bytes read from the filesystem now, not from the scan record.
+    /// (capacity, used) bytes read from the filesystem now, not from the scan record.
     pub volume: Option<(u64, u64)>,
 }
 
