@@ -6,6 +6,46 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
+/// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
+pub const DISCOVERIES: [&str; 9] = [
+    "npm_content_cache",
+    "pip_cache",
+    "uv_cache",
+    "pnpm_store",
+    "yarn_cache",
+    "cargo_registry",
+    "go_build_cache",
+    "gradle_caches",
+    "large_file",
+];
+
+/// Fixed default location of a directory-root discovery, honouring the tool's own absolute
+/// environment override where it has one.
+pub fn discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
+    let env = |name: &str| {
+        std::env::var_os(name)
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    let cache = env("XDG_CACHE_HOME").unwrap_or_else(|| home.join(".cache"));
+    Some(match kind {
+        "npm_content_cache" => home.join(".npm/_cacache"),
+        "pip_cache" => home.join(".cache/pip"),
+        "uv_cache" => home.join(".cache/uv"),
+        "pnpm_store" => env("XDG_DATA_HOME")
+            .unwrap_or_else(|| home.join(".local/share"))
+            .join("pnpm/store"),
+        "yarn_cache" => cache.join("yarn"),
+        "cargo_registry" => env("CARGO_HOME")
+            .unwrap_or_else(|| home.join(".cargo"))
+            .join("registry"),
+        "go_build_cache" => env("GOCACHE").unwrap_or_else(|| cache.join("go-build")),
+        "gradle_caches" => env("GRADLE_USER_HOME")
+            .unwrap_or_else(|| home.join(".gradle"))
+            .join("caches"),
+        _ => return None,
+    })
+}
 const DOMAIN: &[u8] = b"OMG-CATALOG-V1\0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,8 +141,7 @@ pub fn parse(payload: &str) -> Result<Catalog> {
         if rule.revision == 0
             || !["info", "review"].contains(&rule.tier.as_str())
             || rule.action != "info"
-            || !["npm_content_cache", "pip_cache", "uv_cache", "large_file"]
-                .contains(&rule.discovery.as_str())
+            || !DISCOVERIES.contains(&rule.discovery.as_str())
         {
             bail!("unqualified tier/action/discovery; catalog cannot enable deletion or commands");
         }
@@ -253,6 +292,17 @@ impl Index {
         offset: usize,
         include_ignored: bool,
     ) -> Result<Vec<Finding>> {
+        self.findings_in(limit, offset, include_ignored, &platform::home()?)
+    }
+    /// Findings with rule roots resolved against an explicit home directory.
+    pub fn findings_in(
+        &self,
+        limit: usize,
+        offset: usize,
+        include_ignored: bool,
+        home: &std::path::Path,
+    ) -> Result<Vec<Finding>> {
+        let home = home.to_path_buf();
         let status = self.status()?;
         let Some(root_raw) = status.root else {
             return Ok(vec![]);
@@ -260,7 +310,6 @@ impl Index {
         let root = platform::path(&root_raw)?;
         let (catalog, hash) = self.catalog()?;
         let ignores = self.ignores()?;
-        let home = platform::home()?;
         let scan: i64 =
             self.db
                 .query_row("SELECT scan_id FROM active WHERE singleton=1", [], |r| {
@@ -334,11 +383,8 @@ impl Index {
             }))
         };
         for rule in catalog.rules.iter().filter(applicable) {
-            let relative = match rule.discovery.as_str() {
-                "npm_content_cache" => home.join(".npm/_cacache"),
-                "pip_cache" => home.join(".cache/pip"),
-                "uv_cache" => home.join(".cache/uv"),
-                _ => continue,
+            let Some(relative) = discovery_root(&rule.discovery, &home) else {
+                continue;
             };
             let Some(relative) = crate::rollup::relative_raw(&root, &relative) else {
                 continue;
@@ -441,7 +487,7 @@ mod tests {
     #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 4);
+        assert_eq!(parse(payload).unwrap().rules.len(), 9);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());

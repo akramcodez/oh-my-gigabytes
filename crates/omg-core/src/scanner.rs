@@ -464,7 +464,7 @@ mod linux {
         tx.commit()?;
         // Old scans are invisible once `active` moved, so removing their rows is housekeeping done
         // in bounded chunks instead of one multi-second transaction on the publish path.
-        let _ = index.prune_stale(Duration::from_secs(4));
+        let _ = index.prune_stale_locked(Duration::from_secs(4));
         index.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
         // Trend history is advisory; failing to record it must never fail or alter the scan result.
         let _ = index.record_sample(

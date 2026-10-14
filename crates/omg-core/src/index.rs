@@ -68,7 +68,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=7,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=8,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":"disabled","service":"see omg service status","native_analysis":"development Linux only"}),
     )
 }
 
@@ -183,12 +183,14 @@ impl Index {
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
                 | rusqlite::OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
-        db.busy_timeout(Duration::from_secs(2))?;
+        // Several local writers (scan, interface worker, housekeeping) share the database; wait
+        // for a short write rather than failing a scan after two seconds.
+        db.busy_timeout(Duration::from_secs(20))?;
         if rusqlite::version_number() < 3_051_003 {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 7 {
+        if version > 8 {
             bail!("index schema is newer than this omg build");
         }
         // quick_check reads the whole file (seconds on a multi-GB index), so very large indexes
@@ -233,6 +235,9 @@ impl Index {
         }
         if version < 7 {
             db.execute_batch(include_str!("../../../migrations/007.sql"))?;
+        }
+        if version < 8 {
+            db.execute_batch(include_str!("../../../migrations/008.sql"))?;
         }
         #[cfg(unix)]
         {
@@ -333,6 +338,14 @@ impl Index {
     /// Delete rows of scans that are neither published nor the latest record, in chunks, stopping
     /// after `budget`. Returns true when nothing stale remains. Safe to call repeatedly.
     pub fn prune_stale(&self, budget: Duration) -> Result<bool> {
+        // Never compete with a running scan for the write lock; it prunes when it finishes.
+        let Ok(_owner) = lock(&self.state, "scan.lock") else {
+            return Ok(false);
+        };
+        self.prune_stale_locked(budget)
+    }
+    /// `prune_stale` for a caller that already owns the scan lock (the scanner itself).
+    pub(crate) fn prune_stale_locked(&self, budget: Duration) -> Result<bool> {
         let started = std::time::Instant::now();
         let stale: Vec<i64> = {
             let mut statement = self.db.prepare(
@@ -345,7 +358,7 @@ impl Index {
         for id in stale {
             loop {
                 let removed = self.db.execute(
-                    "DELETE FROM entries WHERE rowid IN (SELECT rowid FROM entries WHERE scan_id=? LIMIT 25000)",
+                    "DELETE FROM entries WHERE rowid IN (SELECT rowid FROM entries WHERE scan_id=? LIMIT 4000)",
                     [id],
                 )?;
                 if removed == 0 {

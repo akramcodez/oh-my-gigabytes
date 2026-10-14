@@ -34,6 +34,8 @@ pub struct Marked {
     /// Creation time captured when the item was added. Inode numbers are reused immediately on
     /// ext4, so identity alone cannot tell a recreated file from the original.
     pub birth: Option<String>,
+    /// "auto" when a scan suggested it, "user" when the user added it.
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +112,15 @@ impl Index {
     }
     /// Save a path in OMG Trash. Nothing on disk changes. Denied items are refused.
     pub fn mark(&self, path: &[u8], allocated: u64, home: &Path) -> Result<Gate> {
+        self.upsert_marked(path, allocated, home, "user")
+    }
+    fn upsert_marked(
+        &self,
+        path: &[u8],
+        allocated: u64,
+        home: &Path,
+        source: &str,
+    ) -> Result<Gate> {
         let (_, root, root_raw) = self.scope()?;
         let entry = self
             .entry(path)?
@@ -128,18 +139,69 @@ impl Index {
             Gate::Warn(text) => Some(text.clone()),
             Gate::Allowed => None,
         };
-        self.db.execute(
-            "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth",
-            params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth],
-        )?;
+        if source == "user" {
+            // A user's choice always wins, including over an earlier dismissed suggestion.
+            self.db.execute(
+                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed) VALUES(?,?,?,?,?,?,?,?,'user',0) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth,source='user',dismissed=0",
+                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth],
+            )?;
+        } else {
+            // Suggestions refresh their own facts but never resurrect something the user removed.
+            self.db.execute(
+                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed) VALUES(?,?,?,?,?,?,?,?,'auto',0) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth WHERE marked.dismissed=0",
+                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth],
+            )?;
+        }
         Ok(verdict)
+    }
+    /// Add regenerable cache findings to OMG Trash as suggestions (never large files, never
+    /// anything a gate denies). Returns how many are listed after the refresh.
+    pub fn suggest(&self, home: &Path) -> Result<usize> {
+        let (scan, _, root_raw) = self.scope()?;
+        // Suggestions whose folder vanished from the index are stale.
+        self.db.execute(
+            "DELETE FROM marked WHERE source='auto' AND dismissed=0 AND root=?1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.scan_id=?2 AND e.path=marked.path)",
+            params![root_raw, scan],
+        )?;
+        let mut listed = 0;
+        for finding in self.findings_in(1000, 0, false, home)? {
+            if finding.rule.category != "package_caches" {
+                continue;
+            }
+            if self
+                .upsert_marked(&finding.entry.path, finding.estimate, home, "auto")
+                .is_ok()
+            {
+                listed += 1;
+            }
+        }
+        Ok(listed)
+    }
+    /// Whether scans add cache suggestions to OMG Trash (default: on).
+    pub fn auto_trash(&self) -> Result<bool> {
+        let value: Option<Vec<u8>> = self
+            .db
+            .query_row(
+                "SELECT value FROM settings WHERE key='auto_trash'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(value.is_none_or(|v| v != b"off"))
+    }
+    pub fn set_auto_trash(&self, on: bool) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO settings VALUES('auto_trash',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [if on { b"on".to_vec() } else { b"off".to_vec() }],
+        )?;
+        Ok(())
     }
     pub fn marked(&self) -> Result<Vec<Marked>> {
         let Ok((_, _, root_raw)) = self.scope() else {
             return Ok(vec![]);
         };
         let mut statement = self.db.prepare(
-            "SELECT id,path,identity,kind,allocated,added,warning,birth FROM marked WHERE root=? ORDER BY allocated DESC,id",
+            "SELECT id,path,identity,kind,allocated,added,warning,birth,source FROM marked WHERE root=? AND dismissed=0 ORDER BY allocated DESC,id",
         )?;
         Ok(statement
             .query_map([root_raw], |r| {
@@ -152,12 +214,19 @@ impl Index {
                     added: r.get(5)?,
                     warning: r.get(6)?,
                     birth: r.get(7)?,
+                    source: r.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?)
     }
+    /// Take an item off the list. A removed suggestion stays dismissed so scans don't re-add it.
     pub fn unmark(&self, id: i64) -> Result<()> {
-        self.db.execute("DELETE FROM marked WHERE id=?", [id])?;
+        self.db.execute(
+            "UPDATE marked SET dismissed=1 WHERE id=? AND source='auto'",
+            [id],
+        )?;
+        self.db
+            .execute("DELETE FROM marked WHERE id=? AND source='user'", [id])?;
         Ok(())
     }
     /// Freeze the exact set to delete. The interface shows it and must pass the same plan back.

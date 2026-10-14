@@ -180,3 +180,42 @@ fn git_repositories_warn_and_git_metadata_is_never_deleted() {
     assert_eq!(report.deleted.len(), 1);
     assert!(!h.join("proj/target").exists() && h.join("proj/.git").exists());
 }
+
+#[test]
+fn scans_suggest_regenerable_caches_but_never_large_files_and_respect_dismissal() {
+    let (home, state) = setup();
+    let h = home.path();
+    // Only the uv cache matches a cache rule here; the big file is a "review" finding.
+    fs::create_dir_all(h.join(".cache/uv/archive")).unwrap();
+    fs::write(h.join(".cache/uv/archive/wheel"), vec![1u8; 400_000]).unwrap();
+    let big = fs::File::create(h.join("movie.mkv")).unwrap();
+    big.set_len(150 << 20).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    let listed = index.suggest(h).unwrap();
+    let marked = index.marked().unwrap();
+    assert_eq!(listed, 1);
+    assert_eq!(marked.len(), 1);
+    assert_eq!(marked[0].path, b".cache/uv");
+    assert_eq!(marked[0].source, "auto");
+    assert!(
+        marked.iter().all(|m| m.path != b"movie.mkv"),
+        "large files are never auto-added"
+    );
+    assert!(
+        h.join(".cache/uv/archive/wheel").exists(),
+        "suggesting never touches disk"
+    );
+
+    // Removing a suggestion keeps it dismissed across later scans.
+    index.unmark(marked[0].id).unwrap();
+    index.suggest(h).unwrap();
+    let after = index.marked().unwrap();
+    assert!(after.is_empty(), "a dismissed suggestion is not re-added");
+    // The user can still add it explicitly.
+    assert_eq!(index.mark(b".cache/uv", 1, h).unwrap(), Gate::Allowed);
+    assert_eq!(index.marked().unwrap()[0].source, "user");
+    assert!(index.auto_trash().unwrap());
+    index.set_auto_trash(false).unwrap();
+    assert!(!index.auto_trash().unwrap());
+}

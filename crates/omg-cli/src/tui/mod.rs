@@ -89,12 +89,12 @@ pub enum Action {
     Ignore,
     RemoveIgnore,
     Open,
-    /// First confirmation; a second one follows when any item carries a warning.
+    /// The single "are you sure?" confirmation (warnings are shown in the same dialog).
     Confirm(Box<DeletePlan>),
-    ConfirmFinal(Box<DeletePlan>),
     /// Dismissed a plan that was created by "delete now": take the item back out of OMG Trash.
     CancelPlan(Vec<i64>),
     AcknowledgePreview,
+    ToggleAutoTrash,
 }
 
 pub struct Choice {
@@ -179,7 +179,7 @@ impl AppState {
     }
 }
 
-type Job = std::thread::JoinHandle<Result<ScanReport>>;
+type Job = std::thread::JoinHandle<Result<(ScanReport, Option<usize>)>>;
 
 struct App {
     state: AppState,
@@ -229,7 +229,15 @@ impl App {
         let (path, flag) = (self.state_path.clone(), self.cancel.clone());
         self.job = Some(std::thread::spawn(move || {
             let mut index = Index::open(&path)?;
-            omg_core::scanner::scan(&mut index, &options, flag, progress)
+            let report = omg_core::scanner::scan(&mut index, &options, flag, progress)?;
+            // Scan-time suggestions: regenerable caches go into OMG Trash (a list, not a deletion).
+            let published = matches!(report.state.as_str(), "complete" | "partial");
+            let suggested = if published && index.auto_trash()? {
+                Some(index.suggest(&platform::home()?)?)
+            } else {
+                None
+            };
+            Ok((report, suggested))
         }));
         Ok(())
     }
@@ -294,6 +302,17 @@ impl App {
             );
         }
         push("Scan now", Some('r'), Action::Scan(false), Tone::Normal);
+        let auto = s.summary.as_ref().is_none_or(|x| x.auto_trash);
+        push(
+            if auto {
+                "Auto-add caches to OMG Trash on scan: ON (turn off)"
+            } else {
+                "Auto-add caches to OMG Trash on scan: OFF (turn on)"
+            },
+            None,
+            Action::ToggleAutoTrash,
+            Tone::Normal,
+        );
         push("Full rescan", Some('R'), Action::Scan(true), Tone::Normal);
         for tab in Tab::ALL {
             if tab != s.tab {
@@ -358,19 +377,23 @@ impl App {
         let mut choices = vec![Choice {
             label: "Cancel".into(),
             key: None,
-            action: Action::CancelPlan(undo),
+            action: if undo.is_empty() {
+                Action::Close
+            } else {
+                Action::CancelPlan(undo)
+            },
             tone: Tone::Normal,
         }];
         if !plan.items.is_empty() {
             choices.push(Choice {
-                label: "Delete permanently".into(),
+                label: "Yes, delete permanently".into(),
                 key: None,
                 action: Action::Confirm(Box::new(plan)),
                 tone: Tone::Danger,
             });
         }
         self.state.menu = Some(Menu {
-            title: "Delete permanently?".into(),
+            title: "Are you sure?".into(),
             body,
             choices,
             cursor: 0,
@@ -483,36 +506,12 @@ impl App {
                     };
                 }
             }
-            Action::Confirm(plan) => {
-                if let Some(warning) = plan.items.iter().find_map(|i| i.warning.clone()) {
-                    self.state.menu = Some(Menu {
-                        title: "Are you sure?".into(),
-                        body: vec![
-                            (format!("⚠ {warning}"), Tone::Warn),
-                            ("Deleting cannot be undone.".into(), Tone::Danger),
-                        ],
-                        choices: vec![
-                            Choice {
-                                label: "Cancel".into(),
-                                key: None,
-                                action: Action::Close,
-                                tone: Tone::Normal,
-                            },
-                            Choice {
-                                label: "Yes, delete permanently".into(),
-                                key: None,
-                                action: Action::ConfirmFinal(plan),
-                                tone: Tone::Danger,
-                            },
-                        ],
-                        cursor: 0,
-                        tone: Tone::Danger,
-                    });
-                } else {
-                    self.request(Request::Delete(plan), Some("Deleting"));
-                }
+            // One confirmation is enough: warnings were already shown in that dialog.
+            Action::Confirm(plan) => self.request(Request::Delete(plan), Some("Deleting")),
+            Action::ToggleAutoTrash => {
+                let on = !self.state.summary.as_ref().is_none_or(|x| x.auto_trash);
+                self.request(Request::SetAutoTrash(on), None);
             }
-            Action::ConfirmFinal(plan) => self.request(Request::Delete(plan), Some("Deleting")),
         }
         Ok(false)
     }
@@ -807,11 +806,16 @@ pub fn run(index: Index) -> Result<()> {
                 }
                 if app.job.as_ref().is_some_and(|j| j.is_finished()) {
                     app.state.message = match app.job.take().map(|j| j.join()) {
-                        Some(Ok(Ok(r))) => format!(
-                            "Scan {}: {} entries, {} unreadable folders.",
+                        Some(Ok(Ok((r, suggested)))) => format!(
+                            "Scan {}: {} entries, {} unreadable folders.{}",
                             r.state,
                             theme::count(r.entries),
-                            r.errors
+                            r.errors,
+                            suggested
+                                .map(|n| format!(
+                                    " {n} cache folder(s) waiting in OMG Trash (press 4)."
+                                ))
+                                .unwrap_or_default()
                         ),
                         Some(Ok(Err(e))) => {
                             format!("⚠ Scan failed: {e:#}. The previous index is untouched.")

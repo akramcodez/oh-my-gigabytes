@@ -107,7 +107,11 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
     let mut rows: Vec<_> = totals.into_iter().collect();
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     for chunk in rows.chunks(5000) {
-        let tx = index.db.unchecked_transaction()?;
+        // IMMEDIATE takes the write lock up front (and waits for it) instead of failing on upgrade.
+        let tx = rusqlite::Transaction::new_unchecked(
+            &index.db,
+            rusqlite::TransactionBehavior::Immediate,
+        )?;
         {
             let mut insert = tx.prepare("INSERT INTO dir_totals VALUES(?,?,?,?,?,?,?,?)")?;
             for (path, t) in chunk {

@@ -112,7 +112,7 @@ fn delete_confirmation_defaults_to_cancel_and_shows_warnings() {
                 tone: Tone::Normal,
             },
             Choice {
-                label: "Delete permanently".into(),
+                label: "Yes, delete permanently".into(),
                 key: None,
                 action: Action::Close,
                 tone: Tone::Danger,
@@ -130,7 +130,7 @@ fn delete_confirmation_defaults_to_cancel_and_shows_warnings() {
         text.contains("❯ 1. Cancel"),
         "cancel is the default choice:\n{text}"
     );
-    assert!(text.contains("2. Delete permanently"));
+    assert!(text.contains("2. Yes, delete permanently"));
     assert!(text.contains("cannot be undone") && text.contains("Git repository"));
 }
 

@@ -47,3 +47,11 @@ At the owner's request, OMG now offers cleanup on Linux, scoped to the user's ho
 - `planning::execute` (the older Trash-plan path) still always fails closed. Native OS Trash integration was not implemented; permanent deletion frees space immediately. On WSL the Windows drive regains space only after the virtual disk is compacted, which the TUI explains.
 
 Verification: `crates/omg-core/tests/cleanup.rs` (saved-paths-only marking, fingerprint requirement, link not followed, replaced target skipped, protected/outside-home denied, Git warning, `.git` never deleted, index adjusted) and an end-to-end PTY run of the TUI deleting a folder in a temporary home.
+
+### Scan-time suggestions and single confirmation (2026-10-14)
+
+- After a published scan, OMG adds regenerable **cache folders** (rule category `package_caches`) to OMG Trash as `suggested` items (setting `auto_trash`, default on; toggle in the TUI menu, skip once with `omg scan --no-suggest`). Large files are never auto-added. A suggestion the user removes stays dismissed across later scans; adding it by hand makes it a user item again. Suggesting changes nothing on disk.
+- New builtin cache rules: pnpm store, Yarn cache, Cargo registry, Go build cache, Gradle caches (each with its official documentation as source; tool env overrides such as `CARGO_HOME`, `GOCACHE`, `GRADLE_USER_HOME` are honoured).
+- Deleting now asks **once** ("Are you sure?", Cancel default); any Git-repository warning is shown in that same dialog.
+- Found while testing on the real index: a TUI housekeeping thread deleting old scan rows in large batches held the write lock long enough to fail a concurrent scan ("database is locked"). Housekeeping now yields to running scans, uses small batches, writers wait up to 20 s, and rollup writes take the write lock up front.
+

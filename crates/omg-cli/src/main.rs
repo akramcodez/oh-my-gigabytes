@@ -35,6 +35,9 @@ enum Command {
         /// Publish the result even if some directories were unreadable (labelled partial)
         #[arg(long)]
         accept_gaps: bool,
+        /// Don't add regenerable cache folders to OMG Trash after this scan
+        #[arg(long)]
+        no_suggest: bool,
         /// Scanner threads (default: up to 8, based on CPU count)
         #[arg(long)]
         workers: Option<usize>,
@@ -42,6 +45,8 @@ enum Command {
         exclude: Vec<PathBuf>,
     },
     Status,
+    /// Show OMG Trash (saved paths waiting for your decision; nothing has been deleted)
+    Trash,
     /// Finish removing rows of superseded scans (housekeeping; scans only prune for a few seconds)
     Prune,
     Doctor,
@@ -220,6 +225,7 @@ fn run() -> Result<()> {
             root,
             full,
             accept_gaps,
+            no_suggest,
             workers,
             exclude,
         }) => {
@@ -263,6 +269,12 @@ fn run() -> Result<()> {
                 ),
                 _ => bail!("scan incomplete; last valid index retained"),
             }
+            if !no_suggest && index.auto_trash()? {
+                let listed = index.suggest(&platform::home()?)?;
+                eprintln!(
+                    "omg: {listed} cache folder(s) are listed in OMG Trash (nothing deleted; review with `omg trash`)"
+                );
+            }
         }
         Some(Command::Status) => {
             #[allow(unused_mut)]
@@ -280,6 +292,23 @@ fn run() -> Result<()> {
                 value["service"] = omg_core::service::daemon::health(&index)?;
             }
             println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        Some(Command::Trash) => {
+            let items: Vec<_> = index
+                .marked()?
+                .into_iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.id,
+                        "path": omg_core::display_path(&m.path),
+                        "size": omg_core::bytes(m.allocated),
+                        "allocated": m.allocated,
+                        "source": m.source,
+                        "warning": m.warning,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&items)?);
         }
         Some(Command::Prune) => {
             let done = index.prune_stale(std::time::Duration::from_secs(600))?;

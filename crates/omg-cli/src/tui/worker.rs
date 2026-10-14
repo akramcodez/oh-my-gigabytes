@@ -32,6 +32,7 @@ pub enum Request {
         allocated: u64,
     },
     Delete(Box<DeletePlan>),
+    SetAutoTrash(bool),
 }
 
 pub struct Summary {
@@ -45,6 +46,7 @@ pub struct Summary {
     pub trend_delta: Option<i64>,
     pub root: Option<PathBuf>,
     pub home: Option<PathBuf>,
+    pub auto_trash: bool,
 }
 
 pub enum Response {
@@ -83,6 +85,7 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
             .trend(30)
             .ok()
             .and_then(|t| t.indexed_allocated_change),
+        auto_trash: index.auto_trash()?,
         rollups,
         status,
     })
@@ -181,6 +184,15 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                                 plan: Box::new(index.prepare_delete(&[id], &home)?),
                                 added_now: !existed,
                             });
+                            refresh = true;
+                        }
+                        Request::SetAutoTrash(on) => {
+                            index.set_auto_trash(on)?;
+                            send(Response::Info(if on {
+                                "Scans will add cache folders to OMG Trash (nothing is deleted without asking).".into()
+                            } else {
+                                "Scans will no longer add anything to OMG Trash.".into()
+                            }));
                             refresh = true;
                         }
                         Request::Delete(plan) => {
