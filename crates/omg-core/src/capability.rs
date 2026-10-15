@@ -34,6 +34,12 @@ pub enum Filesystem {
     Ext,
     Tmpfs,
     Btrfs,
+    /// Windows NTFS. Scanning is supported; permanent deletion is not, until the Windows milestone.
+    Ntfs,
+    /// Windows ReFS. Scanning only.
+    Refs,
+    /// Windows FAT32 or exFAT. Scanning only; these carry no ownership or permission data.
+    Fat,
     Other,
 }
 
@@ -50,18 +56,30 @@ impl Filesystem {
             _ => Filesystem::Other,
         }
     }
+    /// Family from a Windows volume's file-system name (`GetVolumeInformationByHandleW`).
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "NTFS" => Filesystem::Ntfs,
+            "ReFS" => Filesystem::Refs,
+            "FAT" | "FAT32" | "exFAT" => Filesystem::Fat,
+            _ => Filesystem::Other,
+        }
+    }
 }
 
 /// Permanent deletion (decision D15) on a filesystem. Owner decision 2026-10-15: Btrfs is allowed
 /// as `DevelopmentUnqualified`, because the owner's home is Btrfs. Btrfs shared extents and
-/// snapshots mean freed space may be less than shown. Unknown filesystems are refused.
+/// snapshots mean freed space may be less than shown. Unknown filesystems are refused. Windows
+/// volumes are refused until the Windows deletion milestone (see `docs/windows-implementation-plan.md`).
 pub fn permanent_delete(filesystem: Filesystem) -> Support {
     if !crate::PERMANENT_DELETE {
         return Support::Unsupported;
     }
     match filesystem {
         Filesystem::Ext | Filesystem::Tmpfs | Filesystem::Btrfs => Support::DevelopmentUnqualified,
-        Filesystem::Other => Support::Unsupported,
+        Filesystem::Ntfs | Filesystem::Refs | Filesystem::Fat | Filesystem::Other => {
+            Support::Unsupported
+        }
     }
 }
 

@@ -1,0 +1,245 @@
+//! Native Windows scanning (docs/windows-implementation-plan.md, W01/W02). Runs only on Windows.
+#![cfg(windows)]
+use omg_core::{Index, ScanOptions, model::Entry, platform, scanner};
+use std::{
+    ffi::OsString,
+    fs,
+    os::windows::ffi::OsStringExt,
+    path::Path,
+    process::Command,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64},
+    },
+};
+
+fn scan(index: &mut Index, root: &Path) {
+    let report = scanner::scan(
+        index,
+        &ScanOptions {
+            root: root.to_path_buf(),
+            workers: 2,
+            exclusions: vec![],
+            full: true,
+            publish_partial: false,
+        },
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .unwrap();
+    assert_eq!(report.state, "complete", "{report:?}");
+}
+
+fn all_entries(index: &Index) -> Vec<Entry> {
+    index.entries(100_000, 0).unwrap()
+}
+
+fn entry_named<'a>(entries: &'a [Entry], relative: &str) -> Option<&'a Entry> {
+    let wanted = relative.replace('\\', "/");
+    entries.iter().find(|e| e.path == wanted.as_bytes())
+}
+
+/// Recursive counts and apparent bytes from `std::fs`, an oracle independent of the scanner.
+fn oracle(root: &Path) -> (u64, u64, u64) {
+    let (mut files, mut dirs, mut bytes) = (0, 0, 0);
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for item in fs::read_dir(&dir).unwrap() {
+            let item = item.unwrap();
+            let meta = fs::symlink_metadata(item.path()).unwrap();
+            if meta.is_dir() && !meta.file_type().is_symlink() {
+                dirs += 1;
+                stack.push(item.path());
+            } else if meta.is_file() {
+                files += 1;
+                bytes += meta.len();
+            }
+        }
+    }
+    (files, dirs, bytes)
+}
+
+fn state() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
+#[test]
+fn totals_match_an_independent_walk() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::create_dir_all(root.join("alpha/beta")).unwrap();
+    fs::create_dir(root.join("gamma")).unwrap();
+    fs::write(root.join("alpha/one.bin"), vec![1u8; 5000]).unwrap();
+    fs::write(root.join("alpha/beta/two.txt"), b"hello").unwrap();
+    fs::write(root.join("gamma/three.dat"), vec![2u8; 123]).unwrap();
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, root);
+
+    let (files, dirs, bytes) = oracle(root);
+    let entries = all_entries(&index);
+    let scanned_files = entries.iter().filter(|e| e.kind == "file").count() as u64;
+    let scanned_dirs = entries.iter().filter(|e| e.kind == "directory").count() as u64;
+    assert_eq!((scanned_files, scanned_dirs), (files, dirs));
+    let apparent: u64 = entries
+        .iter()
+        .filter(|e| e.kind == "file")
+        .map(|e| e.apparent)
+        .sum();
+    assert_eq!(apparent, bytes);
+    let status = index.status().unwrap();
+    assert_eq!(status.unique_apparent, bytes);
+    assert!(entry_named(&entries, "alpha/beta/two.txt").is_some());
+}
+
+#[test]
+fn junctions_are_recorded_but_never_followed() {
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret.txt"), b"not part of the scan").unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::write(root.join("kept.txt"), b"kept").unwrap();
+    let link = root.join("link");
+    // mklink /J needs no administrator rights, unlike symbolic links.
+    let made = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(outside.path())
+        .output()
+        .unwrap();
+    assert!(
+        made.status.success(),
+        "{}",
+        String::from_utf8_lossy(&made.stderr)
+    );
+
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, root);
+    let entries = all_entries(&index);
+    let junction = entry_named(&entries, "link").expect("junction is listed");
+    assert_eq!(junction.kind, "symlink");
+    assert_eq!(
+        junction.excluded.as_deref(),
+        Some("symlink/special entry not followed")
+    );
+    assert!(
+        entries.iter().all(|e| !e.path.starts_with(&b"link/"[..])),
+        "nothing below the junction is indexed"
+    );
+    assert!(entry_named(&entries, "kept.txt").is_some());
+}
+
+#[test]
+fn hard_links_share_one_identity() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::write(root.join("original.bin"), vec![9u8; 4096]).unwrap();
+    fs::hard_link(root.join("original.bin"), root.join("alias.bin")).unwrap();
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, root);
+    let entries = all_entries(&index);
+    let original = entry_named(&entries, "original.bin").unwrap();
+    let alias = entry_named(&entries, "alias.bin").unwrap();
+    assert_eq!(original.identity, alias.identity);
+}
+
+#[test]
+fn paths_longer_than_max_path_are_scanned() {
+    let home = tempfile::tempdir().unwrap();
+    let mut deep = home.path().to_path_buf();
+    for _ in 0..12 {
+        deep.push("a-directory-with-a-fairly-long-name");
+    }
+    // Verbatim form lifts the MAX_PATH limit for creation.
+    let verbatim = Path::new(r"\\?\").join(&deep);
+    fs::create_dir_all(&verbatim).unwrap();
+    fs::write(verbatim.join("deep.txt"), b"deep").unwrap();
+    assert!(deep.join("deep.txt").as_os_str().len() > 260);
+
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, home.path());
+    let entries = all_entries(&index);
+    assert!(entries.iter().any(|e| e.path.ends_with(&b"/deep.txt"[..])));
+}
+
+#[test]
+fn unicode_and_unpaired_surrogate_names_round_trip() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::write(root.join("café 😀 報告.txt"), b"unicode").unwrap();
+    // An unpaired surrogate is legal in an NTFS name but not in UTF-8; WTF-8 keeps it.
+    let lone = OsString::from_wide(&[0x0062, 0xD800, 0x0063]);
+    if fs::write(root.join(&lone), b"lone").is_err() {
+        eprintln!("skipped: this volume refused an unpaired surrogate name");
+        return;
+    }
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, root);
+    let names: Vec<OsString> = all_entries(&index)
+        .iter()
+        .map(|e| platform::path(&e.path).unwrap().into_os_string())
+        .collect();
+    assert!(names.contains(&OsString::from("café 😀 報告.txt")));
+    assert!(names.contains(&lone));
+}
+
+#[test]
+fn a_link_as_the_scan_root_is_refused() {
+    let outside = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let link = home.path().join("root-link");
+    let made = Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(outside.path())
+        .output()
+        .unwrap();
+    assert!(made.status.success());
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    let error = scanner::scan(
+        &mut index,
+        &ScanOptions {
+            root: link,
+            workers: 2,
+            exclusions: vec![],
+            full: true,
+            publish_partial: false,
+        },
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("link or mount point"), "{error}");
+}
+
+/// Saving a path in OMG Trash is allowed and changes nothing on disk. Permanent deletion is not
+/// available on Windows yet, so reviewing a deletion must be refused and leave the file in place.
+#[test]
+fn permanent_deletion_is_refused_and_changes_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::create_dir(root.join("scratch")).unwrap();
+    fs::write(root.join("scratch/a.bin"), b"keep me").unwrap();
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, root);
+    // A profile whose home folder is a Git repository (the owner's is) refuses saving under the
+    // policy's repository rule. Either refusal is acceptable here; the file must stay untouched.
+    match index.mark(b"scratch", 4096, root) {
+        Ok(_) => {
+            let id = index.marked().unwrap()[0].id;
+            let error = index.prepare_delete(&[id], root).unwrap_err();
+            assert!(error.to_string().contains("not available"), "{error}");
+        }
+        Err(error) => assert!(
+            error.to_string().contains("active Git repository"),
+            "{error}"
+        ),
+    }
+    assert_eq!(fs::read(root.join("scratch/a.bin")).unwrap(), b"keep me");
+}

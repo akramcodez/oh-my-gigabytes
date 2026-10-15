@@ -15,11 +15,11 @@ pub fn scan(
         bail!("workers must be between 1 and 16");
     }
     let _owner = lock(&index.state, "scan.lock")?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
-        linux::run(index, options, cancel, progress)
+        walk::run(index, options, cancel, progress)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = (options, cancel, progress);
         bail!("native scanner not certified on this platform")
@@ -59,27 +59,29 @@ pub fn default_workers() -> usize {
 /// Approximate number of entries to expect: the filesystem's used-inode count. This is an upper
 /// bound when the scan root is smaller than its volume, and it includes skipped locations.
 pub fn estimate_entries(root: &std::path::Path) -> Option<u64> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
-        let fd = crate::platform::linux::root(&crate::platform::absolute(root).ok()?).ok()?;
-        let stat = rustix::fs::fstatvfs(&fd).ok()?;
-        Some(stat.f_files.saturating_sub(stat.f_ffree))
+        let dir =
+            crate::platform::native::open_root(&crate::platform::absolute(root).ok()?).ok()?;
+        crate::platform::native::inode_usage(&dir).ok().flatten()
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = root;
         None
     }
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+/// The walk itself is platform-neutral. Only the native operations (open a verified directory,
+/// enumerate it, read a volume) come from `platform::native`.
+#[cfg(any(target_os = "linux", windows))]
+mod walk {
     use super::*;
-    use crate::platform;
+    use crate::platform::{self, native};
     use crate::{Entry, now};
     use crossbeam_channel::{Receiver, Sender, bounded};
     use rusqlite::params;
-    use rustix::fs::{self, AtFlags, Dir};
+    use std::ffi::OsString;
     use std::sync::{Condvar, Mutex, atomic::Ordering};
     use std::{
         path::PathBuf,
@@ -168,15 +170,13 @@ mod linux {
     }
 
     struct Shared {
-        root: fs_root::Root,
+        root: native::Dir,
         root_path: PathBuf,
+        /// Volume of the scan root. An object on another volume is a mount boundary.
         root_dev: u64,
         custom: Vec<PathBuf>,
         queue: Queue,
         cancel: Arc<AtomicBool>,
-    }
-    mod fs_root {
-        pub type Root = rustix::fd::OwnedFd;
     }
 
     fn worker(shared: Arc<Shared>, events: Sender<Batch>) {
@@ -207,46 +207,34 @@ mod linux {
         events: &Sender<Batch>,
         batch: &mut Batch,
     ) -> Result<()> {
-        let fd = platform::linux::acquire(&shared.root, &job.relative, true)?;
-        let before = fs::fstat(&fd)?;
-        if platform::linux::entry(&job.relative, &before).identity != job.identity {
-            bail!("directory identity changed");
-        }
-        let mut directory = Dir::new(fd)?;
-        while let Some(value) = directory.read() {
+        let fd = native::open_dir(&shared.root, &job.relative, &job.identity)?;
+        let before = native::dir_meta(&fd)?;
+        let complete = native::for_each_child(&fd, |name: OsString, metadata| {
             if shared.cancel.load(Ordering::Relaxed) {
-                return Ok(());
+                return Ok(false);
             }
-            let value = value?;
-            let name = platform::linux::name(value.file_name());
-            if name.as_os_str() == "." || name.as_os_str() == ".." {
-                continue;
-            }
-            let relative = job.relative.join(name);
+            let relative = job.relative.join(&name);
             if platform::raw(&relative)?.len() > 4096 {
                 bail!("path budget exceeded");
             }
-            // One no-follow stat relative to the open directory; it describes the object that
-            // currently has this name and never follows a link.
-            let metadata = match fs::statat(
-                directory.fd()?,
-                value.file_name(),
-                AtFlags::SYMLINK_NOFOLLOW,
-            ) {
+            let metadata = match metadata {
                 Ok(metadata) => metadata,
                 Err(_) => {
                     batch
                         .issues
                         .push((platform::raw(&relative)?, "metadata unavailable".into()));
-                    continue;
+                    return Ok(true);
                 }
             };
-            let mut entry = platform::linux::entry(&relative, &metadata);
+            let mut entry = platform::entry_from_meta(&relative, &metadata);
             entry.excluded = platform::excluded(&shared.root_path.join(&relative), &shared.custom);
             if entry.excluded.is_none() {
-                if entry.kind == "symlink" || entry.kind == "special" {
+                if let Some(reason) = metadata.restricted {
+                    // Cloud and offline placeholders are never read, so they are recorded only.
+                    entry.excluded = Some(reason.into());
+                } else if entry.kind == "symlink" || entry.kind == "special" {
                     entry.excluded = Some("symlink/special entry not followed".into());
-                } else if entry.kind == "directory" && metadata.st_dev != shared.root_dev {
+                } else if entry.kind == "directory" && metadata.volume != shared.root_dev {
                     entry.excluded = Some("mount boundary not crossed".into());
                 }
             }
@@ -267,16 +255,16 @@ mod linux {
                     issues: std::mem::take(&mut batch.issues),
                 };
                 if !send(events, full, &shared.cancel) {
-                    return Ok(());
+                    return Ok(false);
                 }
             }
+            Ok(true)
+        })?;
+        if !complete {
+            return Ok(());
         }
-        let after = directory.stat()?;
-        if before.st_mtime != after.st_mtime
-            || before.st_mtime_nsec != after.st_mtime_nsec
-            || before.st_ctime != after.st_ctime
-            || before.st_ctime_nsec != after.st_ctime_nsec
-        {
+        let after = native::dir_meta(&fd)?;
+        if before.modified_ns != after.modified_ns || before.changed_ns != after.changed_ns {
             bail!("directory changed during enumeration; reconciliation needed");
         }
         Ok(())
@@ -303,13 +291,9 @@ mod linux {
         if platform::excluded(&root_path, &options.exclusions).is_some() {
             bail!("scan root excluded by mandatory or configured policy");
         }
-        let root = platform::linux::root(&root_path)?;
-        let root_meta = fs::fstat(&root)?;
-        let root_entry = platform::linux::entry(std::path::Path::new(""), &root_meta);
-        let estimated_total = {
-            let stat = fs::fstatvfs(&root)?;
-            stat.f_files.saturating_sub(stat.f_ffree)
-        };
+        let root = native::open_root(&root_path)?;
+        let root_meta = native::dir_meta(&root)?;
+        let estimated_total = native::inode_usage(&root)?.unwrap_or(0);
         let mut exclusions = options
             .exclusions
             .iter()
@@ -324,7 +308,7 @@ mod linux {
             .map(|p| platform::absolute(p).and_then(|p| platform::raw(&p)))
             .collect::<Result<Vec<_>>>()?;
         index.db.execute("INSERT INTO settings VALUES('exclusions',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[serde_json::to_vec(&configured)?])?;
-        let (capacity, available) = platform::linux::volume(&root)?;
+        let (capacity, available) = native::volume(&root)?;
         index.db.execute("INSERT INTO scans(root,started,state,mode,capacity,available,sampled) VALUES(?,?,'running',?,?,?,?)",params![platform::raw(&root_path)?,now(),if options.full {"full"} else {"reconcile"},i64::try_from(capacity)?,i64::try_from(available)?,now()])?;
         let id = index.db.last_insert_rowid();
         index.db.execute(
@@ -349,13 +333,13 @@ mod linux {
         let shared = Arc::new(Shared {
             root,
             root_path: root_path.clone(),
-            root_dev: root_meta.st_dev,
+            root_dev: root_meta.volume,
             custom: exclusions,
             queue: Queue {
                 state: Mutex::new(QueueState {
                     jobs: vec![Job {
                         relative: PathBuf::new(),
-                        identity: root_entry.identity.clone(),
+                        identity: root_meta.identity.clone(),
                     }],
                     in_flight: 0,
                 }),

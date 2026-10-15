@@ -5,7 +5,6 @@
 use omg_core::{Index, ScanOptions, capability, scanner};
 use std::{
     fs,
-    os::unix::fs::PermissionsExt,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64},
@@ -21,17 +20,23 @@ fn analysis_only_build_reports_no_permanent_delete() {
         capability::platform_permanent_delete(),
         capability::Support::Unsupported
     );
-    assert_eq!(
-        capability::permanent_delete(capability::Filesystem::Btrfs),
-        capability::Support::Unsupported
-    );
+    for filesystem in [capability::Filesystem::Btrfs, capability::Filesystem::Ntfs] {
+        assert_eq!(
+            capability::permanent_delete(filesystem),
+            capability::Support::Unsupported
+        );
+    }
 }
 
 #[test]
 fn analysis_only_build_refuses_delete_and_leaves_files_alone() {
     let home = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
-    fs::set_permissions(state.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(state.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    }
     fs::create_dir(home.path().join("scratch")).unwrap();
     fs::write(home.path().join("scratch/a.bin"), b"keep").unwrap();
     let mut index = Index::open(state.path()).unwrap();

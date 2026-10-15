@@ -23,6 +23,40 @@ pub const DISCOVERIES: [&str; 10] = [
 /// Fixed default location of a directory-root discovery, honouring the tool's own absolute
 /// environment override where it has one.
 pub fn discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
+    if cfg!(windows) {
+        windows_discovery_root(kind, home)
+    } else {
+        unix_discovery_root(kind, home)
+    }
+}
+
+/// Windows defaults of the same discoveries (npm, pip, uv, pnpm, Yarn, Go, Cargo, Gradle), per
+/// each tool's documented per-user location.
+fn windows_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
+    let env = |name: &str| {
+        std::env::var_os(name)
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    let local = env("LOCALAPPDATA").unwrap_or_else(|| home.join("AppData").join("Local"));
+    Some(match kind {
+        "npm_content_cache" => local.join("npm-cache"),
+        "pip_cache" => local.join("pip").join("Cache"),
+        "uv_cache" => local.join("uv").join("cache"),
+        "pnpm_store" => local.join("pnpm").join("store"),
+        "yarn_cache" => local.join("Yarn").join("Cache"),
+        "cargo_registry" => env("CARGO_HOME")
+            .unwrap_or_else(|| home.join(".cargo"))
+            .join("registry"),
+        "go_build_cache" => env("GOCACHE").unwrap_or_else(|| local.join("go-build")),
+        "gradle_caches" => env("GRADLE_USER_HOME")
+            .unwrap_or_else(|| home.join(".gradle"))
+            .join("caches"),
+        _ => return None,
+    })
+}
+
+fn unix_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
     let env = |name: &str| {
         std::env::var_os(name)
             .map(std::path::PathBuf::from)

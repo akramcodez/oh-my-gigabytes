@@ -24,8 +24,23 @@ pub fn now() -> i64 {
         .as_secs() as i64
 }
 
+/// Printable, quoted form of a stored path. Windows paths are stored with `/` and shown with `\`, and
+/// are not Debug-escaped, so `C:\Users` stays readable.
 pub fn display_path(raw: &[u8]) -> String {
-    format!("{:?}", String::from_utf8_lossy(raw))
+    let text = String::from_utf8_lossy(raw);
+    if !cfg!(windows) {
+        return format!("{:?}", text);
+    }
+    let mut out = String::from('"');
+    for c in text.chars() {
+        match c {
+            '/' => out.push('\\'),
+            '\'' => out.push('\''),
+            c => out.extend(c.escape_debug()),
+        }
+    }
+    out.push('"');
+    out
 }
 
 pub fn bytes(value: u64) -> String {

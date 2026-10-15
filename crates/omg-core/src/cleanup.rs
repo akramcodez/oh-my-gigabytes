@@ -12,10 +12,12 @@ use crate::{Entry, Index, index::unsigned, now, platform, policy};
 use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::Ordering;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::AtomicBool,
 };
 
 /// Plans issued by this session, keyed by fingerprint, with the scan id they were prepared on.
@@ -164,6 +166,16 @@ fn is_cache_root(absolute: &Path, home: &Path) -> bool {
         .iter()
         .filter_map(|kind| crate::catalog::discovery_root(kind, home))
         .any(|root| absolute.starts_with(&root))
+}
+
+/// Live (identity, creation time) of a root-relative path, read without following links.
+#[cfg(target_os = "linux")]
+fn live_identity(root: &Path, path: &[u8]) -> Result<(String, Option<String>)> {
+    linux::live_identity(root, path)
+}
+#[cfg(windows)]
+fn live_identity(root: &Path, path: &[u8]) -> Result<(String, Option<String>)> {
+    platform::windows::live_identity(root, path)
 }
 
 /// Permanent-delete support for the filesystem holding the scan `root`. Checked in the backend
@@ -362,9 +374,9 @@ impl Index {
             Gate::Warn(text) => Some(text.clone()),
             Gate::Allowed => None,
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         let birth = {
-            let (_, created) = linux::live_identity(&root, &entry.path)
+            let (_, created) = live_identity(&root, &entry.path)
                 .ok()
                 .filter(|(identity, _)| *identity == entry.identity)
                 .ok_or_else(|| {
@@ -377,7 +389,7 @@ impl Index {
                 )
             })?
         };
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", windows)))]
         let birth: Option<String> = {
             let _ = &root;
             None
@@ -675,7 +687,7 @@ impl Index {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (home, &root, &mut before_mutate);
+            let _ = (home, &root, &mut before_mutate, cancel);
             for item in &plan.items {
                 let reason = "deletion is not supported on this platform".to_string();
                 self.record_target(operation, item.id, "skipped", &reason)?;

@@ -23,5 +23,9 @@ permanent-delete = []
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
 
+# Windows adapter (src/platform/windows.rs): handle-based directory reads and volume queries.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile.workspace = true

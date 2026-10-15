@@ -27,6 +27,14 @@ pub struct Index {
     /// delete a plan that a previous session showed.
     pub(crate) issued: crate::cleanup::IssuedPlans,
 }
+/// Native scanning maturity, as `omg doctor` reports it.
+fn native_analysis() -> &'static str {
+    if cfg!(windows) {
+        "development Windows only (NTFS, ReFS, FAT32 scanning; no deletion)"
+    } else {
+        "development Linux only"
+    }
+}
 pub fn sqlite_version() -> String {
     rusqlite::version().to_string()
 }
@@ -59,6 +67,8 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
         }
         platform::linux::root(&absolute)?;
     }
+    #[cfg(windows)]
+    platform::native::open_root(&absolute)?;
     let database = absolute.join("index.sqlite");
     if !database.exists() {
         return Ok(
@@ -81,7 +91,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=11,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":"development Linux only"}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=11,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
     )
 }
 
@@ -137,7 +147,7 @@ impl Index {
     pub fn open(state: &Path) -> Result<Self> {
         if !platform::supported() {
             bail!(
-                "native scanning/state support currently requires Linux; other platforms unverified"
+                "native scanning/state support currently requires Linux or Windows; other platforms unverified"
             );
         }
         let state = platform::absolute(state)?;
@@ -155,6 +165,9 @@ impl Index {
                         use std::os::unix::fs::DirBuilderExt;
                         fs::DirBuilder::new().mode(0o700).create(&current)?;
                     }
+                    // Windows: per-user ACLs come from the profile folder; owner-only ACLs are W03.
+                    #[cfg(windows)]
+                    fs::create_dir(&current)?;
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -170,6 +183,12 @@ impl Index {
                 );
             }
             platform::linux::root(&state)?;
+        }
+        #[cfg(windows)]
+        {
+            // Must not be a link or mount point, and must sit on a supported volume. Owner-only ACLs
+            // are not verified yet (docs/windows-implementation-plan.md, W03).
+            platform::native::open_root(&state)?;
         }
         // The maintenance lock is held only while another process opens/migrates; wait briefly
         // instead of failing a concurrent CLI or service scan.
@@ -351,7 +370,6 @@ impl Index {
             )?
             .collect::<rusqlite::Result<_>>()?)
     }
-    #[cfg(target_os = "linux")]
     pub(crate) fn recover_interrupted(&self) -> Result<()> {
         use crate::now;
         self.db.execute(

@@ -29,10 +29,21 @@ function main() {
   // Reverify every launch, never accept a cached digest for a replaced executable.
   const child = spawn(binary, process.argv.slice(2), { stdio: 'inherit', shell: false });
   const handlers = new Map();
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-    const handler = () => { if (child.exitCode === null) child.kill(signal); };
-    handlers.set(signal, handler);
-    process.on(signal, handler);
+  if (process.platform === 'win32') {
+    // Windows delivers Ctrl+C, Ctrl+Break and window-close to every process on the console, so the
+    // native binary already receives them and cancels gracefully. Killing it from here would be a
+    // forced termination. Stay alive and wait for its exit instead.
+    for (const signal of ['SIGINT', 'SIGBREAK', 'SIGHUP', 'SIGTERM']) {
+      const ignore = () => {};
+      handlers.set(signal, ignore);
+      process.on(signal, ignore);
+    }
+  } else {
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+      const handler = () => { if (child.exitCode === null) child.kill(signal); };
+      handlers.set(signal, handler);
+      process.on(signal, handler);
+    }
   }
   const cleanup = () => { for (const [signal, handler] of handlers) process.removeListener(signal, handler); };
   child.once('error', error => { cleanup(); process.stderr.write(`omg: native launch failed: ${error.message}\n`); process.exitCode = 1; });
