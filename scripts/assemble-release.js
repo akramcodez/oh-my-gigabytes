@@ -39,9 +39,11 @@ function assemble({ binary, target, version, publicKey, privateKey, out, variant
   const data = readRegular(binary, MAX_BINARY).data;
   if (!data.length) throw new Error('Empty binary');
   validateBinaryTarget(data, target);
-  const cleanup = target.startsWith('linux-') ? (variant === 'analysis-only' ? 'disabled' : 'development-unqualified') : 'disabled';
-  // A real Linux build must report the same cleanup capability as the manifest it is signed with.
-  if (checkBinary && target.startsWith('linux-') && process.platform === 'linux') {
+  const linux = target.startsWith('linux-');
+  const windows = target.startsWith('win32-');
+  const cleanup = linux || windows ? (variant === 'analysis-only' ? 'disabled' : 'development-unqualified') : 'disabled';
+  // A real Linux or Windows build must report the same cleanup capability as the manifest it is signed with.
+  if (checkBinary && ((linux && process.platform === 'linux') || (windows && process.platform === 'win32'))) {
     const reported = reportedCleanup(binary);
     if (reported !== cleanup) throw new Error(`Binary reports cleanup ${reported}, but variant ${variant} claims ${cleanup}`);
   }
@@ -50,7 +52,7 @@ function assemble({ binary, target, version, publicKey, privateKey, out, variant
   const filename = target.startsWith('win32-') ? 'omg.exe' : 'omg';
   const manifest = { schema: 1, version, target, triple: TARGETS[target], file: filename,
     size: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex'), keyId,
-    capabilities: { analysis: target.startsWith('linux-') ? 'development-linux' : 'disabled', cleanup, service: target.startsWith('linux-') ? 'development-linux' : 'disabled' } };
+    capabilities: { analysis: linux ? 'development-linux' : windows ? 'development-windows' : 'disabled', cleanup, service: linux ? 'development-linux' : 'disabled' } };
   const bytes = Buffer.from(JSON.stringify(manifest) + '\n');
   const signature = crypto.sign(null, signedMessage(bytes), key);
   const stage = fs.mkdtempSync(path.join(parent, '.omg-release-'));

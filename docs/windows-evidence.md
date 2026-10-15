@@ -71,6 +71,8 @@ Read-only files are removed like any other file, matching Linux, where a file's 
 
 Tests (`crates/omg-core/tests/windows.rs`, module `deletion`, run on this machine with `TMP=C:\src\omg-tmp`): confirmed folder and file deleted, including read-only contents; a replaced file is skipped and the replacement survives; a junction inside a deleted folder is removed while its target survives; a folder swapped for a junction never leads outside; a protected child inserted after validation stops the delete; a file held open without delete sharing is skipped as in use; removing one hard-link name keeps the data and flags totals. All pass. The tests skip, with a message, when the temp folder is inside a Git repository.
 
+Release manifest: Windows full builds now declare `analysis: development-windows`, `cleanup: development-unqualified`, `service: disabled`; `assemble-release.js` checks the claim against a Windows binary's `doctor` when run on Windows. `verify.js` and `release.test.js` changed with it.
+
 ## Repository rule (finding for the owner)
 
 The owner's home folder is a Git repository (`C:\Users\SK AKRAM\.git` exists). The existing policy walks up from each entry to find a repository, so under the current rule almost everything in the home is "inside an active repository". Only build and dependency folders stay deletable there. This is existing policy, not Windows-specific, and it is not changed here. Decide before the deletion milestone whether the home-as-repository case should be treated differently.

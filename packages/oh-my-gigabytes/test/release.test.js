@@ -66,8 +66,12 @@ test('signed assembly verifies and offline payload contains no private signing m
   const f = fixture(t);
   const result = verifyArtifact(f.artifact, f.trust, f);
   assert.equal(result.manifest.version, f.version);
-  assert.equal(result.manifest.capabilities.cleanup, result.manifest.target.startsWith('linux-') ? 'development-unqualified' : 'disabled');
-  assert.equal(result.manifest.capabilities.service, result.manifest.target.startsWith('linux-') ? 'development-linux' : 'disabled');
+  const target = result.manifest.target;
+  const native = target.startsWith('linux-') || target.startsWith('win32-');
+  assert.equal(result.manifest.capabilities.cleanup, native ? 'development-unqualified' : 'disabled');
+  assert.equal(result.manifest.capabilities.analysis,
+    target.startsWith('linux-') ? 'development-linux' : target.startsWith('win32-') ? 'development-windows' : 'disabled');
+  assert.equal(result.manifest.capabilities.service, target.startsWith('linux-') ? 'development-linux' : 'disabled');
   const offline = path.join(f.out, 'offline-oh-my-gigabytes');
   assert.equal(resolveArtifact(offline, f.target, f.version), path.join(offline, 'vendor', f.target));
   assert.ok(!fs.readFileSync(path.join(offline, 'trust.json'), 'utf8').includes('PRIVATE KEY'));

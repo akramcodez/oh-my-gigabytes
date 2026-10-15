@@ -118,9 +118,12 @@ function verifyArtifact(directory, trust, expected) {
       !/^[a-f0-9]{64}$/.test(manifest.sha256)) throw new Error('Invalid binary scope/size/digest');
   exactKeys(manifest.capabilities, ['analysis', 'cleanup', 'service'], 'capabilities');
   const linux = expected.target.startsWith('linux-');
-  // Linux: permanent delete is `development-unqualified` (full build) or `disabled` (analysis-only build).
-  const cleanupValues = linux ? ['development-unqualified', 'disabled'] : ['disabled'];
-  if (manifest.capabilities.analysis !== (linux ? 'development-linux' : 'disabled') ||
+  const windows = expected.target.startsWith('win32-');
+  // Linux and Windows: permanent delete is `development-unqualified` (full build) or `disabled`
+  // (analysis-only build). Windows has no background service yet.
+  const cleanupValues = linux || windows ? ['development-unqualified', 'disabled'] : ['disabled'];
+  const analysis = linux ? 'development-linux' : windows ? 'development-windows' : 'disabled';
+  if (manifest.capabilities.analysis !== analysis ||
       !cleanupValues.includes(manifest.capabilities.cleanup) ||
       manifest.capabilities.service !== (linux ? 'development-linux' : 'disabled')) {
     throw new Error('Unsupported advertised capabilities');
