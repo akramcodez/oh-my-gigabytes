@@ -370,6 +370,7 @@ impl Index {
             )?
             .collect::<rusqlite::Result<_>>()?)
     }
+    #[cfg(any(target_os = "linux", windows))]
     pub(crate) fn recover_interrupted(&self) -> Result<()> {
         use crate::now;
         self.db.execute(

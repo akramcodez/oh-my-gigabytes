@@ -1063,7 +1063,7 @@ mod windows {
         Security::{
             Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
             EqualSid, GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-            TOKEN_QUERY, TOKEN_USER, TokenUser,
+            TOKEN_INFORMATION_CLASS, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser,
         },
         Storage::FileSystem::{
             DELETE, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
@@ -1114,8 +1114,14 @@ mod windows {
         }
     }
 
-    /// The current process's user, as a `TOKEN_USER` held in an 8-byte-aligned buffer.
-    struct CurrentUser(Vec<u64>);
+    /// Who "you" are for ownership: the token's user and its default owner, each held in an
+    /// 8-byte-aligned buffer. An elevated administrator's new files are owned by the
+    /// Administrators group (the token's default owner), not by the user, so both count. This is
+    /// the Windows form of Linux's `st_uid == euid`.
+    struct CurrentUser {
+        user: Vec<u64>,
+        owner: Vec<u64>,
+    }
 
     impl CurrentUser {
         fn load() -> io::Result<Self> {
@@ -1132,32 +1138,45 @@ mod windows {
                 return Err(io::Error::last_os_error());
             }
             let token = Token(raw);
-            let mut needed = 0u32;
-            // SAFETY: a size query with no buffer; it only writes `needed`.
-            unsafe { GetTokenInformation(token.0, TokenUser, ptr::null_mut(), 0, &mut needed) };
-            let mut buffer = vec![0u64; (needed as usize).div_ceil(8).max(1)];
-            // SAFETY: the buffer is writable for its full length in bytes.
-            let ok = unsafe {
-                GetTokenInformation(
-                    token.0,
-                    TokenUser,
-                    buffer.as_mut_ptr().cast(),
-                    (buffer.len() * 8) as u32,
-                    &mut needed,
-                )
-            };
-            if ok == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(Self(buffer))
+            Ok(Self {
+                user: token_info(token.0, TokenUser)?,
+                owner: token_info(token.0, TokenOwner)?,
+            })
         }
-        fn sid(&self) -> PSID {
-            // SAFETY: the buffer holds a `TOKEN_USER` written by `GetTokenInformation`.
-            unsafe { (*self.0.as_ptr().cast::<TOKEN_USER>()).User.Sid }
+        fn sids(&self) -> [PSID; 2] {
+            // SAFETY: the buffers hold a `TOKEN_USER` and a `TOKEN_OWNER` written by
+            // `GetTokenInformation`, and stay alive as long as `self`.
+            unsafe {
+                [
+                    (*self.user.as_ptr().cast::<TOKEN_USER>()).User.Sid,
+                    (*self.owner.as_ptr().cast::<TOKEN_OWNER>()).Owner,
+                ]
+            }
         }
     }
 
-    /// Whether the object's owner is the current user. Needs `READ_CONTROL` on the handle.
+    fn token_info(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> io::Result<Vec<u64>> {
+        let mut needed = 0u32;
+        // SAFETY: a size query with no buffer; it only writes `needed`.
+        unsafe { GetTokenInformation(token, class, ptr::null_mut(), 0, &mut needed) };
+        let mut buffer = vec![0u64; (needed as usize).div_ceil(8).max(1)];
+        // SAFETY: the buffer is writable for its full length in bytes.
+        let ok = unsafe {
+            GetTokenInformation(
+                token,
+                class,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * 8) as u32,
+                &mut needed,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(buffer)
+    }
+
+    /// Whether the object's owner is you (see [`CurrentUser`]). Needs `READ_CONTROL` on the handle.
     fn owned_by(handle: &Handle, user: &CurrentUser) -> io::Result<bool> {
         let mut owner: PSID = ptr::null_mut();
         let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
@@ -1178,7 +1197,10 @@ mod windows {
             return Err(io::Error::from_raw_os_error(status as i32));
         }
         // SAFETY: `owner` points into `descriptor`, which stays allocated until `LocalFree`.
-        let same = unsafe { EqualSid(owner, user.sid()) } != 0;
+        let same = user
+            .sids()
+            .into_iter()
+            .any(|sid| unsafe { EqualSid(owner, sid) } != 0);
         // SAFETY: `descriptor` was allocated by `GetSecurityInfo` and is freed once.
         unsafe { LocalFree(descriptor) };
         Ok(same)

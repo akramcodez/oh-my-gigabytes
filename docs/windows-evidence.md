@@ -60,7 +60,7 @@ Same single path as Linux (`cleanup::Index::prepare_delete` → `delete_permanen
 | Step | Windows mechanism |
 | --- | --- |
 | Hold the target | Opened with `DELETE` access and **no delete sharing**, reparse points visible: nobody can rename, replace or delete it while OMG holds it |
-| Revalidate | Through that handle: `volume:file-id` identity and creation time must match the saved item; final path must equal the expected path; owner must be the current user; not a cloud or offline placeholder |
+| Revalidate | Through that handle: `volume:file-id` identity and creation time must match the saved item; final path must equal the expected path; owner must be you (the token's user, or its default owner when elevated, such as Administrators: the Windows form of `st_uid == euid`); not a cloud or offline placeholder |
 | Descendants | Fresh walk before removal: sensitive and protected names, cloud placeholders, volume mount points and unknown link types stop the delete. Junctions and symbolic links inside are removed as links, never followed |
 | Remove | `FileDispositionInfoEx` (delete + POSIX semantics + ignore read-only) on each verified handle, files first, then each emptied folder through its own handle |
 | Hard links | Link counts are read at removal; a removed name whose data has other names sets `reconcile_needed` |

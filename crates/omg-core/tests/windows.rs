@@ -373,6 +373,7 @@ mod deletion {
             })
             .unwrap();
         assert!(report.deleted.is_empty(), "{report:?}");
+        assert!(report.skipped[0].1.contains("replaced"), "{report:?}");
         assert_eq!(
             fs::read(outside.path().join("secret.txt")).unwrap(),
             b"outside"
@@ -401,6 +402,7 @@ mod deletion {
             })
             .unwrap();
         assert!(report.deleted.is_empty(), "{report:?}");
+        assert!(report.skipped[0].1.contains("sensitive"), "{report:?}");
         assert_eq!(fs::read(h.join("scratch/.ssh/id_ed25519")).unwrap(), b"key");
         assert_eq!(fs::read(h.join("scratch/a.bin")).unwrap(), b"data");
     }
