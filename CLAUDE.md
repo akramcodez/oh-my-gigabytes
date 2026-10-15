@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 OMG (Oh My Gigabytes) is a local-first, keyboard-first storage analyzer for developers. A Rust engine scans filesystem metadata into SQLite, a versioned catalog explains possible cleanup candidates, and an independent policy engine decides what may ever be acted on. Distribution is the npm package `oh-my-gigabytes`. The executable is always `omg`.
 
 It is a **development preview**:
-- **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. The older `planning::execute` still always fails closed.
-- **Linux only.** Native scanning, state and the background service work only on Linux. Other targets compile with those adapters disabled.
+- **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. Permanent delete runs on Linux and on Windows NTFS. The older `planning::execute` still always fails closed.
+- **Linux and Windows.** Native scanning, state and permanent delete work on Linux and Windows. Windows scans NTFS, ReFS and FAT32 and deletes on NTFS only. The background service is Linux only. macOS compiles with the native adapters disabled. Windows status and gaps: `docs/windows-evidence.md`.
 - **Phases ship as development milestones.** Phases 0–5 are recorded as milestones with unpassed acceptance gates. See `docs/checklist.md`.
 
 ## Source-of-truth documents
@@ -43,9 +43,12 @@ cargo test -p omg-core --test service ipc_is_a_closed      # one test by name su
 cargo test -p omg-cli --test cli service::                 # CLI end-to-end tests (use the built binary via CARGO_BIN_EXE_omg)
 cargo run --release -p omg-core --example benchmark        # synthetic scan benchmark
 python3 -m unittest discover -s spikes/phase0 -p 'test_*.py' -v   # Phase 0 Python probe (not the engine)
+cargo test -p omg-core --test windows                     # Windows only: native scan and delete tests
 ```
 
-Running the app. Always use a separate private state directory for experiments. The default is `$XDG_STATE_HOME/omg`, or `OMG_STATE_DIR` if set.
+Windows: CI's `windows-latest` builds with MSVC. Local builds can use `1.95.0-x86_64-pc-windows-gnu` with a MinGW linker on a path without spaces. Build from a copy on a Windows drive, not from `\\wsl.localhost`. The deletion tests skip, with a message, when `TMP` is inside a Git repository; set `TMP` to a folder outside one.
+
+Running the app. Always use a separate private state directory for experiments. The default is `$XDG_STATE_HOME/omg` (Windows: `%LOCALAPPDATA%\omg`), or `OMG_STATE_DIR` if set.
 
 ```sh
 cargo run -p omg-cli -- --state-dir /tmp/omg-state scan --root /path/to/dir
@@ -54,8 +57,8 @@ cargo run -p omg-cli -- --state-dir /tmp/omg-state             # TUI; needs a re
 ```
 
 Constraints that affect tests and running:
-- **Filesystem.** Scan roots and the state directory must be on ext-family or tmpfs filesystems. `platform::linux::root` checks the filesystem magic and requires `openat2`.
-- **Permissions.** The state directory must be owned by the current user with mode `0700`. Tests create it with `private_state()`.
+- **Filesystem.** Linux: scan roots and the state directory must be on ext-family, tmpfs or Btrfs; `platform::linux::root` checks the filesystem magic and requires `openat2`. Windows: a local drive-letter path on NTFS, ReFS or FAT32; `platform::windows::open_root` refuses links, network drives and other filesystems.
+- **Permissions.** On Unix the state directory must be owned by the current user with mode `0700`. Tests create it with `private_state()`. On Windows the owner-only ACL check is not implemented yet.
 
 ## Architecture
 
@@ -85,7 +88,7 @@ Find functionality by grepping for `impl Index`.
 
 ### Schema migrations
 
-Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/00N.sql` (currently up to 010) requires three edits in `index.rs`:
+Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/00N.sql` (currently up to 011) requires three edits in `index.rs`:
 1. Add the `include_str!` step.
 2. Bump the "schema is newer than this omg build" check (`version > N`).
 3. Bump `schema_supported` in `diagnose`.
@@ -96,13 +99,17 @@ Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per fi
 
 (Performance notes: workers pull directories from an in-memory queue, so scanner speed comes from `scanner.rs` queue/batching, not from SQLite jobs; keep per-entry work to one `statat`. Old scans are pruned lazily via `Index::prune_stale` / `omg prune`.)
 
-`scanner::scan` takes `scan.lock` and records a `running` row in `scans`. Bounded worker threads then traverse with `openat2` (`RESOLVE_NO_SYMLINKS | BENEATH | NO_XDEV`). Entries are batched through a bounded channel into `IMMEDIATE` transactions.
+`scanner::scan` takes `scan.lock` and records a `running` row in `scans`. Bounded worker threads then traverse the tree. Entries are batched through a bounded channel into `IMMEDIATE` transactions.
+
+The walk is platform-neutral. `platform::native` supplies the five native operations (open root, open a verified directory, read its metadata, list its children, read the volume):
+- **Linux:** `openat2` (`RESOLVE_NO_SYMLINKS | BENEATH | NO_XDEV`) and one `statat` per entry.
+- **Windows** (`platform/windows.rs`): verbatim `\\?\` paths opened with reparse points visible; children listed with `FileIdExtdDirectoryInfo`, with no per-entry open; each directory's final path and file id checked against the listing. Links, mount points and cloud placeholders are recorded as excluded and never read.
 
 Only a `complete` scan replaces the `active` singleton, which is the published view. `partial`, `cancelled` and `failed` scans keep the previous valid index. Older scans are deleted, and a volume/trend sample is recorded after every complete or partial scan.
 
 Entries follow these conventions:
-- **Paths:** stored as **raw bytes relative to the scan root**.
-- **Identity:** `"dev:ino"`. Totals deduplicate hard links with `GROUP BY identity`.
+- **Paths:** stored as **raw bytes relative to the scan root**. On Windows these are WTF-8 with `/` separators (lossless, including unpaired surrogates), displayed with `\`.
+- **Identity:** `"dev:ino"`; on Windows `"volume:file-id"`. Totals deduplicate hard links with `GROUP BY identity`. Windows scans do not read link counts (`links` is 1), so hard-linked data counts once per name there.
 - **Exclusions:** `excluded IS NOT NULL` marks entries skipped by mandatory or configured exclusions. Those come from `platform::excluded`.
 
 ### Rollups (`rollup.rs`, table `dir_totals`)
@@ -141,13 +148,13 @@ Only `config`, `notify`, `schedule` and `trend` are portable. `daemon`, `ipc` an
 
 ## Rules that are easy to break
 
-- **One mutation path.** User file deletion exists only in `crates/omg-core/src/cleanup.rs`: `verdict` (home-only; `policy::hard_protection` denies; `policy::repository_status`: active repo denies, build/dependency folder or stale repo warns; `Kind` decides how descendants are checked), `prepare_delete` → confirmed fingerprint → `delete_permanently` (revalidates identity *and* statx birth time, re-checks descendants, removes through directory fds). Never add another deletion path, never follow links, and keep `planning::execute` failing closed. Run `crates/omg-core/tests/cleanup.rs` after any change there.
+- **One mutation path.** User file deletion exists only in `crates/omg-core/src/cleanup.rs`: `verdict` (home-only; `policy::hard_protection` denies; `policy::repository_status`: active repo denies, build/dependency folder or stale repo warns; `Kind` decides how descendants are checked), `prepare_delete` → confirmed fingerprint → `delete_permanently` (revalidates identity *and* statx birth time, re-checks descendants, removes through directory fds). Never add another deletion path, never follow links, and keep `planning::execute` failing closed. Windows removal is the `windows` module in the same file: open without delete sharing, revalidate identity, creation time, final path and owner through that handle, then delete by handle (`FileDispositionInfoEx`). `platform/windows.rs` must stay read-only. Run `crates/omg-core/tests/cleanup.rs` (Linux) and `crates/omg-core/tests/windows.rs` (Windows) after any change there.
 - **Structural guard test.** `service_logic_contains_no_deletion_or_cleanup_calls` in `crates/omg-core/tests/service.rs` greps the service sources for `remove_file`, `remove_dir`, `rename(`, `planning`, `Trash`, `unlink` and `authoriz`. **Comments count too.** Choose wording that avoids those words in `daemon.rs`, `notify.rs`, `trend.rs`, `schedule.rs` and `config.rs`.
 - **Unknown is not zero.** Represent unknown sizes and identities as unknown. Keep paths as raw bytes; display strings are never path authority. Notifications and default diagnostics must not contain paths or filenames.
 - **Strict, bounded parsers.** All external input — catalog, config, IPC, release manifests — is size-bounded and rejects unknown fields. Keep it that way.
-- **Packaging capability coupling.** Manifest `capabilities` are produced in `scripts/assemble-release.js` and validated exactly in `packages/oh-my-gigabytes/lib/verify.js`. Change both together, and update `release.test.js`.
+- **Packaging capability coupling.** Manifest `capabilities` are produced in `scripts/assemble-release.js` and validated exactly in `packages/oh-my-gigabytes/lib/verify.js`. Change both together, and update `release.test.js`. Linux and Windows full builds declare `cleanup: development-unqualified`; Windows declares `analysis: development-windows` and `service: disabled`.
 - **Tests must not touch the real user session.** systemd tests use a fake `systemctl` script (`Systemd { systemctl, unit_dir, unit }`). CLI tests set `XDG_CONFIG_HOME` and `HOME` to temp directories. Never let a test write to the real `~/.config/systemd/user`.
-- **Linux gating.** Linux-only code must stay behind `#[cfg(target_os = "linux")]`, so the macOS and Windows CI legs still compile with those features disabled.
+- **Platform gating.** Linux-only code stays behind `#[cfg(target_os = "linux")]` and Windows-only code behind `#[cfg(windows)]`, so every CI leg compiles. Declare every `windows-sys` feature omg-core uses in its own `Cargo.toml`: `cargo test -p omg-core` builds it without the CLI's dependencies, which otherwise enable some features by accident.
 
 ## Style
 
