@@ -39,7 +39,7 @@ Last updated: 2026-10-15.
 
 1. **Saved list is not only user-populated (WP04, WP10).** Auto-fill is on by default. `D` deletes everything in the list after one confirmation, so it can delete items the user never picked. Owner question pending: default off, or separate confirmation for auto-filled items.
 2. **`DeleteNow` stages before preparing (WP10).** It adds the item to OMG Trash, then calls `prepare_delete`. If preparation fails (for example, unsupported root or moved scan root), the item stays in OMG Trash and the list does not refresh, because `refresh` is set only on success.
-3. **Birth-time fallback (WP05).** `cleanup.rs` compares `statx` birth time only when the filesystem reports it. Otherwise revalidation is identity-only (Phase 3 residual risk). Must not qualify a profile. Today no profile is qualified.
+3. ~~**Birth-time fallback (WP05).**~~ Resolved 2026-10-15: an item without a recorded creation time is refused at review and at deletion, so no identity-only path remains. See *Resolved in the 2026-10-15 identity review*.
 4. **Wording (WP10).** Some help text still describes cleanup in older terms. The OS Trash denial text is now accurate.
 5. **TUI capability display (WP10).** The TUI shows the backend error text when deletion is refused. It does not show capability status.
 
@@ -48,6 +48,12 @@ Last updated: 2026-10-15.
 - Manifest/runtime mismatch: manifest now declares `cleanup: development-unqualified` on Linux, `disabled` elsewhere. `assemble-release.js`, `verify.js`, `release.test.js` and `docs/release.md` changed together.
 - Btrfs gate: owner chose option 2 (see Owner decisions).
 - Status JSON still said "cleanup: disabled": now `cleanup` and `os_trash` come from `capability`.
+
+## Resolved in the 2026-10-15 identity review
+
+- **Identity-only deletion.** Deletion compared only inode identity when a creation time had not been recorded, which the safety baseline forbids (unknown identity means no action). Now `upsert_marked` refuses to save an item whose creation time is unavailable, `prepare_delete` denies a saved item without one, and `delete_one` requires the recorded creation time to match. Test: `item_without_a_recorded_creation_time_is_never_deleted`. Behaviour change: on a filesystem that reports no creation time (for example ext2), items can no longer be saved for deletion.
+- **Hard-link accounting.** Deleting a folder that held the first path of a hard-linked file subtracted the file from the published totals while another name still held the data. Observed before the fix: after deleting `aaa/alias.bin` (a link to `keep/data.bin`, 8192 bytes), the index reported `files 0, allocated 4096`; a fresh scan reported `files 1, allocated 12288`. Now only inodes whose every name is inside the removed subtree are freed, the same rule sets the plan estimate and the reported bytes, and a surviving link sets `reconcile_needed`. Tests: `surviving_hard_link_is_not_estimated_as_freed_and_totals_match_a_fresh_scan`, `hard_link_wholly_inside_the_removed_folder_is_freed_once`.
+- **Residual, not fixed:** a single-file `unlinkat` still follows a path-based check (Linux has no unlink-by-descriptor). Covered by the open WP05 question and `linux-os-trash-investigation.md`.
 
 ## Work package status
 
@@ -132,7 +138,7 @@ Commits on `main`: `05e624a` (WP04), `cc54459` (WP06/WP07/WP10 parts). Further c
 | WP04 | Done. Auto-fill off by default; Cancel discards the issued plan; a failed or empty review undoes staging | Unit and integration tests; TUI test with real Cancel action |
 | WP05 | Partial. Barrier tests via `delete_with_control`: replaced directory, symlink swap, protected child inserted | `tests/cleanup.rs` (deterministic hooks; tmpfs) |
 | WP06 | Core done. Migration 011 (`delete_targets`); intent and targets in one transaction; per-target outcomes; interrupted labelling; cancel flag; partial labelled `partial` | Tests: failed intent write, cancellation, interrupted attempt, partial removal |
-| WP07 | Partial. Hard-link deletion totals equal an independent fresh scan; partial removal flags `reconcile_needed`, cleared by the next complete scan | Test `deleting_one_hard_link_name_keeps_data_and_totals_match_a_fresh_scan` |
+| WP07 | Partial. Hard-link deletion totals equal an independent fresh scan, including a surviving link outside the removed folder; partial removal and surviving links flag `reconcile_needed`, cleared by the next complete scan | Tests `deleting_one_hard_link_name_keeps_data_and_totals_match_a_fresh_scan`, `surviving_hard_link_is_not_estimated_as_freed_and_totals_match_a_fresh_scan`, `hard_link_wholly_inside_the_removed_folder_is_freed_once` |
 | WP08 | Synthetic benchmark only: 10,100 entries, cold 27 ms, warm 27 ms, startup query 3 ms, rollup read 0 ms (`cargo run --release -p omg-core --example benchmark`, this host) | Not representative; no RSS/FD measurement; tool-root overrides not implemented |
 | WP09 | Investigation delivered. Source: freedesktop Trash spec, fetched via agent-reach (Jina Reader) 2026-10-15. Race not resolved; OS Trash kept disabled | `docs/linux-os-trash-investigation.md` |
 | WP10 | Done: auto-filled items labelled in Trash tab; failed `DeleteNow` review undoes staging; capability on help screen (from capability module); cancel reported; stale totals reported | Render and worker changes; CLI tests |

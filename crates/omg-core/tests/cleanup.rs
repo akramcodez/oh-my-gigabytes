@@ -677,3 +677,105 @@ fn deleting_one_hard_link_name_keeps_data_and_totals_match_a_fresh_scan() {
     assert_eq!(after_delete.apparent, fresh_totals.apparent);
     assert_eq!(after_delete.files, fresh_totals.files);
 }
+
+/// A hard link whose other name survives outside the deleted folder keeps its bytes on disk. The
+/// estimate must not count them, and the totals must still match a fresh scan. "aaa" sorts before
+/// "keep", so the removed name is the first path the linked file is attributed to.
+#[test]
+fn surviving_hard_link_is_not_estimated_as_freed_and_totals_match_a_fresh_scan() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("aaa")).unwrap();
+    fs::create_dir(h.join("keep")).unwrap();
+    fs::write(h.join("keep/data.bin"), vec![7u8; 8192]).unwrap();
+    fs::hard_link(h.join("keep/data.bin"), h.join("aaa/alias.bin")).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"aaa", 8192, h).unwrap();
+    let plan = index.prepare_delete(&[id_of(&index, b"aaa")], h).unwrap();
+    assert!(
+        plan.estimated < 8192,
+        "estimate counts bytes that survive: {}",
+        plan.estimated
+    );
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted, vec![b"aaa".to_vec()], "{report:?}");
+    assert!(report.estimated_bytes < 8192, "{report:?}");
+    assert!(report.needs_reconcile, "{report:?}");
+    assert_eq!(fs::read(h.join("keep/data.bin")).unwrap().len(), 8192);
+
+    let after = index.subtree(b"").unwrap().unwrap();
+    let fresh_state = tempfile::tempdir().unwrap();
+    fs::set_permissions(fresh_state.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut fresh = Index::open(fresh_state.path()).unwrap();
+    scan(&mut fresh, h);
+    let expected = fresh.subtree(b"").unwrap().unwrap();
+    assert_eq!(after.allocated, expected.allocated);
+    assert_eq!(after.apparent, expected.apparent);
+    assert_eq!(after.files, expected.files);
+    assert_eq!(after.dirs, expected.dirs);
+}
+
+/// When every name of a hard-linked file is inside the removed folder, its bytes really are freed:
+/// they are counted once, nothing is flagged, and the totals match a fresh scan.
+#[test]
+fn hard_link_wholly_inside_the_removed_folder_is_freed_once() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/one.bin"), vec![7u8; 8192]).unwrap();
+    fs::hard_link(h.join("scratch/one.bin"), h.join("scratch/two.bin")).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 8192, h).unwrap();
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"scratch")], h)
+        .unwrap();
+    assert!(plan.estimated >= 8192, "{}", plan.estimated);
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted, vec![b"scratch".to_vec()], "{report:?}");
+    assert!(report.estimated_bytes >= 8192, "{report:?}");
+    assert!(!report.needs_reconcile, "{report:?}");
+
+    let after = index.subtree(b"").unwrap().unwrap();
+    let fresh_state = tempfile::tempdir().unwrap();
+    fs::set_permissions(fresh_state.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut fresh = Index::open(fresh_state.path()).unwrap();
+    scan(&mut fresh, h);
+    let expected = fresh.subtree(b"").unwrap().unwrap();
+    assert_eq!(after.allocated, expected.allocated);
+    assert_eq!(after.apparent, expected.apparent);
+    assert_eq!(after.files, expected.files);
+    assert_eq!(after.dirs, expected.dirs);
+}
+
+/// Without a recorded creation time, a saved item cannot be told apart from a replacement that
+/// reused its inode number, so deletion refuses it instead of comparing identity alone.
+#[test]
+fn item_without_a_recorded_creation_time_is_never_deleted() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("scratch")).unwrap();
+    fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"scratch", 4096, h).unwrap();
+    // A row saved without a creation time: older rows, or a filesystem that cannot report one.
+    rusqlite::Connection::open(state.path().join("index.sqlite"))
+        .unwrap()
+        .execute("UPDATE marked SET birth=NULL", [])
+        .unwrap();
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"scratch")], h)
+        .unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert!(report.deleted.is_empty(), "{report:?}");
+    assert!(report.skipped[0].1.contains("creation time"), "{report:?}");
+    assert_eq!(fs::read(h.join("scratch/a.bin")).unwrap(), b"data");
+}

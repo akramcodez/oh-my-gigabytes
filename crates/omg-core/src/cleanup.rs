@@ -24,6 +24,10 @@ pub(crate) type IssuedPlans = HashMap<String, (i64, DeletePlan)>;
 /// Seconds a reviewed plan may wait for confirmation before it must be reviewed again.
 const PLAN_TTL: i64 = 900;
 
+/// Refusal for an item whose creation time is missing: identity alone cannot prove it is the saved object.
+const UNRECORDED_BIRTH: &str =
+    "creation time was not recorded when added; add it to OMG Trash again";
+
 fn fingerprint_of(
     scan: i64,
     items: &[Marked],
@@ -80,7 +84,8 @@ pub struct Marked {
     pub added: i64,
     pub warning: Option<String>,
     /// Creation time captured when the item was added. Inode numbers are reused immediately on
-    /// ext4, so identity alone cannot tell a recreated file from the original.
+    /// ext4, so identity alone cannot tell a recreated file from the original; an item without one
+    /// is never deleted.
     pub birth: Option<String>,
     /// "auto" when a scan suggested it, "user" when the user added it.
     pub source: String,
@@ -104,10 +109,36 @@ pub struct DeleteReport {
     pub estimated_bytes: u64,
     /// Observed change in available bytes on the volume (other activity can affect it).
     pub observed_free_change: Option<i64>,
-    /// Some entries were removed from a target that stays listed. Totals are stale until a scan.
+    /// Entries were removed from a target that stays listed, or hard-linked data outside a removed
+    /// folder was left in place. Published totals may differ from a fresh scan until the next scan.
     pub needs_reconcile: bool,
     /// Cancellation stopped the run; the remaining targets are `unattempted`.
     pub cancelled: bool,
+}
+
+/// What removing a subtree frees, from the indexed names. A hard-linked file counts only when every
+/// one of its names is inside the subtree; otherwise its bytes stay on disk, so they are left out and
+/// `survivors` is set. Totals then need a scan, because the surviving data is still counted elsewhere.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Freed {
+    pub allocated: u64,
+    pub apparent: u64,
+    /// Non-excluded bytes only, matching the scan-wide unique totals.
+    pub unique_allocated: u64,
+    pub unique_apparent: u64,
+    pub files: u64,
+    pub dirs: u64,
+    pub survivors: bool,
+}
+
+/// Bounds for `path > prefix AND path < upper`, selecting the entries strictly below `path`.
+/// '0' sorts right after '/', so `upper` closes the subtree range.
+fn descendants(path: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut upper = path.to_vec();
+    upper.push(b'0');
+    let mut prefix = path.to_vec();
+    prefix.push(b'/');
+    (prefix, upper)
 }
 
 /// How a deletable target's contents are judged at deletion time.
@@ -282,6 +313,34 @@ impl Index {
             )
             .optional()?)
     }
+    /// What removing the subtree at `path` frees (see [`Freed`]). Hard links are grouped by identity:
+    /// a group whose names are all inside the subtree is freed, a larger group is a survivor.
+    fn freed(&self, scan: i64, path: &[u8]) -> Result<Freed> {
+        let (prefix, upper) = descendants(path);
+        let mut statement = self.db.prepare(
+            "SELECT kind,count(*),max(links),max(apparent),max(allocated),coalesce(max(CASE WHEN excluded IS NULL THEN apparent END),0),coalesce(max(CASE WHEN excluded IS NULL THEN allocated END),0) FROM entries WHERE scan_id=?1 AND (path=?2 OR (path>?3 AND path<?4)) GROUP BY identity",
+        )?;
+        let mut freed = Freed::default();
+        let mut rows = statement.query(params![scan, path, prefix, upper])?;
+        while let Some(row) = rows.next()? {
+            let directory = row.get::<_, String>(0)? == "directory";
+            let (names, links): (i64, i64) = (row.get(1)?, row.get(2)?);
+            if !directory && names < links {
+                freed.survivors = true;
+                continue;
+            }
+            freed.allocated += unsigned(row, 4)?;
+            freed.apparent += unsigned(row, 3)?;
+            freed.unique_allocated += unsigned(row, 6)?;
+            freed.unique_apparent += unsigned(row, 5)?;
+            if directory {
+                freed.dirs += 1;
+            } else {
+                freed.files += 1;
+            }
+        }
+        Ok(freed)
+    }
     /// Save a path in OMG Trash. Nothing on disk changes. Denied items are refused.
     pub fn mark(&self, path: &[u8], allocated: u64, home: &Path) -> Result<Gate> {
         self.upsert_marked(path, allocated, home, "user")
@@ -298,21 +357,30 @@ impl Index {
             .entry(path)?
             .ok_or_else(|| anyhow::anyhow!("not in the current index; rescan first"))?;
         let verdict = self.verdict_for(&entry, home)?.gate;
-        #[cfg(target_os = "linux")]
-        let birth = linux::live_identity(&root, &entry.path)
-            .ok()
-            .filter(|(identity, _)| *identity == entry.identity)
-            .ok_or_else(|| anyhow::anyhow!("changed on disk since the last scan; rescan first"))?
-            .1;
-        #[cfg(not(target_os = "linux"))]
-        let birth: Option<String> = {
-            let _ = &root;
-            None
-        };
         let warning = match &verdict {
             Gate::Denied(reason) => bail!("cannot add to OMG Trash: {reason}"),
             Gate::Warn(text) => Some(text.clone()),
             Gate::Allowed => None,
+        };
+        #[cfg(target_os = "linux")]
+        let birth = {
+            let (_, created) = linux::live_identity(&root, &entry.path)
+                .ok()
+                .filter(|(identity, _)| *identity == entry.identity)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("changed on disk since the last scan; rescan first")
+                })?;
+            // Refused rather than saved without a creation time: deletion could never verify it.
+            created.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "this filesystem reports no creation time, so the item cannot be verified before deletion"
+                )
+            })?
+        };
+        #[cfg(not(target_os = "linux"))]
+        let birth: Option<String> = {
+            let _ = &root;
+            None
         };
         if source == "user" {
             // A user's choice always wins, including over an earlier dismissed suggestion.
@@ -454,6 +522,10 @@ impl Index {
             {
                 continue;
             }
+            if item.birth.is_none() {
+                denied.push((item.path.clone(), UNRECORDED_BIRTH.into()));
+                continue;
+            }
             items.retain(|i| !policy::inside(&i.path, &item.path, true));
             match self.entry(&item.path)? {
                 Some(entry) => match self.verdict_for(&entry, home)?.gate {
@@ -467,7 +539,11 @@ impl Index {
                 None => denied.push((item.path.clone(), "no longer in the index".into())),
             }
         }
-        let estimated = items.iter().map(|i| i.allocated).sum();
+        // Only bytes this plan would free: a hard link whose other name survives is not counted.
+        let mut estimated = 0;
+        for item in &items {
+            estimated += self.freed(scan, &item.path)?.allocated;
+        }
         let created = now();
         let fingerprint = fingerprint_of(scan, &items, &denied, created)?;
         let plan = DeletePlan {
@@ -559,6 +635,8 @@ impl Index {
                         continue;
                     }
                 };
+                // Read before anything changes: what the index attributes to this subtree.
+                let freed = self.freed(scan, &item.path)?;
                 before_mutate(&item.path);
                 match linux::delete_one(&root_fd, &root, home, item, kind) {
                     Ok((removed, failed)) => {
@@ -566,9 +644,10 @@ impl Index {
                         report.failed_entries += failed;
                         if failed == 0 {
                             report.deleted.push(item.path.clone());
-                            report.estimated_bytes += item.allocated;
+                            report.estimated_bytes += freed.allocated;
+                            report.needs_reconcile |= freed.survivors;
                             self.record_target(operation, item.id, "deleted", "")?;
-                            self.forget(&item.path)?;
+                            self.forget(scan, &item.path, &freed)?;
                             self.db
                                 .execute("DELETE FROM marked WHERE id=?", [item.id])?;
                         } else {
@@ -665,21 +744,13 @@ impl Index {
         Ok(())
     }
     #[cfg(target_os = "linux")]
-    /// Drop a deleted subtree from the published index and subtract it from ancestor totals, so the
-    /// views stay truthful without a full rescan.
-    fn forget(&self, path: &[u8]) -> Result<()> {
-        let (scan, _, _) = self.scope()?;
-        let mut upper = path.to_vec();
-        upper.extend_from_slice(b"0"); // '0' sorts right after '/', bounding the subtree range
-        let mut prefix = path.to_vec();
-        prefix.push(b'/');
-        let entry = self.entry(path)?;
-        let totals = self.subtree(path)?.unwrap_or(crate::rollup::Totals {
-            allocated: entry.as_ref().map_or(0, |e| e.allocated),
-            apparent: entry.as_ref().map_or(0, |e| e.apparent),
-            ..Default::default()
-        });
-        let is_dir = entry.as_ref().is_some_and(|e| e.kind == "directory");
+    /// Drop a deleted subtree from the published index and subtract what it freed from ancestor
+    /// totals, so the views stay truthful without a full rescan. Hard-linked data that survives
+    /// outside the subtree stays counted (see [`Freed`]).
+    fn forget(&self, scan: i64, path: &[u8], freed: &Freed) -> Result<()> {
+        let (prefix, upper) = descendants(path);
+        // Protection counts are per name, and every name in the subtree is removed with it.
+        let protected = self.subtree(path)?.map_or(0, |t| t.protected);
         let tx = self.db.unchecked_transaction()?;
         let removed = tx.execute(
             "DELETE FROM entries WHERE scan_id=?1 AND (path=?2 OR (path>?3 AND path<?4))",
@@ -699,11 +770,11 @@ impl Index {
                 "UPDATE dir_totals SET allocated=max(0,allocated-?2),apparent=max(0,apparent-?3),files=max(0,files-?4),dirs=max(0,dirs-?5),protected=max(0,protected-?6) WHERE scan_id=?1 AND path=?7",
                 params![
                     scan,
-                    i64::try_from(totals.allocated)?,
-                    i64::try_from(totals.apparent)?,
-                    i64::try_from(totals.files + u64::from(!is_dir))?,
-                    i64::try_from(totals.dirs + u64::from(is_dir))?,
-                    i64::try_from(totals.protected)?,
+                    i64::try_from(freed.allocated)?,
+                    i64::try_from(freed.apparent)?,
+                    i64::try_from(freed.files)?,
+                    i64::try_from(freed.dirs)?,
+                    i64::try_from(protected)?,
                     ancestor
                 ],
             )?;
@@ -713,7 +784,7 @@ impl Index {
         }
         tx.execute(
             "UPDATE scans SET entry_count=max(0,entry_count-?2),unique_allocated=max(0,unique_allocated-?3),unique_apparent=max(0,unique_apparent-?4) WHERE id=?1",
-            params![scan, removed as i64, i64::try_from(totals.allocated)?, i64::try_from(totals.apparent)?],
+            params![scan, removed as i64, i64::try_from(freed.unique_allocated)?, i64::try_from(freed.unique_apparent)?],
         )?;
         tx.commit()?;
         Ok(())
@@ -773,10 +844,12 @@ mod linux {
     ) -> std::result::Result<(u64, u64), String> {
         let relative = platform::path(&item.path).map_err(|e| e.to_string())?;
         let (parent, cname) = open_parent(root_fd, &relative)?;
+        // Both must match: inode numbers are reused, so identity alone cannot prove the same object.
+        let recorded = item.birth.as_deref().ok_or(UNRECORDED_BIRTH)?;
         let stat = fs::statat(&parent, &cname, AtFlags::SYMLINK_NOFOLLOW)
             .map_err(|_| "no longer exists".to_string())?;
         if identity(&stat) != item.identity
-            || (item.birth.is_some() && birth_of(&parent, &cname) != item.birth)
+            || birth_of(&parent, &cname).as_deref() != Some(recorded)
         {
             return Err("replaced by a different file since it was added; skipped".into());
         }

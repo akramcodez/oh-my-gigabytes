@@ -30,7 +30,7 @@ An analysis-only beta is possible once the owner decides to publish.
 | Docs match code and manifest | WP01, WP02 | Done; TUI help and doctor show the same capability |
 | Baseline recorded | WP03 | Done for this host; ext4 and ignored Btrfs re-run missing |
 | Exact, one-use confirmation | WP04 | Done. Auto-fill default changed to **off** (decision made in this session; reversible in the menu) |
-| Target and descendant safety | WP05 | Deterministic barrier tests pass on tmpfs (replacement, symlink swap, protected child). Birth-time fallback still a residual risk. ext4 and Btrfs native cases missing |
+| Target and descendant safety | WP05 | Deterministic barrier tests pass on tmpfs (replacement, symlink swap, protected child). Birth-time fallback removed: items without a recorded creation time are refused. ext4 and Btrfs native cases missing |
 | Durable per-target outcomes, cancellation | WP06 | Done in core: intent in one transaction, per-target outcomes, interrupted labelling, cancel flag. TUI cannot cancel a running delete (single worker thread); the mechanism is tested but not wired to a key |
 | Inventory correct after mutation | WP07 | Hard-link totals match an independent fresh scan. Partial removals flag a rescan. Crash, disk-full and corruption tests missing |
 | Findings and scaling | WP08 | Synthetic benchmark recorded (10,100 entries: cold 27 ms, warm 27 ms). Representative trees, RSS/FD measurement and tool-root overrides missing |

@@ -601,7 +601,7 @@ impl App {
                     ""
                 };
                 let stale = if report.needs_reconcile {
-                    " · some entries were removed from a partly deleted folder; run a scan to refresh totals"
+                    " · totals may be out of date (partly deleted or shared hard links); run a scan to refresh them"
                 } else {
                     ""
                 };

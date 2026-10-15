@@ -30,9 +30,9 @@ Pending owner decisions are listed under [Prerequisites](#owner-and-environment-
 | WP02 | Separate support from cleanup qualification | Implemented; TUI status done; CI check of macOS/Windows pending remote run |
 | WP03 | Record reproducible baseline | Baseline recorded; named-check map done; ext4 and Btrfs re-run missing |
 | WP04 | Make confirmation exact and one-use | Done (auto-fill default off; cancel discards plan) |
-| WP05 | Prove target and descendant safety | Partial: barrier tests on tmpfs pass; ext4/Btrfs native cases and birth-time fallback missing |
+| WP05 | Prove target and descendant safety | Partial: barrier tests on tmpfs pass; ext4/Btrfs native cases missing. Birth-time fallback removed (refused without a recorded creation time) |
 | WP06 | Durable per-target outcomes and cancellation | Core done: per-target outcomes, cancel mechanism; not wired to a TUI key |
-| WP07 | Correct inventory after mutation and failures | Partial: hard-link oracle and partial-removal flag done; crash/disk-full tests missing |
+| WP07 | Correct inventory after mutation and failures | Partial: hard-link oracle, surviving-link accounting and partial-removal flag done; crash/disk-full tests missing |
 | WP08 | Qualify findings and scanner scaling | Partial: synthetic benchmark recorded; representative trees and tool-root overrides missing |
 | WP09 | Investigate and qualify Linux OS Trash | Investigation delivered (`linux-os-trash-investigation.md`); OS Trash kept disabled |
 | WP10 | Clear action and outcome UI | Mostly done; PTY tests for new screens and real-session review missing |

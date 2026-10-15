@@ -32,7 +32,7 @@ Status: **no profile is qualified.** This page records what was actually run, an
 
 ## Known limits in this matrix
 
-- Birth time is reported on tmpfs and Btrfs here. Where birth time is missing, revalidation falls back to identity only, which is documented as a residual risk (WP05).
+- Birth time is reported on tmpfs and Btrfs here, and by `stat -c %w` on the ext4 root of this WSL2 host (2026-10-15). Where birth time is missing, OMG refuses to save or delete the item; it no longer falls back to identity alone (WP05).
 - Btrfs shared extents and snapshots mean freed space can be smaller than the indexed size. The UI and docs say so; Btrfs deletion is not qualified.
 - Service: `notify-send` on this host fails with a libnotify symbol error (`undefined symbol: notify_notification_get_activation_app_launch_context`). The D-Bus notification server itself accepted a test message, so the failure is in the local `notify-send` binary. Service desktop notifications are therefore **not verified**.
 - WSL2 virtual disks: reclaiming space after deletion is an explanatory note only. OMG never compacts disks.
