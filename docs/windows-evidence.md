@@ -1,6 +1,6 @@
 # Windows evidence
 
-Status: **development build, native Windows scanning and read-only views.** Deletion is not available on Windows and is not claimed. Recorded 2026-10-15 on the owner's machine. Plan: [windows-implementation-plan.md](windows-implementation-plan.md). Safety invariants S01–S12 still apply.
+Status: **development build: native Windows scanning, read-only views and permanent delete on NTFS (`development-unqualified`, owner request 2026-10-15).** Recycle Bin is not implemented. Recorded 2026-10-15 on the owner's machine. Plan: [windows-implementation-plan.md](windows-implementation-plan.md). Safety invariants S01–S12 still apply.
 
 ## Environment
 
@@ -23,7 +23,7 @@ Build location: source mirror `C:\src\omg`, build output `C:\src\omg-target`. Bu
 | --- | --- |
 | `cargo +1.95.0-x86_64-pc-windows-gnu build -p omg-cli --locked` | pass |
 | `cargo ... clippy --workspace --all-targets --locked -- -D warnings` | pass |
-| `cargo ... test --workspace --locked` | pass (all suites; 7 Windows integration tests) |
+| `cargo ... test --workspace --locked` | pass (all suites; 13 Windows integration tests, 6 of them for deletion) |
 | `cargo ... check -p omg-core --no-default-features --locked` | pass (analysis-only build) |
 | `omg --version` / `omg doctor` | reports `platform: windows`, `cleanup: unsupported` |
 | `omg --state-dir C:\src\omg-state scan --root C:\src\omg` | complete, 134 entries, 0 errors |
@@ -51,8 +51,25 @@ Throughput is one machine, one run per build, with Windows Defender active. It i
 - Hard links are listed with one identity (`volume:file-id`).
 - Paths longer than MAX_PATH are scanned.
 - Names with Unicode and an unpaired surrogate round-trip through the WTF-8 store.
-- Saving to OMG Trash is refused under the repository rule, or allowed and then refused for deletion. Either way the file stays in place (see *Repository rule* below).
 - OneDrive is excluded by name, so its contents are not opened.
+
+## Permanent delete on NTFS
+
+Same single path as Linux (`cleanup::Index::prepare_delete` → `delete_permanently`), same gates: confirmed one-use plan, home only, hard protection, repository rule, recorded creation time.
+
+| Step | Windows mechanism |
+| --- | --- |
+| Hold the target | Opened with `DELETE` access and **no delete sharing**, reparse points visible: nobody can rename, replace or delete it while OMG holds it |
+| Revalidate | Through that handle: `volume:file-id` identity and creation time must match the saved item; final path must equal the expected path; owner must be the current user; not a cloud or offline placeholder |
+| Descendants | Fresh walk before removal: sensitive and protected names, cloud placeholders, volume mount points and unknown link types stop the delete. Junctions and symbolic links inside are removed as links, never followed |
+| Remove | `FileDispositionInfoEx` (delete + POSIX semantics + ignore read-only) on each verified handle, files first, then each emptied folder through its own handle |
+| Hard links | Link counts are read at removal; a removed name whose data has other names sets `reconcile_needed` |
+
+Filesystems: NTFS only. ReFS (untested) and FAT32/exFAT (no stable file ids) are refused by `capability::permanent_delete`.
+
+Read-only files are removed like any other file, matching Linux, where a file's mode does not govern unlinking it.
+
+Tests (`crates/omg-core/tests/windows.rs`, module `deletion`, run on this machine with `TMP=C:\src\omg-tmp`): confirmed folder and file deleted, including read-only contents; a replaced file is skipped and the replacement survives; a junction inside a deleted folder is removed while its target survives; a folder swapped for a junction never leads outside; a protected child inserted after validation stops the delete; a file held open without delete sharing is skipped as in use; removing one hard-link name keeps the data and flags totals. All pass. The tests skip, with a message, when the temp folder is inside a Git repository.
 
 ## Repository rule (finding for the owner)
 
@@ -66,7 +83,8 @@ The owner's home folder is a Git repository (`C:\Users\SK AKRAM\.git` exists). T
 - **Cloud placeholders.** Placeholder detection uses attributes and reparse tags. It is not tested against a live OneDrive sync root.
 - **Drive root and system folders.** Scanning `C:\` as a whole is untested. `System Volume Information` and `$Recycle.Bin` are excluded by name.
 - **Progress estimate.** No used-inode count is available on Windows, so the ETA is unavailable.
-- **Not implemented:** drives view, Recycle Bin size, WSL/Docker virtual-disk findings (M2); background service (M4); deletion (M5); npm `win32-x64` package and Authenticode signing (W09); ConPTY smoke test (W11).
+- **Not implemented:** drives view, Recycle Bin size, WSL/Docker virtual-disk findings (M2); background service (M4); Recycle Bin deletion; npm `win32-x64` package and Authenticode signing (W09); ConPTY smoke test (W11).
+- **Deletion through the TUI** was reached up to the confirmation dialog in Windows Terminal (plan accepted, "Are you sure? 1 item(s)"). The confirmed removal itself is verified by the integration tests, which call the same backend functions the TUI calls; an automated keypress run of the final `y` was abandoned because desktop focus moved.
 - **Launcher Ctrl+C.** `bin/omg.js` no longer force-kills the child on Windows. This was not run through a packaged binary.
 - **TUI.** Checked by screenshots of Overview, Browse and Findings, and quit with `q`. Ctrl+C and window-close behaviour were not exercised.
 - **ReFS and FAT32** are recognised but not tested on a real volume.

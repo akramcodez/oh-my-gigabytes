@@ -232,7 +232,7 @@ fn run() -> Result<()> {
         let scope = if !omg_core::PERMANENT_DELETE {
             "(not included in this analysis-only build)"
         } else if cfg!(windows) {
-            "(not yet on Windows: NTFS, ReFS and FAT32 are scan-only)"
+            "(Windows: NTFS only; ReFS and FAT32 refused; cloud placeholders never deleted)"
         } else {
             "(Linux: ext-family, tmpfs, Btrfs; unknown filesystems refused)"
         };

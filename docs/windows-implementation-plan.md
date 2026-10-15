@@ -1,6 +1,6 @@
 # Windows implementation plan
 
-Status: **M0 and M1 built and verified on the owner's machine; M2 partly; M3–M5 not started.** Evidence and gaps are in [windows-evidence.md](windows-evidence.md). Written 2026-10-15 from the code at `04ea175` and a live inspection of the owner's Windows machine. Certification is not claimed. [safety.md](safety.md) invariants S01–S12 apply unchanged. Where this plan and the safety baseline disagree, the safety baseline wins.
+Status: **M0, M1 and M5 (permanent delete on NTFS) built and verified on the owner's machine; M2 partly; M3 and M4 not started.** Evidence and gaps are in [windows-evidence.md](windows-evidence.md). Written 2026-10-15 from the code at `04ea175` and a live inspection of the owner's Windows machine. Certification is not claimed. [safety.md](safety.md) invariants S01–S12 apply unchanged. Where this plan and the safety baseline disagree, the safety baseline wins.
 
 | Work package | State (2026-10-15) |
 | --- | --- |
@@ -12,7 +12,7 @@ Status: **M0 and M1 built and verified on the owner's machine; M2 partly; M3–M
 | W05 findings | Partly: Windows cache locations added. WSL/Docker VHDX and Recycle Bin not done. |
 | W06 terminal | Partly: TUI verified in Windows Terminal; launcher no longer force-kills on Ctrl+C. |
 | W07 service | Not started. |
-| W08 deletion | Not started; refused on Windows, covered by a test. |
+| W08 deletion | Done for NTFS, `development-unqualified`: delete by verified handle, owner check, descendant checks. Recycle Bin not done; ReFS and FAT32 refused. |
 | W09 packaging | Not started. |
 | W10 performance | Baseline measured (release, profile scan). |
 | W11 CI and tests | Partly: Windows integration tests added and run on the host. ConPTY test not done. |

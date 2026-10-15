@@ -6,7 +6,7 @@
 //! intermediate component after enumeration. Relative `NtCreateFile` opens (the plan's stronger
 //! containment) are not used yet; that gap is recorded in `docs/windows-evidence.md`.
 //!
-//! Everything here reads; nothing in this module changes the filesystem.
+//! Everything here reads. The only mutation (delete by handle) lives in `cleanup.rs`.
 
 use super::{Meta, wtf8_decode, wtf8_encode};
 use crate::capability::Filesystem;
@@ -23,13 +23,14 @@ use windows_sys::Win32::{
     Storage::FileSystem::{
         CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_OFFLINE,
         FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
-        FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_EXTD_DIR_INFO, FILE_ID_INFO,
-        FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE, FileBasicInfo, FileIdExtdDirectoryInfo,
-        FileIdExtdDirectoryRestartInfo, FileIdInfo, GetDiskFreeSpaceExW, GetDriveTypeW,
-        GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
-        OPEN_EXISTING,
+        FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_EXTD_DIR_INFO,
+        FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
+        FileAttributeTagInfo, FileBasicInfo, FileIdExtdDirectoryInfo,
+        FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetDiskFreeSpaceExW,
+        GetDriveTypeW, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+        GetVolumeInformationByHandleW, OPEN_EXISTING,
     },
 };
 
@@ -41,9 +42,9 @@ const TAG_WIM: u32 = 0x8000_0018;
 /// Offset between the FILETIME epoch (1601) and the Unix epoch, in 100 ns units.
 const FILETIME_UNIX_EPOCH: i64 = 116_444_736_000_000_000;
 const DOT: u16 = b'.' as u16;
-const BACKSLASH: u16 = b'\\' as u16;
+pub(crate) const BACKSLASH: u16 = b'\\' as u16;
 /// Full sharing for read-only opens: other programs may read, write, rename and delete meanwhile.
-const SHARE_ALL: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+pub(crate) const SHARE_ALL: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
 /// Cloud-provider reparse tags (`IO_REPARSE_TAG_CLOUD*`): contents live remotely and must not be read.
 fn is_cloud_tag(tag: u32) -> bool {
@@ -65,12 +66,18 @@ pub fn decode_path(raw: &[u8]) -> Result<PathBuf> {
 }
 
 /// An owned kernel handle, closed exactly once.
-struct Handle(HANDLE);
+pub(crate) struct Handle(HANDLE);
 
 // SAFETY: a kernel handle may be used from any thread. Each handle is closed once, by `Drop`, and
 // the scanner shares only the root directory's handle, which it does not enumerate concurrently.
 unsafe impl Send for Handle {}
 unsafe impl Sync for Handle {}
+
+impl Handle {
+    pub(crate) fn raw(&self) -> HANDLE {
+        self.0
+    }
+}
 
 impl Drop for Handle {
     fn drop(&mut self) {
@@ -86,11 +93,17 @@ pub struct Dir {
     volume: u64,
 }
 
+impl Dir {
+    pub(crate) fn path(&self) -> &[u16] {
+        &self.path
+    }
+}
+
 fn last_error() -> io::Error {
     io::Error::last_os_error()
 }
 
-fn identity_of(volume: u64, id: [u8; 16]) -> String {
+pub(crate) fn identity_of(volume: u64, id: [u8; 16]) -> String {
     format!("{volume:x}:{:032x}", u128::from_le_bytes(id))
 }
 
@@ -159,7 +172,7 @@ fn wide_path(path: &Path) -> Vec<u16> {
 }
 
 /// `base` followed by the components of `relative`, with `\` separators.
-fn join(base: &[u16], relative: &Path) -> Result<Vec<u16>> {
+pub(crate) fn join(base: &[u16], relative: &Path) -> Result<Vec<u16>> {
     let mut out = base.to_vec();
     for part in relative.components() {
         let Component::Normal(name) = part else {
@@ -174,7 +187,7 @@ fn join(base: &[u16], relative: &Path) -> Result<Vec<u16>> {
 }
 
 /// Windows paths compare ASCII case-insensitively; a final path always carries on-disk case.
-fn same_path(a: &[u16], b: &[u16]) -> bool {
+pub(crate) fn same_path(a: &[u16], b: &[u16]) -> bool {
     fn fold(unit: u16) -> u16 {
         if (u16::from(b'A')..=u16::from(b'Z')).contains(&unit) {
             unit + 32
@@ -186,7 +199,7 @@ fn same_path(a: &[u16], b: &[u16]) -> bool {
 }
 
 /// Open a verbatim path with reparse points visible, with the given access and sharing.
-fn open_shared(path: &[u16], access: u32, share: u32) -> io::Result<Handle> {
+pub(crate) fn open_shared(path: &[u16], access: u32, share: u32) -> io::Result<Handle> {
     let mut wide: Vec<u16> = r"\\?\".encode_utf16().collect();
     wide.extend_from_slice(path);
     wide.push(0);
@@ -245,7 +258,7 @@ fn identity(handle: &Handle) -> io::Result<(u64, [u8; 16])> {
 }
 
 /// Final path of an open object, with the `\\?\` prefix removed. Reflects every redirection.
-fn final_path(handle: &Handle) -> io::Result<Vec<u16>> {
+pub(crate) fn final_path(handle: &Handle) -> io::Result<Vec<u16>> {
     let mut buffer = vec![0u16; 512];
     loop {
         // SAFETY: `buffer` has `buffer.len()` writable units. Flags 0 request the normalised DOS path.
@@ -296,10 +309,49 @@ fn filesystem(handle: &Handle) -> io::Result<Filesystem> {
     )))
 }
 
+/// Filesystem family of the volume holding an open root.
+pub fn filesystem_of(dir: &Dir) -> Result<Filesystem> {
+    Ok(filesystem(&dir.handle)?)
+}
+
+/// Everything known about one open object.
+pub(crate) struct Object {
+    pub meta: Meta,
+    pub links: u32,
+    /// Creation time, as FILETIME units.
+    pub created: i64,
+}
+
+pub(crate) fn object(handle: &Handle) -> io::Result<Object> {
+    let basic = basic_info(handle)?;
+    // SAFETY: all-zero is a valid value for these plain structures, and `query` fills them.
+    let mut tag: FILE_ATTRIBUTE_TAG_INFO = unsafe { mem::zeroed() };
+    query(handle, FileAttributeTagInfo, &mut tag)?;
+    // SAFETY: as above.
+    let mut standard: FILE_STANDARD_INFO = unsafe { mem::zeroed() };
+    query(handle, FileStandardInfo, &mut standard)?;
+    let (volume, id) = identity(handle)?;
+    Ok(Object {
+        meta: meta_of(Raw {
+            attributes: basic.FileAttributes,
+            tag: tag.ReparseTag,
+            size: standard.EndOfFile,
+            allocated: standard.AllocationSize,
+            modified: basic.LastWriteTime,
+            changed: basic.ChangeTime,
+            volume,
+            id,
+        }),
+        links: standard.NumberOfLinks,
+        created: basic.CreationTime,
+    })
+}
+
 /// One child as its directory lists it, before any open.
-struct Child {
-    name: Vec<u16>,
-    meta: Meta,
+pub(crate) struct Child {
+    pub name: Vec<u16>,
+    pub meta: Meta,
+    pub tag: u32,
 }
 
 /// List `handle`'s children (no `.` or `..`) from the start, calling `each` until it returns false.
@@ -359,6 +411,7 @@ fn read_listing(
                         volume,
                         id: info.FileId.Identifier,
                     }),
+                    tag: info.ReparsePointTag,
                 };
                 if !each(child)? {
                     return Ok(false);
@@ -370,6 +423,16 @@ fn read_listing(
             offset += info.NextEntryOffset as usize;
         }
     }
+}
+
+/// All children of an open directory handle.
+pub(crate) fn children(handle: &Handle, volume: u64) -> Result<Vec<Child>> {
+    let mut out = Vec::new();
+    read_listing(handle, volume, |child| {
+        out.push(child);
+        Ok(true)
+    })?;
+    Ok(out)
 }
 
 /// Open the scan root. It must be a local drive path, not a link, not a network share, and on a

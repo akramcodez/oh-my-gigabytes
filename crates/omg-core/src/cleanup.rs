@@ -12,7 +12,7 @@ use crate::{Entry, Index, index::unsigned, now, platform, policy};
 use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use std::sync::atomic::Ordering;
 use std::{
     collections::HashMap,
@@ -188,11 +188,42 @@ fn delete_support(root: &Path) -> Result<crate::capability::Support> {
             platform::linux::filesystem(&fd)?,
         ))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        let dir = platform::windows::open_root(root)?;
+        Ok(crate::capability::permanent_delete(
+            platform::windows::filesystem_of(&dir)?,
+        ))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = root;
         Ok(crate::capability::Support::Unsupported)
     }
+}
+
+/// Revalidate and remove one item: (entries removed, entries that could not be removed, whether a
+/// removed file had other names). Windows reads link counts here because its scan does not.
+#[cfg(target_os = "linux")]
+fn remove_target(
+    root: &platform::native::Dir,
+    root_path: &Path,
+    home: &Path,
+    item: &Marked,
+    kind: Kind,
+) -> std::result::Result<(u64, u64, bool), String> {
+    linux::delete_one(root, root_path, home, item, kind)
+        .map(|(removed, failed)| (removed, failed, false))
+}
+#[cfg(windows)]
+fn remove_target(
+    root: &platform::native::Dir,
+    root_path: &Path,
+    home: &Path,
+    item: &Marked,
+    kind: Kind,
+) -> std::result::Result<(u64, u64, bool), String> {
+    windows::delete_one(root, root_path, home, item, kind)
 }
 
 /// Path-level checks shared by the gate and the final revalidation.
@@ -611,10 +642,10 @@ impl Index {
             skipped: plan.denied.clone(),
             ..Default::default()
         };
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         {
-            let root_fd = platform::linux::root(&root)?;
-            let before = platform::linux::volume(&root_fd).ok().map(|v| v.1);
+            let root_dir = platform::native::open_root(&root)?;
+            let before = platform::native::volume(&root_dir).ok().map(|v| v.1);
             for (position, item) in plan.items.iter().enumerate() {
                 if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
                     report.cancelled = true;
@@ -650,14 +681,15 @@ impl Index {
                 // Read before anything changes: what the index attributes to this subtree.
                 let freed = self.freed(scan, &item.path)?;
                 before_mutate(&item.path);
-                match linux::delete_one(&root_fd, &root, home, item, kind) {
-                    Ok((removed, failed)) => {
+                match remove_target(&root_dir, &root, home, item, kind) {
+                    Ok((removed, failed, shared)) => {
                         report.removed_entries += removed;
                         report.failed_entries += failed;
                         if failed == 0 {
                             report.deleted.push(item.path.clone());
                             report.estimated_bytes += freed.allocated;
-                            report.needs_reconcile |= freed.survivors;
+                            // A removed name whose data has other names leaves totals to reconcile.
+                            report.needs_reconcile |= freed.survivors || shared;
                             self.record_target(operation, item.id, "deleted", "")?;
                             self.forget(scan, &item.path, &freed)?;
                             self.db
@@ -679,13 +711,13 @@ impl Index {
                     }
                 }
             }
-            let after = platform::linux::volume(&root_fd).ok().map(|v| v.1);
+            let after = platform::native::volume(&root_dir).ok().map(|v| v.1);
             report.observed_free_change = match (before, after) {
                 (Some(b), Some(a)) => Some(a as i64 - b as i64),
                 _ => None,
             };
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", windows)))]
         {
             let _ = (home, &root, &mut before_mutate, cancel);
             for item in &plan.items {
@@ -755,7 +787,7 @@ impl Index {
         )?;
         Ok(())
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     /// Drop a deleted subtree from the published index and subtract what it freed from ancestor
     /// totals, so the views stay truthful without a full rescan. Hard-linked data that survives
     /// outside the subtree stays counted (see [`Freed`]).
@@ -1008,6 +1040,353 @@ mod linux {
             }
         }
         (removed, failed)
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    //! Windows removal. Each object is opened without delete sharing, so no other program can
+    //! rename, replace or delete it while it is held. It is revalidated through that handle and
+    //! deleted through the same handle (`FileDispositionInfoEx`). The object checked is therefore
+    //! the object removed, even if its name is reused meanwhile.
+    use super::*;
+    use crate::platform::windows::{
+        BACKSLASH, Child, Dir, Handle, SHARE_ALL, children, final_path, join, object, open_shared,
+        same_path,
+    };
+    use std::{ffi::OsString, io, mem, os::windows::ffi::OsStringExt, ptr};
+    use windows_sys::Win32::{
+        Foundation::{
+            CloseHandle, ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND,
+            ERROR_SHARING_VIOLATION, HANDLE, LocalFree,
+        },
+        Security::{
+            Authorization::{GetSecurityInfo, SE_FILE_OBJECT},
+            EqualSid, GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+            TOKEN_QUERY, TOKEN_USER, TokenUser,
+        },
+        Storage::FileSystem::{
+            DELETE, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+            FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_LIST_DIRECTORY,
+            FILE_READ_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, FileDispositionInfoEx,
+            GetVolumeNameForVolumeMountPointW, READ_CONTROL, SetFileInformationByHandle,
+        },
+        System::Threading::{GetCurrentProcess, OpenProcessToken},
+    };
+
+    const MAX_ENTRIES: u64 = 5_000_000;
+    /// Others may keep reading and writing, but not rename or delete, while OMG holds the object.
+    const SHARE_NO_DELETE: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE;
+    const TAG_SYMLINK: u32 = 0xA000_000C;
+    const TAG_MOUNT_POINT: u32 = 0xA000_0003;
+
+    fn reason(error: &io::Error) -> String {
+        match error.raw_os_error().map(|code| code as u32) {
+            Some(ERROR_SHARING_VIOLATION) => "in use by another program; skipped".into(),
+            Some(ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND) => "no longer exists".into(),
+            Some(ERROR_ACCESS_DENIED) => "access denied".into(),
+            _ => error.to_string(),
+        }
+    }
+
+    /// Delete the object behind `handle`. POSIX semantics remove the name at once, even if another
+    /// program still reads the file. A folder must already be empty. The read-only attribute does
+    /// not block removal, as on Linux, where a file's mode does not govern unlinking it.
+    fn dispose(handle: &Handle) -> io::Result<()> {
+        let info = FILE_DISPOSITION_INFO_EX {
+            Flags: FILE_DISPOSITION_FLAG_DELETE
+                | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+                | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+        };
+        // SAFETY: `info` is a plain structure of the size passed, and the handle is live.
+        let ok = unsafe {
+            SetFileInformationByHandle(
+                handle.raw(),
+                FileDispositionInfoEx,
+                (&info as *const FILE_DISPOSITION_INFO_EX).cast(),
+                mem::size_of::<FILE_DISPOSITION_INFO_EX>() as u32,
+            )
+        };
+        if ok == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The current process's user, as a `TOKEN_USER` held in an 8-byte-aligned buffer.
+    struct CurrentUser(Vec<u64>);
+
+    impl CurrentUser {
+        fn load() -> io::Result<Self> {
+            struct Token(HANDLE);
+            impl Drop for Token {
+                fn drop(&mut self) {
+                    // SAFETY: the token handle came from `OpenProcessToken` and is closed only here.
+                    unsafe { CloseHandle(self.0) };
+                }
+            }
+            let mut raw: HANDLE = ptr::null_mut();
+            // SAFETY: the process pseudo-handle needs no closing; `raw` receives an owned token.
+            if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let token = Token(raw);
+            let mut needed = 0u32;
+            // SAFETY: a size query with no buffer; it only writes `needed`.
+            unsafe { GetTokenInformation(token.0, TokenUser, ptr::null_mut(), 0, &mut needed) };
+            let mut buffer = vec![0u64; (needed as usize).div_ceil(8).max(1)];
+            // SAFETY: the buffer is writable for its full length in bytes.
+            let ok = unsafe {
+                GetTokenInformation(
+                    token.0,
+                    TokenUser,
+                    buffer.as_mut_ptr().cast(),
+                    (buffer.len() * 8) as u32,
+                    &mut needed,
+                )
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self(buffer))
+        }
+        fn sid(&self) -> PSID {
+            // SAFETY: the buffer holds a `TOKEN_USER` written by `GetTokenInformation`.
+            unsafe { (*self.0.as_ptr().cast::<TOKEN_USER>()).User.Sid }
+        }
+    }
+
+    /// Whether the object's owner is the current user. Needs `READ_CONTROL` on the handle.
+    fn owned_by(handle: &Handle, user: &CurrentUser) -> io::Result<bool> {
+        let mut owner: PSID = ptr::null_mut();
+        let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
+        // SAFETY: the out-pointers are valid; only the owner and its descriptor are requested.
+        let status = unsafe {
+            GetSecurityInfo(
+                handle.raw(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut owner,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != 0 {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        // SAFETY: `owner` points into `descriptor`, which stays allocated until `LocalFree`.
+        let same = unsafe { EqualSid(owner, user.sid()) } != 0;
+        // SAFETY: `descriptor` was allocated by `GetSecurityInfo` and is freed once.
+        unsafe { LocalFree(descriptor) };
+        Ok(same)
+    }
+
+    /// A junction to another volume's root is a volume mount point; removing it unmounts a volume.
+    fn is_volume_mount(path: &[u16]) -> bool {
+        if path.len() > 240 {
+            // Too long for this query: treat as a mount point and refuse.
+            return true;
+        }
+        let mut wide = path.to_vec();
+        if wide.last() != Some(&BACKSLASH) {
+            wide.push(BACKSLASH);
+        }
+        wide.push(0);
+        let mut name = [0u16; 64];
+        // SAFETY: `wide` is NUL-terminated; `name` is writable for its length.
+        let volume = unsafe {
+            GetVolumeNameForVolumeMountPointW(wide.as_ptr(), name.as_mut_ptr(), name.len() as u32)
+        };
+        volume != 0
+    }
+
+    fn with_name(path: &[u16], name: &[u16]) -> Vec<u16> {
+        let mut out = path.to_vec();
+        if out.last() != Some(&BACKSLASH) {
+            out.push(BACKSLASH);
+        }
+        out.extend_from_slice(name);
+        out
+    }
+
+    /// The opened object is still the listed child, at the listed path.
+    fn still_listed(handle: &Handle, child: &Child, path: &[u16]) -> bool {
+        object(handle).is_ok_and(|found| found.meta.identity == child.meta.identity)
+            && final_path(handle).is_ok_and(|actual| same_path(&actual, path))
+    }
+
+    /// Revalidate and delete one item. Ok((removed, failed, shared links)) or Err(reason skipped).
+    pub fn delete_one(
+        root: &Dir,
+        root_path: &Path,
+        home: &Path,
+        item: &Marked,
+        kind: Kind,
+    ) -> std::result::Result<(u64, u64, bool), String> {
+        let recorded = item.birth.as_deref().ok_or(UNRECORDED_BIRTH)?;
+        let relative = platform::path(&item.path).map_err(|e| e.to_string())?;
+        let wanted = join(root.path(), &relative).map_err(|e| e.to_string())?;
+        let directory = item.kind == "directory";
+        let access = DELETE
+            | READ_CONTROL
+            | FILE_READ_ATTRIBUTES
+            | if directory { FILE_LIST_DIRECTORY } else { 0 };
+        let handle = open_shared(&wanted, access, SHARE_NO_DELETE).map_err(|e| reason(&e))?;
+        let found = object(&handle).map_err(|e| e.to_string())?;
+        // Both must match: identity proves the object, creation time proves it was not recreated.
+        if found.meta.identity != item.identity || found.created.to_string() != recorded {
+            return Err("replaced by a different file since it was added; skipped".into());
+        }
+        if !final_path(&handle).is_ok_and(|actual| same_path(&actual, &wanted)) {
+            return Err("moved or redirected since it was checked; skipped".into());
+        }
+        if let Some(why) = found.meta.restricted {
+            return Err(format!(
+                "{why}; deleting it would also delete the cloud copy"
+            ));
+        }
+        let user = CurrentUser::load().map_err(|e| e.to_string())?;
+        if !owned_by(&handle, &user).map_err(|e| e.to_string())? {
+            return Err("not owned by you".into());
+        }
+        let fresh = platform::entry_from_meta(&relative, &found.meta);
+        if fresh.kind != item.kind {
+            return Err("type changed since it was added; skipped".into());
+        }
+        target_checks(root_path, home, &fresh)?;
+        if !directory {
+            dispose(&handle).map_err(|e| reason(&e))?;
+            return Ok((1, 0, found.links > 1));
+        }
+        let volume = found.meta.volume;
+        let mut seen = 0u64;
+        check_tree(
+            &handle, &wanted, root_path, &relative, volume, kind, &mut seen,
+        )?;
+        let (removed, failed, shared) = remove_tree(&handle, &wanted, volume);
+        if failed == 0 {
+            // The folder is empty now; its own handle removes it.
+            dispose(&handle).map_err(|e| reason(&e))?;
+            return Ok((removed + 1, 0, shared));
+        }
+        Ok((removed, failed, shared))
+    }
+
+    /// Fresh descendant check right before deletion: no sensitive or protected names, no cloud
+    /// placeholders, no mount points or unknown links.
+    fn check_tree(
+        handle: &Handle,
+        path: &[u16],
+        root: &Path,
+        relative: &Path,
+        volume: u64,
+        kind: Kind,
+        seen: &mut u64,
+    ) -> std::result::Result<(), String> {
+        let list = children(handle, volume)
+            .map_err(|_| "a folder inside could not be read".to_string())?;
+        for child in list {
+            *seen += 1;
+            if *seen > MAX_ENTRIES {
+                return Err("too many entries to verify safely".into());
+            }
+            let name = OsString::from_wide(&child.name);
+            let child_relative = relative.join(&name);
+            let child_path = with_name(path, &child.name);
+            let shown = child_relative.display();
+            if policy::always_sensitive(&name.to_string_lossy()) {
+                return Err(format!("contains a sensitive item ({shown})"));
+            }
+            if let Some(why) = child.meta.restricted {
+                return Err(format!("contains a {why} ({shown}); skipped"));
+            }
+            if child.meta.kind == "symlink" {
+                // Links are removed as themselves, never followed. Only plain links qualify.
+                match child.tag {
+                    TAG_SYMLINK => {}
+                    TAG_MOUNT_POINT if !is_volume_mount(&child_path) => {}
+                    TAG_MOUNT_POINT => {
+                        return Err(format!("contains a mount point ({shown}); skipped"));
+                    }
+                    _ => return Err(format!("contains an unsupported link ({shown}); skipped")),
+                }
+            }
+            let mut entry = platform::entry_from_meta(&child_relative, &child.meta);
+            if entry.kind == "symlink" {
+                entry.kind = "file".into();
+            }
+            // Caches and stale repositories may legitimately contain `.git`, keys or databases
+            // (package contents, the repository itself); ordinary folders may not.
+            if kind == Kind::Plain
+                && let Some(why) = policy::hard_protection(root, &entry)
+            {
+                return Err(format!("contains a protected item ({shown}): {why}"));
+            }
+            if child.meta.kind == "directory" {
+                let sub = open_shared(
+                    &child_path,
+                    FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
+                    SHARE_ALL,
+                )
+                .map_err(|_| "a folder inside could not be opened".to_string())?;
+                if !still_listed(&sub, &child, &child_path) {
+                    return Err("a folder inside changed during the check; skipped".into());
+                }
+                check_tree(&sub, &child_path, root, &child_relative, volume, kind, seen)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Remove everything below `handle`, bottom-up, each object through its own verified handle.
+    /// Returns (removed, failed, whether a removed file had other names).
+    fn remove_tree(handle: &Handle, path: &[u16], volume: u64) -> (u64, u64, bool) {
+        let Ok(list) = children(handle, volume) else {
+            return (0, 1, false);
+        };
+        let (mut removed, mut failed, mut shared) = (0, 0, false);
+        for child in list {
+            let child_path = with_name(path, &child.name);
+            let directory = child.meta.kind == "directory";
+            let access =
+                DELETE | FILE_READ_ATTRIBUTES | if directory { FILE_LIST_DIRECTORY } else { 0 };
+            let Ok(sub) = open_shared(&child_path, access, SHARE_NO_DELETE) else {
+                failed += 1;
+                continue;
+            };
+            let Ok(found) = object(&sub) else {
+                failed += 1;
+                continue;
+            };
+            if found.meta.identity != child.meta.identity
+                || !final_path(&sub).is_ok_and(|actual| same_path(&actual, &child_path))
+            {
+                failed += 1;
+                continue;
+            }
+            if directory {
+                let (r, f, s) = remove_tree(&sub, &child_path, volume);
+                removed += r;
+                failed += f;
+                shared |= s;
+                if f == 0 && dispose(&sub).is_ok() {
+                    removed += 1;
+                } else if f == 0 {
+                    failed += 1;
+                }
+            } else {
+                shared |= found.links > 1;
+                if dispose(&sub).is_ok() {
+                    removed += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+        }
+        (removed, failed, shared)
     }
 }
 

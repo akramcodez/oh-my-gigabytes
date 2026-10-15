@@ -69,17 +69,18 @@ impl Filesystem {
 
 /// Permanent deletion (decision D15) on a filesystem. Owner decision 2026-10-15: Btrfs is allowed
 /// as `DevelopmentUnqualified`, because the owner's home is Btrfs. Btrfs shared extents and
-/// snapshots mean freed space may be less than shown. Unknown filesystems are refused. Windows
-/// volumes are refused until the Windows deletion milestone (see `docs/windows-implementation-plan.md`).
+/// snapshots mean freed space may be less than shown. Unknown filesystems are refused. On Windows
+/// only NTFS is offered: it has stable 128-bit file ids and delete-by-handle. ReFS is untested and
+/// FAT32/exFAT have no stable file ids, so both are refused.
 pub fn permanent_delete(filesystem: Filesystem) -> Support {
     if !crate::PERMANENT_DELETE {
         return Support::Unsupported;
     }
     match filesystem {
-        Filesystem::Ext | Filesystem::Tmpfs | Filesystem::Btrfs => Support::DevelopmentUnqualified,
-        Filesystem::Ntfs | Filesystem::Refs | Filesystem::Fat | Filesystem::Other => {
-            Support::Unsupported
+        Filesystem::Ext | Filesystem::Tmpfs | Filesystem::Btrfs | Filesystem::Ntfs => {
+            Support::DevelopmentUnqualified
         }
+        Filesystem::Refs | Filesystem::Fat | Filesystem::Other => Support::Unsupported,
     }
 }
 
@@ -89,9 +90,9 @@ pub fn os_trash() -> Support {
 }
 
 /// Permanent-delete support of this platform as reported by `omg doctor`, the status JSON and the
-/// release manifest. Cleanup code exists only on Linux; other platforms are unsupported.
+/// release manifest. Cleanup code exists on Linux and Windows; other platforms are unsupported.
 pub fn platform_permanent_delete() -> Support {
-    if crate::PERMANENT_DELETE && cfg!(target_os = "linux") {
+    if crate::PERMANENT_DELETE && cfg!(any(target_os = "linux", windows)) {
         Support::DevelopmentUnqualified
     } else {
         Support::Unsupported
@@ -117,6 +118,23 @@ mod tests {
             permanent_delete(Filesystem::from_magic(0xdead_beef)),
             Support::Unsupported
         );
+    }
+
+    #[test]
+    fn only_ntfs_is_offered_among_windows_volumes() {
+        let allowed = if crate::PERMANENT_DELETE {
+            Support::DevelopmentUnqualified
+        } else {
+            Support::Unsupported
+        };
+        assert_eq!(permanent_delete(Filesystem::from_name("NTFS")), allowed);
+        for name in ["ReFS", "FAT32", "exFAT", "FAT", "NFS"] {
+            assert_eq!(
+                permanent_delete(Filesystem::from_name(name)),
+                Support::Unsupported,
+                "{name}"
+            );
+        }
     }
 
     #[test]

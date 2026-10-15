@@ -1,4 +1,5 @@
-//! Native Windows scanning (docs/windows-implementation-plan.md, W01/W02). Runs only on Windows.
+//! Native Windows scanning and deletion (docs/windows-implementation-plan.md, W01, W02, W08).
+//! Runs only on Windows.
 #![cfg(windows)]
 use omg_core::{Index, ScanOptions, model::Entry, platform, scanner};
 use std::{
@@ -217,29 +218,232 @@ fn a_link_as_the_scan_root_is_refused() {
     assert!(error.to_string().contains("link or mount point"), "{error}");
 }
 
-/// Saving a path in OMG Trash is allowed and changes nothing on disk. Permanent deletion is not
-/// available on Windows yet, so reviewing a deletion must be refused and leave the file in place.
-#[test]
-fn permanent_deletion_is_refused_and_changes_nothing() {
-    let home = tempfile::tempdir().unwrap();
-    let root = home.path();
-    fs::create_dir(root.join("scratch")).unwrap();
-    fs::write(root.join("scratch/a.bin"), b"keep me").unwrap();
-    let state = state();
-    let mut index = Index::open(state.path()).unwrap();
-    scan(&mut index, root);
-    // A profile whose home folder is a Git repository (the owner's is) refuses saving under the
-    // policy's repository rule. Either refusal is acceptable here; the file must stay untouched.
-    match index.mark(b"scratch", 4096, root) {
-        Ok(_) => {
-            let id = index.marked().unwrap()[0].id;
-            let error = index.prepare_delete(&[id], root).unwrap_err();
-            assert!(error.to_string().contains("not available"), "{error}");
+/// Permanent deletion on NTFS (docs/windows-implementation-plan.md, W08): the same safety cases as
+/// the Linux suite in tests/cleanup.rs.
+#[cfg(feature = "permanent-delete")]
+mod deletion {
+    use super::*;
+    use omg_core::cleanup::DeleteReport;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    /// A scratch folder with no Git repository above it. A home folder that is itself a repository
+    /// (the owner's is) makes the repository rule refuse every plain folder below it, so such a run
+    /// is skipped with a message instead of failing.
+    fn sandbox() -> Option<tempfile::TempDir> {
+        let dir = tempfile::tempdir().unwrap();
+        if dir
+            .path()
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| ancestor.join(".git").exists())
+        {
+            eprintln!(
+                "skipped: {} is inside a Git repository; set TMP to a folder outside one",
+                dir.path().display()
+            );
+            return None;
         }
-        Err(error) => assert!(
-            error.to_string().contains("active Git repository"),
-            "{error}"
-        ),
+        Some(dir)
     }
-    assert_eq!(fs::read(root.join("scratch/a.bin")).unwrap(), b"keep me");
+
+    fn id_of(index: &Index, path: &[u8]) -> i64 {
+        index
+            .marked()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.path == path)
+            .unwrap()
+            .id
+    }
+
+    fn delete(index: &mut Index, ids: &[i64], home: &Path) -> DeleteReport {
+        let plan = index.prepare_delete(ids, home).unwrap();
+        index
+            .delete_permanently(&plan, &plan.fingerprint.clone(), home)
+            .unwrap()
+    }
+
+    fn junction(link: &Path, target: &Path) {
+        let made = Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
+    }
+
+    #[test]
+    fn confirmed_folder_and_file_are_deleted_including_read_only_contents() {
+        let Some(dir) = sandbox() else { return };
+        let h = dir.path();
+        fs::create_dir_all(h.join("scratch/nested")).unwrap();
+        fs::write(h.join("scratch/a.bin"), vec![1u8; 5000]).unwrap();
+        fs::write(h.join("scratch/nested/b.txt"), b"b").unwrap();
+        let read_only = h.join("scratch/nested/read-only.txt");
+        fs::write(&read_only, b"ro").unwrap();
+        let mut permissions = fs::metadata(&read_only).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&read_only, permissions).unwrap();
+        fs::write(h.join("single.log"), b"log").unwrap();
+        fs::write(h.join("keep.txt"), b"keep").unwrap();
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, h);
+        index.mark(b"scratch", 4096, h).unwrap();
+        index.mark(b"single.log", 3, h).unwrap();
+        let ids = [id_of(&index, b"scratch"), id_of(&index, b"single.log")];
+        let report = delete(&mut index, &ids, h);
+        assert_eq!(report.deleted.len(), 2, "{report:?}");
+        assert!(!h.join("scratch").exists());
+        assert!(!h.join("single.log").exists());
+        assert_eq!(fs::read(h.join("keep.txt")).unwrap(), b"keep");
+        assert!(index.entry(b"scratch").unwrap().is_none());
+        assert!(index.marked().unwrap().is_empty());
+    }
+
+    #[test]
+    fn replaced_file_is_skipped_and_the_replacement_survives() {
+        let Some(dir) = sandbox() else { return };
+        let h = dir.path();
+        fs::write(h.join("swap-me"), b"original").unwrap();
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, h);
+        index.mark(b"swap-me", 8, h).unwrap();
+        // Same name, new object. NTFS tunnelling may even restore the old creation time, so the
+        // file id is what must catch this.
+        fs::remove_file(h.join("swap-me")).unwrap();
+        fs::write(h.join("swap-me"), b"new important data").unwrap();
+        let id = id_of(&index, b"swap-me");
+        let report = delete(&mut index, &[id], h);
+        assert!(report.deleted.is_empty(), "{report:?}");
+        assert!(report.skipped[0].1.contains("replaced"), "{report:?}");
+        assert_eq!(fs::read(h.join("swap-me")).unwrap(), b"new important data");
+    }
+
+    #[test]
+    fn junction_inside_is_removed_but_its_target_survives() {
+        let Some(dir) = sandbox() else { return };
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), b"outside").unwrap();
+        let h = dir.path();
+        fs::create_dir(h.join("scratch")).unwrap();
+        fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+        junction(&h.join("scratch").join("link"), outside.path());
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, h);
+        index.mark(b"scratch", 4096, h).unwrap();
+        let id = id_of(&index, b"scratch");
+        let report = delete(&mut index, &[id], h);
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+        assert!(!h.join("scratch").exists());
+        assert_eq!(
+            fs::read(outside.path().join("secret.txt")).unwrap(),
+            b"outside"
+        );
+    }
+
+    #[test]
+    fn folder_swapped_for_a_junction_never_leads_outside() {
+        let Some(dir) = sandbox() else { return };
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("secret.txt"), b"outside").unwrap();
+        let h = dir.path().to_path_buf();
+        fs::create_dir(h.join("scratch")).unwrap();
+        fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, &h);
+        index.mark(b"scratch", 4096, &h).unwrap();
+        let plan = index
+            .prepare_delete(&[id_of(&index, b"scratch")], &h)
+            .unwrap();
+        let report = index
+            .delete_with_control(&plan, &plan.fingerprint, &h, None, |path| {
+                if path == b"scratch" {
+                    fs::remove_dir_all(h.join("scratch")).unwrap();
+                    junction(&h.join("scratch"), outside.path());
+                }
+            })
+            .unwrap();
+        assert!(report.deleted.is_empty(), "{report:?}");
+        assert_eq!(
+            fs::read(outside.path().join("secret.txt")).unwrap(),
+            b"outside"
+        );
+    }
+
+    #[test]
+    fn protected_child_inserted_after_validation_stops_the_delete() {
+        let Some(dir) = sandbox() else { return };
+        let h = dir.path().to_path_buf();
+        fs::create_dir(h.join("scratch")).unwrap();
+        fs::write(h.join("scratch/a.bin"), b"data").unwrap();
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, &h);
+        index.mark(b"scratch", 4096, &h).unwrap();
+        let plan = index
+            .prepare_delete(&[id_of(&index, b"scratch")], &h)
+            .unwrap();
+        let report = index
+            .delete_with_control(&plan, &plan.fingerprint, &h, None, |path| {
+                if path == b"scratch" {
+                    fs::create_dir(h.join("scratch/.ssh")).unwrap();
+                    fs::write(h.join("scratch/.ssh/id_ed25519"), b"key").unwrap();
+                }
+            })
+            .unwrap();
+        assert!(report.deleted.is_empty(), "{report:?}");
+        assert_eq!(fs::read(h.join("scratch/.ssh/id_ed25519")).unwrap(), b"key");
+        assert_eq!(fs::read(h.join("scratch/a.bin")).unwrap(), b"data");
+    }
+
+    #[test]
+    fn file_held_open_without_delete_sharing_is_skipped() {
+        let Some(dir) = sandbox() else { return };
+        let h = dir.path();
+        fs::write(h.join("busy.bin"), b"open elsewhere").unwrap();
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, h);
+        index.mark(b"busy.bin", 14, h).unwrap();
+        // Another program holds it and allows reading only (no delete sharing).
+        let holder = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(h.join("busy.bin"))
+            .unwrap();
+        let id = id_of(&index, b"busy.bin");
+        let report = delete(&mut index, &[id], h);
+        drop(holder);
+        assert!(report.deleted.is_empty(), "{report:?}");
+        assert!(report.skipped[0].1.contains("in use"), "{report:?}");
+        assert_eq!(fs::read(h.join("busy.bin")).unwrap(), b"open elsewhere");
+    }
+
+    #[test]
+    fn removing_one_hard_link_name_keeps_the_data_and_flags_totals() {
+        let Some(dir) = sandbox() else { return };
+        let h = dir.path();
+        fs::create_dir(h.join("scratch")).unwrap();
+        fs::create_dir(h.join("keep")).unwrap();
+        fs::write(h.join("keep/data.bin"), vec![7u8; 8192]).unwrap();
+        fs::hard_link(h.join("keep/data.bin"), h.join("scratch/alias.bin")).unwrap();
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, h);
+        index.mark(b"scratch", 8192, h).unwrap();
+        let id = id_of(&index, b"scratch");
+        let report = delete(&mut index, &[id], h);
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+        assert!(report.needs_reconcile, "{report:?}");
+        assert_eq!(fs::read(h.join("keep/data.bin")).unwrap().len(), 8192);
+    }
 }
