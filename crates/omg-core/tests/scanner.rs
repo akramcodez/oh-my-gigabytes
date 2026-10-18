@@ -54,7 +54,12 @@ fn metadata_accounting_reconciliation_and_exclusions() {
     let invalid = fixture
         .path()
         .join(std::ffi::OsStr::from_bytes(b"name-\xff"));
-    fs::write(&invalid, b"native").unwrap();
+    // APFS and HFS+ only accept valid UTF-8 names; Linux accepts any bytes except NUL and `/`.
+    let raw_names = fs::write(&invalid, b"native").is_ok();
+    assert!(
+        raw_names || cfg!(target_os = "macos"),
+        "Linux stores raw bytes"
+    );
     let mut index = Index::open(state.path()).unwrap();
     let first = scan(&mut index, fixture.path());
     assert_eq!(first.state, "complete");
@@ -62,7 +67,11 @@ fn metadata_accounting_reconciliation_and_exclusions() {
     let entries = index.entries(1000, 0).unwrap();
     assert!(!entries.iter().any(|e| e.path == b".ssh/secret"));
     assert!(!entries.iter().any(|e| e.path == b"link/artifact"));
-    assert!(entries.iter().any(|e| e.path == b"name-\xff"));
+    assert_eq!(
+        entries.iter().any(|e| e.path == b"name-\xff"),
+        raw_names,
+        "a raw-byte name is recorded exactly when the filesystem allowed it"
+    );
     let artifact = entries
         .iter()
         .find(|e| e.path == b"nested/artifact")
