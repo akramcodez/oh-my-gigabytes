@@ -355,13 +355,19 @@ pub mod linux {
             Mode::empty(),
             ResolveFlags::NO_SYMLINKS,
         )
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "root acquisition denied: missing, inaccessible, redirected or unsupported openat2"
-            )
+        .map_err(|error| {
+            if error == rustix::io::Errno::NOSYS {
+                anyhow::anyhow!("openat2 is unavailable: omg needs Linux 5.6 or newer")
+            } else {
+                anyhow::anyhow!(
+                    "root acquisition denied: missing, inaccessible, redirected or unsupported openat2"
+                )
+            }
         })?;
         if filesystem(&fd)? == crate::capability::Filesystem::Other {
-            bail!("unsupported filesystem profile; use a local ext-family/tmpfs/Btrfs Linux root");
+            bail!(
+                "unsupported filesystem profile; use a local ext-family, XFS, tmpfs or Btrfs Linux root"
+            );
         }
         Ok(fd)
     }
@@ -391,13 +397,16 @@ pub mod linux {
             FileType::Symlink => "symlink",
             _ => "special",
         };
+        // `st_nlink` is u64 on x86_64 and u32 on aarch64.
+        #[allow(clippy::unnecessary_cast)]
+        let links = stat.st_nlink as u64;
         Meta {
             identity: format!("{}:{}", stat.st_dev, stat.st_ino),
             kind,
             volume: stat.st_dev,
             apparent: stat.st_size.max(0) as u64,
             allocated: (stat.st_blocks.max(0) as u64).saturating_mul(512),
-            links: stat.st_nlink,
+            links,
             modified_ns: stat
                 .st_mtime
                 .saturating_mul(1_000_000_000)
@@ -477,6 +486,7 @@ pub mod linux {
             assert_eq!(Filesystem::from_magic(0xef53), Filesystem::Ext);
             assert_eq!(Filesystem::from_magic(0x0102_1994), Filesystem::Tmpfs);
             assert_eq!(Filesystem::from_magic(0x9123_683e), Filesystem::Btrfs);
+            assert_eq!(Filesystem::from_magic(0x5846_5342), Filesystem::Xfs);
             assert_eq!(Filesystem::from_magic(0xdead_beef), Filesystem::Other);
         }
     }

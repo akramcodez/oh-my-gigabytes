@@ -234,7 +234,7 @@ fn run() -> Result<()> {
         } else if cfg!(windows) {
             "(Windows: NTFS only; ReFS and FAT32 refused; cloud placeholders never deleted)"
         } else {
-            "(Linux: ext-family, tmpfs, Btrfs; unknown filesystems refused)"
+            "(Linux: ext-family, XFS, tmpfs, Btrfs; unknown filesystems refused)"
         };
         println!(
             "permanent delete: {} {scope}; OS Trash: {}; cloud/FUSE/remote profiles excluded",

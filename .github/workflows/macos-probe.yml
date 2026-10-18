@@ -35,7 +35,7 @@ jobs:
       - name: Build probe
         run: cc -Wall -Wextra -o "$RUNNER_TEMP/probe" spikes/macos-probe/probe.c
       - name: Probe open flags, stat fields and filesystems
-        run: '"$RUNNER_TEMP/probe" / /System/Volumes/Data "$HOME" "$RUNNER_TEMP" /Volumes'
+        run: '"$RUNNER_TEMP/probe" / /System/Volumes/Data /Users "$HOME" "$RUNNER_TEMP" /tmp /var/tmp /private/tmp /Volumes'
       - name: Probe disk images
         run: bash spikes/macos-probe/images.sh "$RUNNER_TEMP/probe"
       - name: SSH session for debugging

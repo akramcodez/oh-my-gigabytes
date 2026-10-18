@@ -214,6 +214,16 @@ static void open_behaviour(const char *parent) {
 
 static void fs_report(const char *path) {
     printf("[filesystem] %s\n", path);
+#ifdef O_NOFOLLOW_ANY
+    /* The scanner opens its root by absolute path with this flag, so the usual locations matter. */
+    int rfd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW_ANY);
+    if (rfd >= 0) {
+        printf("  open as scan root with O_NOFOLLOW_ANY: OK\n");
+        close(rfd);
+    } else {
+        printf("  open as scan root with O_NOFOLLOW_ANY: errno %d (%s)\n", errno, strerror(errno));
+    }
+#endif
     struct statfs sf;
     if (statfs(path, &sf) != 0) {
         printf("  statfs failed: errno %d (%s)\n", errno, strerror(errno));

@@ -12,7 +12,9 @@ run_image() {
     local img="$work/$tag.dmg" mnt="$work/mnt-$tag"
     echo "::group::hdiutil $fs"
     mkdir -p "$mnt"
-    if ! hdiutil create -size 100m -fs "$fs" -volname "OMG$tag" "$img"; then
+    # hdiutil can report "Resource busy" right after a detach; one retry is enough.
+    if ! hdiutil create -size 100m -fs "$fs" -volname "OMG$tag" "$img" \
+        && ! { sleep 3; hdiutil create -size 100m -fs "$fs" -volname "OMG$tag" "$img"; }; then
         echo "image creation failed for '$fs'"
         echo "::endgroup::"
         return

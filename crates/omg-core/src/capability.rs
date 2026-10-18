@@ -34,6 +34,8 @@ pub enum Filesystem {
     Ext,
     Tmpfs,
     Btrfs,
+    /// XFS (the default on RHEL-family systems). Scanning only; permanent deletion is not offered.
+    Xfs,
     /// Windows NTFS. Scanning is supported; permanent deletion is not, until the Windows milestone.
     Ntfs,
     /// Windows ReFS. Scanning only.
@@ -46,6 +48,7 @@ pub enum Filesystem {
 const EXT_SUPER_MAGIC: u64 = 0xef53;
 const TMPFS_MAGIC: u64 = 0x0102_1994;
 const BTRFS_SUPER_MAGIC: u64 = 0x9123_683e;
+const XFS_SUPER_MAGIC: u64 = 0x5846_5342;
 
 impl Filesystem {
     pub fn from_magic(magic: u64) -> Self {
@@ -53,6 +56,7 @@ impl Filesystem {
             EXT_SUPER_MAGIC => Filesystem::Ext,
             TMPFS_MAGIC => Filesystem::Tmpfs,
             BTRFS_SUPER_MAGIC => Filesystem::Btrfs,
+            XFS_SUPER_MAGIC => Filesystem::Xfs,
             _ => Filesystem::Other,
         }
     }
@@ -80,7 +84,9 @@ pub fn permanent_delete(filesystem: Filesystem) -> Support {
         Filesystem::Ext | Filesystem::Tmpfs | Filesystem::Btrfs | Filesystem::Ntfs => {
             Support::DevelopmentUnqualified
         }
-        Filesystem::Refs | Filesystem::Fat | Filesystem::Other => Support::Unsupported,
+        Filesystem::Xfs | Filesystem::Refs | Filesystem::Fat | Filesystem::Other => {
+            Support::Unsupported
+        }
     }
 }
 
@@ -114,6 +120,11 @@ mod tests {
         for magic in [EXT_SUPER_MAGIC, TMPFS_MAGIC, BTRFS_SUPER_MAGIC] {
             assert_eq!(permanent_delete(Filesystem::from_magic(magic)), allowed);
         }
+        // XFS can be scanned but is not offered for deletion.
+        assert_eq!(
+            permanent_delete(Filesystem::from_magic(XFS_SUPER_MAGIC)),
+            Support::Unsupported
+        );
         assert_eq!(
             permanent_delete(Filesystem::from_magic(0xdead_beef)),
             Support::Unsupported

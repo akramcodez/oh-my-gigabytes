@@ -22,7 +22,8 @@ function reportedCleanup(binary) {
   }
 }
 
-function assemble({ binary, target, version, publicKey, privateKey, out, variant = 'full', checkBinary = true }) {
+// The default variant is analysis-only: a release that offers permanent delete must ask for it by name.
+function assemble({ binary, target, version, publicKey, privateKey, out, variant = 'analysis-only', checkBinary = true }) {
   if (!['full', 'analysis-only'].includes(variant)) throw new Error('Unknown variant (use full or analysis-only)');
   if (!TARGETS[target]) throw new Error('Unsupported target');
   if (!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(version)) throw new Error('Invalid release version');
@@ -106,7 +107,7 @@ if (require.main === module) {
       variant: { type: 'string' },
     } });
     for (const field of ['binary', 'target', 'version', 'public-key', 'private-key', 'out']) if (!values[field]) throw new Error(`--${field} required`);
-    process.stdout.write(JSON.stringify(assemble({ ...values, variant: values.variant || 'full', publicKey: values['public-key'], privateKey: values['private-key'] })) + '\n');
+    process.stdout.write(JSON.stringify(assemble({ ...values, variant: values.variant || 'analysis-only', publicKey: values['public-key'], privateKey: values['private-key'] })) + '\n');
   } catch (error) { process.stderr.write(`omg release: ${error.message}\n`); process.exitCode = 1; }
 }
 module.exports = { assemble };

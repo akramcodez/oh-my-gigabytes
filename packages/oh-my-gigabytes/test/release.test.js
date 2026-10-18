@@ -27,8 +27,9 @@ function fixture(t) {
   const target = 'linux-x64-gnu';
   const version = '0.1.0';
   const out = path.join(directory, 'release');
-  // The fixture binary is not executable, so the doctor cross-check is skipped for it.
-  assemble({ binary, target, version, publicKey: publicFile, privateKey: privateFile, out, checkBinary: false });
+  // The fixture binary is not executable, so the doctor cross-check is skipped for it. The shared
+  // fixture is a full build so the tests below can exercise the delete capability claim.
+  assemble({ binary, target, version, publicKey: publicFile, privateKey: privateFile, out, variant: 'full', checkBinary: false });
   const artifact = path.join(out, `oh-my-gigabytes-${target}`, 'artifact');
   const trust = JSON.parse(fs.readFileSync(path.join(out, 'oh-my-gigabytes/trust.json'), 'utf8'));
   return { directory, publicKey, privateKey, publicFile, privateFile, binary, target, version, out, artifact, trust };
@@ -51,6 +52,15 @@ test('analysis-only variant signs cleanup as disabled and verifies', t => {
   const trust = JSON.parse(fs.readFileSync(path.join(out, 'oh-my-gigabytes/trust.json'), 'utf8'));
   const result = verifyArtifact(artifact, trust, { target: f.target, version: f.version });
   assert.equal(result.manifest.capabilities.cleanup, 'disabled');
+});
+
+test('a release assembled without naming a variant is analysis-only', t => {
+  const f = fixture(t);
+  const out = path.join(f.directory, 'release-default');
+  assemble({ binary: f.binary, target: f.target, version: f.version, publicKey: f.publicFile, privateKey: f.privateFile, out, checkBinary: false });
+  const artifact = path.join(out, `oh-my-gigabytes-${f.target}`, 'artifact');
+  const trust = JSON.parse(fs.readFileSync(path.join(out, 'oh-my-gigabytes/trust.json'), 'utf8'));
+  assert.equal(verifyArtifact(artifact, trust, { target: f.target, version: f.version }).manifest.capabilities.cleanup, 'disabled');
 });
 
 test('a real build cannot be signed with a capability its own doctor does not report', t => {
@@ -150,8 +160,9 @@ test('offline npm install with scripts disabled runs verified native binary and 
   const f = fixture(t);
   const nativeBinary = path.resolve(__dirname, '../../../target/debug/omg');
   const nativeOut = path.join(f.directory, 'real-release');
+  // target/debug/omg is the default (full) build, so it must be signed as the full variant.
   assemble({ binary: nativeBinary, target: hostTarget(), version: f.version,
-    publicKey: f.publicFile, privateKey: f.privateFile, out: nativeOut });
+    publicKey: f.publicFile, privateKey: f.privateFile, out: nativeOut, variant: 'full' });
   const pkg = path.join(nativeOut, 'offline-oh-my-gigabytes');
   const prefix = path.join(f.directory, 'prefix with spaces');
   const invoke = (command, args, options = {}) => {

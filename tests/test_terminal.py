@@ -1,7 +1,9 @@
 """Native Linux PTY smoke test of the built Rust CLI; no user data scanned."""
 import os
 import pty
+import fcntl
 import select
+import struct
 import subprocess
 import tempfile
 import termios
@@ -22,7 +24,8 @@ class TerminalSmokeTests(unittest.TestCase):
             state = Path(directory) / "state"
             subprocess.run([str(binary), "--state-dir", str(state), "scan", "--root", str(root)], check=True, capture_output=True)
             master, slave = pty.openpty()
-            termios.tcsetwinsize(slave, (24, 80))
+            # termios.tcsetwinsize needs Python 3.11; Ubuntu 22.04 ships 3.10.
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
             before = termios.tcgetattr(slave)
             env = dict(os.environ, TERM="xterm-256color")
             process = subprocess.Popen([str(binary), "--state-dir", str(state)], stdin=slave, stdout=slave, stderr=slave, env=env)
