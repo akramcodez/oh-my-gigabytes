@@ -445,11 +445,11 @@ pub mod linux {
             modified_ns: stat
                 .st_mtime
                 .saturating_mul(1_000_000_000)
-                .saturating_add(stat.st_mtime_nsec as i64),
+                .saturating_add(stat.st_mtime_nsec),
             changed_ns: stat
                 .st_ctime
                 .saturating_mul(1_000_000_000)
-                .saturating_add(stat.st_ctime_nsec as i64),
+                .saturating_add(stat.st_ctime_nsec),
             restricted: None,
         }
     }
@@ -546,10 +546,7 @@ pub mod macos {
         fd::OwnedFd,
         fs::{self, AtFlags, Dir as Listing, FileType, Mode, OFlags},
     };
-    use std::{
-        ffi::OsString,
-        os::unix::ffi::{OsStrExt, OsStringExt},
-    };
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
 
     /// An open, verified directory.
     pub type Dir = OwnedFd;
@@ -653,12 +650,14 @@ pub mod macos {
             apparent: stat.st_size.max(0) as u64,
             allocated: (stat.st_blocks.max(0) as u64).saturating_mul(512),
             links: u64::from(stat.st_nlink),
-            modified_ns: (stat.st_mtime as i64)
+            modified_ns: stat
+                .st_mtime
                 .saturating_mul(1_000_000_000)
-                .saturating_add(stat.st_mtime_nsec as i64),
-            changed_ns: (stat.st_ctime as i64)
+                .saturating_add(stat.st_mtime_nsec),
+            changed_ns: stat
+                .st_ctime
                 .saturating_mul(1_000_000_000)
-                .saturating_add(stat.st_ctime_nsec as i64),
+                .saturating_add(stat.st_ctime_nsec),
             restricted: (stat.st_flags & SF_DATALESS != 0)
                 .then_some("cloud placeholder (dataless) not read"),
         }

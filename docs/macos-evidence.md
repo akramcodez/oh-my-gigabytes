@@ -27,6 +27,8 @@ The repository is public, so standard hosted runners are free. Workflow: `.githu
 | Volumes | `/` is a sealed, read-only APFS system volume (`MNT_ROOTFS`, read-only). The home folder and temp folders live on the writable Data volume (`/System/Volumes/Data`, `MNT_DONTBROWSE`). |
 | Boundaries | Mounted disk images get their own `st_dev`, so a device change marks a mount boundary. `/` and the Data volume report the **same** `st_dev`, so `st_dev` alone is not enough for system paths. |
 | Disk images | APFS, case-sensitive APFS, HFS+, case-sensitive HFS+, ExFAT and FAT32 all create, mount, report `f_fstypename` (`apfs`, `hfs`, `exfat`, `msdos`) and detach with `hdiutil`. One FAT32 creation failed once with "Resource busy" on `macos-15`; a retry was added. |
+| Scan roots by absolute path with `O_NOFOLLOW_ANY` (second run, commit `1d8c60c`, run 39106517191) | OK for `/Users`, `/Users/runner`, `/System/Volumes/Data`, `/private/tmp`, `/Volumes` and `/` (firmlinks are not links). `ELOOP` for `/tmp`, `/var/tmp`, `/var/folders/...` and any `hdiutil` mount path given as `/var/...`, because `/tmp` and `/var` are symlinks to `/private/...`. A scan root or state directory must therefore be given by its real path. Tests use a canonical `TMPDIR`. |
+| FAT32 image retry | The retry added after the first run fixed the one-off "Resource busy" failure; all six image types mounted on all three runners. |
 | Case sensitivity | Default APFS/HFS+ and ExFAT/FAT32 are case-insensitive; the case-sensitive images are not. Name matching for protection must not assume either. |
 | Inode counts | ExFAT and FAT32 report `f_files` of 1 and 0, so the used-inode figure is unknown there (no progress estimate). |
 
