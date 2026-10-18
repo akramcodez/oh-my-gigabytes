@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# Distributed through npm (docs/release.md); never published to crates.io.
+publish = false
 
 [dependencies]
 anyhow.workspace = true
