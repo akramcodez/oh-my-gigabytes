@@ -18,11 +18,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
         with:
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
       - run: cargo test --workspace --locked
@@ -30,10 +31,10 @@ jobs:
       - run: node scripts/sbom.js > dependency-inventory.cdx.json
       - run: target/${{ matrix.target }}/release/${{ matrix.file }} --version
       - run: target/${{ matrix.target }}/release/${{ matrix.file }} doctor
-      - uses: actions/attest-build-provenance@v3
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: target/${{ matrix.target }}/release/${{ matrix.file }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: omg-development-${{ matrix.target }}
           path: |

@@ -1,0 +1,45 @@
+name: macOS probe
+# Exploratory facts for the native macOS adapter (work package R03). It reads nothing outside its own
+# temporary tree and disk images. Results are recorded in docs/macos-evidence.md.
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Open an SSH session (tmate) after the probe, limited to the person who started the run
+        type: boolean
+        default: false
+  push:
+    paths:
+      - spikes/macos-probe/**
+      - .github/workflows/macos-probe.yml
+permissions:
+  contents: read
+jobs:
+  probe:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Host
+        run: |
+          sw_vers
+          uname -m
+          sysctl -n hw.model || true
+          df -h / "$HOME" "$RUNNER_TEMP" || true
+          mount | head -20
+      - name: Build probe
+        run: cc -Wall -Wextra -o "$RUNNER_TEMP/probe" spikes/macos-probe/probe.c
+      - name: Probe open flags, stat fields and filesystems
+        run: '"$RUNNER_TEMP/probe" / /System/Volumes/Data "$HOME" "$RUNNER_TEMP" /Volumes'
+      - name: Probe disk images
+        run: bash spikes/macos-probe/images.sh "$RUNNER_TEMP/probe"
+      - name: SSH session for debugging
+        if: ${{ inputs.debug }}
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3.24
+        with:
+          limit-access-to-actor: true
