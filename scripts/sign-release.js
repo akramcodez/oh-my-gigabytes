@@ -20,7 +20,18 @@ const { assemble } = require('./assemble-release');
 
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
+// On Windows npm is a .cmd shim that Node will not spawn directly; run its script with node instead.
+function npmCommand() {
+  const script = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  return process.platform === 'win32' && fs.existsSync(script) ? [process.execPath, [script]] : ['npm', []];
+}
+
 function run(command, args, options = {}) {
+  if (command === 'npm') {
+    const [executable, prefix] = npmCommand();
+    command = executable;
+    args = [...prefix, ...args];
+  }
   const result = spawnSync(command, args, { encoding: 'utf8', ...options });
   if (result.error || result.status !== 0) {
     throw new Error(`${command} ${args.join(' ')} failed: ${result.error?.message || result.stderr || result.stdout}`);
