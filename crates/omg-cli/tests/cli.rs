@@ -488,3 +488,27 @@ fn interactive_tui_refuses_without_a_terminal_and_changes_nothing() {
     );
     assert!(!state.exists(), "refusal must not create state");
 }
+
+/// A binary fetched by a browser carries the quarantine attribute. Running it from a terminal must
+/// still work for an ad-hoc signed build; Gatekeeper's dialog for Finder launches cannot be tested
+/// on a hosted runner (docs/macos-evidence.md).
+#[test]
+#[cfg(target_os = "macos")]
+fn a_quarantined_copy_of_the_binary_runs_from_a_terminal() {
+    let fixture = tempfile::tempdir().unwrap();
+    let copy = fixture.path().join("omg");
+    std::fs::copy(env!("CARGO_BIN_EXE_omg"), &copy).unwrap();
+    let marked = Command::new("xattr")
+        .args(["-w", "com.apple.quarantine", "0083;5f5e1000;Safari;"])
+        .arg(&copy)
+        .status()
+        .unwrap();
+    assert!(marked.success());
+    let run = Command::new(&copy).arg("--version").output().unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(String::from_utf8_lossy(&run.stdout).starts_with("omg "));
+}

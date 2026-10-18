@@ -11,6 +11,8 @@ concurrency:
   cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
+  # macOS tests mount real disk images; a runner that cannot do so is a failure, not a skip.
+  OMG_REQUIRE_DISK_IMAGES: '1'
 jobs:
   rust:
     name: ${{ matrix.os }}

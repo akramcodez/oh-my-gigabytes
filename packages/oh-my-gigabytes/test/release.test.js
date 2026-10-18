@@ -63,6 +63,29 @@ test('a release assembled without naming a variant is analysis-only', t => {
   assert.equal(verifyArtifact(artifact, trust, { target: f.target, version: f.version }).manifest.capabilities.cleanup, 'disabled');
 });
 
+test('a macOS release is analysis only and its analysis claim is checked', t => {
+  const f = fixture(t);
+  const macho = Buffer.alloc(64);
+  macho.writeUInt32LE(0xfeedfacf, 0);
+  macho.writeUInt32LE(0x0100000c, 4);
+  const binary = path.join(f.directory, 'fixture-macho');
+  fs.writeFileSync(binary, macho, { mode: 0o755 });
+  const out = path.join(f.directory, 'release-macos');
+  assemble({ binary, target: 'darwin-arm64', version: f.version, publicKey: f.publicFile, privateKey: f.privateFile, out, checkBinary: false });
+  const artifact = path.join(out, 'oh-my-gigabytes-darwin-arm64', 'artifact');
+  const trust = JSON.parse(fs.readFileSync(path.join(out, 'oh-my-gigabytes/trust.json'), 'utf8'));
+  const expected = { target: 'darwin-arm64', version: f.version };
+  const { manifest } = verifyArtifact(artifact, trust, expected);
+  assert.deepEqual(manifest.capabilities, { analysis: 'development-macos', cleanup: 'disabled', service: 'disabled' });
+  // A signed manifest that claims more than macOS offers is rejected.
+  for (const change of [m => { m.capabilities.cleanup = 'development-unqualified'; },
+    m => { m.capabilities.service = 'development-linux'; }, m => { m.capabilities.analysis = 'development-linux'; }]) {
+    resign({ artifact, privateKey: f.privateKey }, change);
+    assert.throws(() => verifyArtifact(artifact, trust, expected), /Unsupported advertised capabilities/);
+    resign({ artifact, privateKey: f.privateKey }, m => { m.capabilities = { analysis: 'development-macos', cleanup: 'disabled', service: 'disabled' }; });
+  }
+});
+
 test('a real build cannot be signed with a capability its own doctor does not report', t => {
   const real = path.resolve(__dirname, '../../../target/debug/omg');
   if (process.platform !== 'linux' || !fs.existsSync(real) || process.arch !== 'x64') t.skip('needs a runnable x86_64 Linux omg binary');
@@ -80,7 +103,7 @@ test('signed assembly verifies and offline payload contains no private signing m
   const native = target.startsWith('linux-') || target.startsWith('win32-');
   assert.equal(result.manifest.capabilities.cleanup, native ? 'development-unqualified' : 'disabled');
   assert.equal(result.manifest.capabilities.analysis,
-    target.startsWith('linux-') ? 'development-linux' : target.startsWith('win32-') ? 'development-windows' : 'disabled');
+    target.startsWith('linux-') ? 'development-linux' : target.startsWith('win32-') ? 'development-windows' : target.startsWith('darwin-') ? 'development-macos' : 'disabled');
   assert.equal(result.manifest.capabilities.service, target.startsWith('linux-') ? 'development-linux' : 'disabled');
   const offline = path.join(f.out, 'offline-oh-my-gigabytes');
   assert.equal(resolveArtifact(offline, f.target, f.version), path.join(offline, 'vendor', f.target));
