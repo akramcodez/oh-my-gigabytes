@@ -1,0 +1,4 @@
+# The Windows release statically links the C runtime, so users need no Visual C++ redistributable
+# (release plan R14).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

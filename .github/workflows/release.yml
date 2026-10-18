@@ -1,0 +1,106 @@
+name: Release build
+# Builds the analysis-only binaries for every release target and attests where they came from.
+# It never signs, publishes a release, or publishes to npm: the Ed25519 signing key stays with the
+# owner (docs/release.md, "Signing a release"). Run it from the Actions tab or by pushing a v* tag.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_TERM_COLOR: always
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64-gnu, os: ubuntu-24.04, image: 'quay.io/pypa/manylinux_2_28_x86_64', file: omg }
+          - { target: linux-arm64-gnu, os: ubuntu-24.04-arm, image: 'quay.io/pypa/manylinux_2_28_aarch64', file: omg }
+          - { target: win32-x64, os: windows-latest, triple: x86_64-pc-windows-msvc, file: omg.exe }
+          - { target: darwin-arm64, os: macos-15, triple: aarch64-apple-darwin, file: omg }
+          - { target: darwin-x64, os: macos-15-intel, triple: x86_64-apple-darwin, file: omg }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build (Linux, glibc 2.28 container)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          bash scripts/build-manylinux.sh "${{ matrix.image }}" dist
+          bash scripts/check-glibc.sh dist/omg 2.28
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+        if: runner.os != 'Linux'
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.triple }}
+      - name: Build (Windows, macOS)
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          # The macOS adapter needs the macOS 15 kernel (docs/macos-evidence.md).
+          MACOSX_DEPLOYMENT_TARGET: '15.0'
+        run: |
+          cargo build --release --locked -p omg-cli --no-default-features --target "${{ matrix.triple }}"
+          mkdir -p dist
+          cp "target/${{ matrix.triple }}/release/${{ matrix.file }}" dist/
+      - name: Check the binary
+        shell: bash
+        run: |
+          bin="dist/${{ matrix.file }}"
+          "$bin" --version
+          "$bin" --state-dir "$RUNNER_TEMP/doctor-state" doctor | tee doctor.txt
+          grep -q 'permanent delete: unsupported' doctor.txt
+          mkdir -p "$RUNNER_TEMP/scan-root/sub"
+          echo hello > "$RUNNER_TEMP/scan-root/sub/file.txt"
+          "$bin" --state-dir "$RUNNER_TEMP/state" scan --root "$(cd "$RUNNER_TEMP/scan-root" && pwd -P)"
+          "$bin" --state-dir "$RUNNER_TEMP/state" status > /dev/null
+          (cd dist && (sha256sum "${{ matrix.file }}" 2>/dev/null || shasum -a 256 "${{ matrix.file }}") | tee SHA256SUMS)
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/${{ matrix.file }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: omg-${{ matrix.target }}
+          path: |
+            dist/${{ matrix.file }}
+            dist/SHA256SUMS
+          if-no-files-found: error
+  sbom:
+    name: dependency inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+        with:
+          toolchain: 1.95.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Generate and validate the SBOM
+        run: |
+          node scripts/sbom.js > dependency-inventory.cdx.json
+          mkdir "$RUNNER_TEMP/cdx"
+          for f in bom-1.5.schema.json spdx.schema.json jsf-0.82.schema.json; do
+            curl -sSfL "https://raw.githubusercontent.com/CycloneDX/specification/1.7.2/schema/$f" -o "$RUNNER_TEMP/cdx/$f"
+          done
+          python3 -m pip install --quiet jsonschema==4.25.1
+          python3 scripts/validate-sbom.py dependency-inventory.cdx.json "$RUNNER_TEMP/cdx"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: omg-sbom
+          path: |
+            dependency-inventory.cdx.json
+            LICENSE-MIT
+            LICENSE-APACHE
