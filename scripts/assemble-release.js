@@ -23,7 +23,7 @@ function reportedCleanup(binary) {
 }
 
 // The default variant is analysis-only: a release that offers permanent delete must ask for it by name.
-function assemble({ binary, target, version, publicKey, privateKey, out, variant = 'analysis-only', checkBinary = true }) {
+function assemble({ binary, target, version, publicKey, privateKey, out, variant = 'analysis-only', checkBinary = true, publishable = false }) {
   if (!['full', 'analysis-only'].includes(variant)) throw new Error('Unknown variant (use full or analysis-only)');
   if (!TARGETS[target]) throw new Error('Unsupported target');
   if (!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/.test(version)) throw new Error('Invalid release version');
@@ -44,8 +44,11 @@ function assemble({ binary, target, version, publicKey, privateKey, out, variant
   const windows = target.startsWith('win32-');
   const macos = target.startsWith('darwin-');
   const cleanup = linux || windows ? (variant === 'analysis-only' ? 'disabled' : 'development-unqualified') : 'disabled';
-  // A real build must report the same cleanup capability as the manifest it is signed with.
-  if (checkBinary && ((linux && process.platform === 'linux') || (windows && process.platform === 'win32') || (macos && process.platform === 'darwin'))) {
+  // A real build must report the same cleanup capability as the manifest it is signed with. Only a
+  // binary this machine can run is asked; a foreign-architecture binary is checked at build time.
+  const runnable = target.split('-')[1] === process.arch &&
+    ((linux && process.platform === 'linux') || (windows && process.platform === 'win32') || (macos && process.platform === 'darwin'));
+  if (checkBinary && runnable) {
     const reported = reportedCleanup(binary);
     if (reported !== cleanup) throw new Error(`Binary reports cleanup ${reported}, but variant ${variant} claims ${cleanup}`);
   }
@@ -66,7 +69,7 @@ function assemble({ binary, target, version, publicKey, privateKey, out, variant
     fs.writeFileSync(path.join(artifact, filename), data, { mode: 0o755 });
     fs.writeFileSync(path.join(artifact, 'manifest.json'), bytes);
     fs.writeFileSync(path.join(artifact, 'manifest.sig'), signature);
-    const nativePackage = { name: `oh-my-gigabytes-${target}`, version, private: true,
+    const nativePackage = { name: `oh-my-gigabytes-${target}`, version, private: !publishable,
       license: 'MIT OR Apache-2.0', os: [target.split('-')[0]], cpu: [target.split('-')[1]],
       files: ['artifact', 'LICENSE-MIT', 'LICENSE-APACHE', 'README.md'] };
     if (target.startsWith('linux-')) nativePackage.libc = ['glibc'];
@@ -79,6 +82,8 @@ function assemble({ binary, target, version, publicKey, privateKey, out, variant
       const pkg = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8'));
       delete pkg.scripts;
       pkg.version = version;
+      // Packages stay private (npm refuses to publish them) unless the release is explicitly publishable.
+      pkg.private = !publishable;
       if (offline) {
         pkg.os = nativePackage.os; pkg.cpu = nativePackage.cpu;
         if (nativePackage.libc) pkg.libc = nativePackage.libc;
@@ -105,10 +110,10 @@ if (require.main === module) {
     const { values } = parseArgs({ options: {
       binary: { type: 'string' }, target: { type: 'string' }, version: { type: 'string' },
       'public-key': { type: 'string' }, 'private-key': { type: 'string' }, out: { type: 'string' },
-      variant: { type: 'string' },
+      variant: { type: 'string' }, publishable: { type: 'boolean' },
     } });
     for (const field of ['binary', 'target', 'version', 'public-key', 'private-key', 'out']) if (!values[field]) throw new Error(`--${field} required`);
-    process.stdout.write(JSON.stringify(assemble({ ...values, variant: values.variant || 'analysis-only', publicKey: values['public-key'], privateKey: values['private-key'] })) + '\n');
+    process.stdout.write(JSON.stringify(assemble({ ...values, variant: values.variant || 'analysis-only', publishable: values.publishable === true, publicKey: values['public-key'], privateKey: values['private-key'] })) + '\n');
   } catch (error) { process.stderr.write(`omg release: ${error.message}\n`); process.exitCode = 1; }
 }
 module.exports = { assemble };
