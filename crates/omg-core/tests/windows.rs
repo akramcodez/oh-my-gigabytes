@@ -60,8 +60,11 @@ fn oracle(root: &Path) -> (u64, u64, u64) {
     (files, dirs, bytes)
 }
 
+/// A state directory only you can use, as `Index::open` requires (the Unix tests use mode 0700).
 fn state() -> tempfile::TempDir {
-    tempfile::tempdir().unwrap()
+    let dir = tempfile::tempdir().unwrap();
+    platform::windows_state::protect(dir.path()).unwrap();
+    dir
 }
 
 #[test]
@@ -447,5 +450,73 @@ mod deletion {
         assert_eq!(report.deleted.len(), 1, "{report:?}");
         assert!(report.needs_reconcile, "{report:?}");
         assert_eq!(fs::read(h.join("keep/data.bin")).unwrap().len(), 8192);
+    }
+}
+
+/// The owner-only state directory (the Windows counterpart of the Unix 0700 check).
+mod state_acl {
+    use super::*;
+    use std::ffi::OsStr;
+
+    fn icacls(args: &[&OsStr]) -> String {
+        let run = Command::new("icacls").args(args).output().unwrap();
+        assert!(
+            run.status.success(),
+            "icacls {args:?}: {}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        String::from_utf8_lossy(&run.stdout).into_owned()
+    }
+
+    #[test]
+    fn directories_omg_creates_are_closed_to_other_users() {
+        let base = tempfile::tempdir().unwrap();
+        let fresh = base.path().join("first").join("second");
+        drop(Index::open(&fresh).unwrap());
+        platform::windows_state::verify_private(&fresh).unwrap();
+        platform::windows_state::verify_private(&base.path().join("first")).unwrap();
+        let listing = icacls(&[fresh.as_os_str()]);
+        for other in ["Everyone", "BUILTIN\\Users", "Authenticated Users"] {
+            assert!(
+                !listing.contains(other),
+                "{other} must not be listed:\n{listing}"
+            );
+        }
+        assert!(listing.contains("NT AUTHORITY\\SYSTEM"), "{listing}");
+    }
+
+    #[test]
+    fn a_directory_open_to_everyone_is_refused_and_diagnosis_does_not_repair_it() {
+        let dir = tempfile::tempdir().unwrap();
+        platform::windows_state::protect(dir.path()).unwrap();
+        drop(Index::open(dir.path()).unwrap());
+
+        icacls(&[
+            dir.path().as_os_str(),
+            OsStr::new("/grant"),
+            OsStr::new("Everyone:(OI)(CI)R"),
+        ]);
+        let error = Index::open(dir.path())
+            .err()
+            .expect("open to everyone")
+            .to_string();
+        assert!(error.contains("other users"), "{error}");
+        assert!(
+            error.contains("icacls"),
+            "the message says how to fix it: {error}"
+        );
+        assert!(omg_core::index::diagnose(dir.path()).is_err());
+        assert!(
+            icacls(&[dir.path().as_os_str()]).contains("Everyone"),
+            "refusing must not change the access list"
+        );
+
+        icacls(&[
+            dir.path().as_os_str(),
+            OsStr::new("/remove"),
+            OsStr::new("Everyone"),
+        ]);
+        drop(Index::open(dir.path()).unwrap());
     }
 }

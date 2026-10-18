@@ -70,7 +70,10 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
         platform::native::open_root(&absolute)?;
     }
     #[cfg(windows)]
-    platform::native::open_root(&absolute)?;
+    {
+        platform::native::open_root(&absolute)?;
+        platform::windows_state::verify_private(&absolute)?;
+    }
     let database = absolute.join("index.sqlite");
     if !database.exists() {
         return Ok(
@@ -167,9 +170,9 @@ impl Index {
                         use std::os::unix::fs::DirBuilderExt;
                         fs::DirBuilder::new().mode(0o700).create(&current)?;
                     }
-                    // Windows: per-user ACLs come from the profile folder; owner-only ACLs are W03.
+                    // Windows: a new directory gets an access list for you and SYSTEM only.
                     #[cfg(windows)]
-                    fs::create_dir(&current)?;
+                    platform::windows_state::create_private_dir(&current)?;
                 }
                 Err(error) => return Err(error.into()),
             }
@@ -188,9 +191,10 @@ impl Index {
         }
         #[cfg(windows)]
         {
-            // Must not be a link or mount point, and must sit on a supported volume. Owner-only ACLs
-            // are not verified yet (docs/windows-implementation-plan.md, W03).
+            // Must not be a link or mount point, sit on a supported volume, be owned by you and be
+            // closed to every other user (the counterpart of the Unix 0700 check above).
             platform::native::open_root(&state)?;
+            platform::windows_state::verify_private(&state)?;
         }
         // The maintenance lock is held only while another process opens/migrates; wait briefly
         // instead of failing a concurrent CLI or service scan.

@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
 pub mod windows;
+/// Owner-only state directories on Windows. Separate from `windows`, which stays read-only.
+#[cfg(windows)]
+pub mod windows_state;
 
 /// Native scanning and state work on Linux, macOS and Windows. Other platforms compile the stubs only.
 pub fn supported() -> bool {
