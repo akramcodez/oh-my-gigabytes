@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 use omg_core::{Index, ScanOptions, platform, scanner};
 use std::{
     fs,
@@ -144,7 +144,7 @@ fn denied_roots_and_private_state() {
     let root = tempfile::tempdir().unwrap();
     let state = private_state();
     symlink(root.path(), root.path().join("redirect")).unwrap();
-    assert!(platform::linux::root(&root.path().join("redirect")).is_err());
+    assert!(platform::native::open_root(&root.path().join("redirect")).is_err());
     fs::set_permissions(state.path(), fs::Permissions::from_mode(0o755)).unwrap();
     assert!(Index::open(state.path()).is_err());
     assert!(platform::absolute(Path::new("../unsafe")).is_err());
@@ -152,12 +152,13 @@ fn denied_roots_and_private_state() {
 
 /// Run explicitly with `OMG_BTRFS_TEST_DIR=/path/on/btrfs cargo test -p omg-core btrfs_root_and_state_are_scannable -- --ignored`.
 #[test]
+#[cfg(target_os = "linux")]
 #[ignore = "requires an existing writable Btrfs path in OMG_BTRFS_TEST_DIR"]
 fn btrfs_root_and_state_are_scannable() {
     let base = std::env::var_os("OMG_BTRFS_TEST_DIR")
         .expect("set OMG_BTRFS_TEST_DIR to an existing writable Btrfs directory");
     let base = Path::new(&base);
-    let fd = platform::linux::root(base).expect("Btrfs fixture root should be supported");
+    let fd = platform::native::open_root(base).expect("Btrfs fixture root should be supported");
     assert_eq!(rustix::fs::fstatfs(&fd).unwrap().f_type as u64, 0x9123_683e);
 
     let fixture = tempfile::Builder::new()

@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 use omg_core::{Index, ScanOptions, planning, platform, policy, scanner};
 use std::{
     fs,

@@ -20,7 +20,7 @@ ed25519-dalek.workspace = true
 default = ["permanent-delete"]
 permanent-delete = []
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rustix.workspace = true
 
 # Windows adapter (src/platform/windows.rs) and Windows removal in src/cleanup.rs: handle-based

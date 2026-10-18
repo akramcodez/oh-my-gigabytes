@@ -11,7 +11,7 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 anyhow = "1"
 rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
-rustix = { version = "1.1", features = ["fs", "process", "net"] }
+rustix = { version = "1.1", features = ["fs", "process", "net", "system"] }
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

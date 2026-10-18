@@ -1,6 +1,9 @@
 //! Runs only in the analysis-only build (`cargo test -p omg-core --no-default-features`).
 //! That build must not delete anything, and must say so.
-#![cfg(all(not(feature = "permanent-delete"), any(target_os = "linux", windows)))]
+#![cfg(all(
+    not(feature = "permanent-delete"),
+    any(target_os = "linux", target_os = "macos", windows)
+))]
 
 use omg_core::{Index, ScanOptions, capability, scanner};
 use std::{

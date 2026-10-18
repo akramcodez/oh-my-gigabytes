@@ -1,6 +1,6 @@
 use std::process::Command;
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn doctor_does_not_initialize_or_migrate_state() {
     let fixture = tempfile::tempdir().unwrap();
     let state = fixture.path().join("not-created");
@@ -32,7 +32,7 @@ fn doctor_does_not_initialize_or_migrate_state() {
     );
 }
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn scan_status_findings_and_dry_run_roundtrip() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path().join("root");
@@ -421,7 +421,7 @@ mod service {
 }
 
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn tree_reports_subtree_sizes_and_rejects_escapes() {
     let fixture = tempfile::tempdir().unwrap();
     let (root, state) = (fixture.path().join("root"), fixture.path().join("state"));
@@ -470,7 +470,7 @@ fn tree_reports_subtree_sizes_and_rejects_escapes() {
 /// Without a terminal the interactive TUI must refuse with a clear message, not hang or draw.
 /// Stdin and stdout are pipes here, so the binary sees no terminal.
 #[test]
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn interactive_tui_refuses_without_a_terminal_and_changes_nothing() {
     let fixture = tempfile::tempdir().unwrap();
     let state = fixture.path().join("state");

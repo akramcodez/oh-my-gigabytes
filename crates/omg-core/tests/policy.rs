@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 use omg_core::{Entry, policy};
 use std::{fs, path::Path};
 

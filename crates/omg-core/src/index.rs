@@ -31,6 +31,8 @@ pub struct Index {
 fn native_analysis() -> &'static str {
     if cfg!(windows) {
         "development Windows only (NTFS, ReFS, FAT32 scanning; no deletion)"
+    } else if cfg!(target_os = "macos") {
+        "development macOS only (APFS, HFS+, exFAT, FAT scanning; no deletion)"
     } else {
         "development Linux only"
     }
@@ -58,14 +60,14 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
             Err(error) => return Err(error.into()),
         }
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::os::unix::fs::MetadataExt;
         let metadata = fs::symlink_metadata(&absolute)?;
         if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o077 != 0 {
             bail!("diagnosis: state directory is not private/current-user owned");
         }
-        platform::linux::root(&absolute)?;
+        platform::native::open_root(&absolute)?;
     }
     #[cfg(windows)]
     platform::native::open_root(&absolute)?;
@@ -106,7 +108,7 @@ pub fn lock(state: &Path, name: &str) -> Result<File> {
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
     }
     let file = options.open(path)?;
@@ -132,7 +134,7 @@ pub fn lock_held(state: &Path, name: &str) -> bool {
     }
     let mut options = OpenOptions::new();
     options.read(true);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
@@ -147,7 +149,7 @@ impl Index {
     pub fn open(state: &Path) -> Result<Self> {
         if !platform::supported() {
             bail!(
-                "native scanning/state support currently requires Linux or Windows; other platforms unverified"
+                "native scanning/state support requires Linux, macOS or Windows; other platforms unverified"
             );
         }
         let state = platform::absolute(state)?;
@@ -172,7 +174,7 @@ impl Index {
                 Err(error) => return Err(error.into()),
             }
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             use std::os::unix::fs::MetadataExt;
             let metadata = fs::symlink_metadata(&state)?;
@@ -182,7 +184,7 @@ impl Index {
                     "state directory must be owned by current user with private (0700) permissions"
                 );
             }
-            platform::linux::root(&state)?;
+            platform::native::open_root(&state)?;
         }
         #[cfg(windows)]
         {
@@ -370,7 +372,7 @@ impl Index {
             )?
             .collect::<rusqlite::Result<_>>()?)
     }
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     pub(crate) fn recover_interrupted(&self) -> Result<()> {
         use crate::now;
         self.db.execute(

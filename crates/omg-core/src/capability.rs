@@ -36,6 +36,10 @@ pub enum Filesystem {
     Btrfs,
     /// XFS (the default on RHEL-family systems). Scanning only; permanent deletion is not offered.
     Xfs,
+    /// macOS APFS. Scanning only.
+    Apfs,
+    /// macOS HFS+ (also called Mac OS Extended). Scanning only.
+    Hfs,
     /// Windows NTFS. Scanning is supported; permanent deletion is not, until the Windows milestone.
     Ntfs,
     /// Windows ReFS. Scanning only.
@@ -60,12 +64,15 @@ impl Filesystem {
             _ => Filesystem::Other,
         }
     }
-    /// Family from a Windows volume's file-system name (`GetVolumeInformationByHandleW`).
+    /// Family from a file-system name: a Windows volume's (`GetVolumeInformationByHandleW`) or a
+    /// macOS `statfs` `f_fstypename`.
     pub fn from_name(name: &str) -> Self {
         match name {
             "NTFS" => Filesystem::Ntfs,
             "ReFS" => Filesystem::Refs,
-            "FAT" | "FAT32" | "exFAT" => Filesystem::Fat,
+            "FAT" | "FAT32" | "exFAT" | "exfat" | "msdos" => Filesystem::Fat,
+            "apfs" => Filesystem::Apfs,
+            "hfs" => Filesystem::Hfs,
             _ => Filesystem::Other,
         }
     }
@@ -84,9 +91,12 @@ pub fn permanent_delete(filesystem: Filesystem) -> Support {
         Filesystem::Ext | Filesystem::Tmpfs | Filesystem::Btrfs | Filesystem::Ntfs => {
             Support::DevelopmentUnqualified
         }
-        Filesystem::Xfs | Filesystem::Refs | Filesystem::Fat | Filesystem::Other => {
-            Support::Unsupported
-        }
+        Filesystem::Xfs
+        | Filesystem::Apfs
+        | Filesystem::Hfs
+        | Filesystem::Refs
+        | Filesystem::Fat
+        | Filesystem::Other => Support::Unsupported,
     }
 }
 

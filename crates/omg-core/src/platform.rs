@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 pub mod windows;
 
-/// Native scanning and state work on Linux and Windows. Other platforms compile the stubs only.
+/// Native scanning and state work on Linux, macOS and Windows. Other platforms compile the stubs only.
 pub fn supported() -> bool {
-    cfg!(any(target_os = "linux", windows))
+    cfg!(any(target_os = "linux", target_os = "macos", windows))
 }
 pub fn home() -> Result<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
@@ -25,6 +25,8 @@ pub fn default_state() -> Result<PathBuf> {
     }
     if cfg!(windows) {
         Ok(local_app_data()?.join("omg"))
+    } else if cfg!(target_os = "macos") {
+        Ok(home()?.join("Library/Application Support/omg"))
     } else {
         Ok(std::env::var_os("XDG_STATE_HOME")
             .map(PathBuf::from)
@@ -35,6 +37,8 @@ pub fn default_state() -> Result<PathBuf> {
 pub fn default_config() -> Result<PathBuf> {
     if cfg!(windows) {
         Ok(local_app_data()?.join("omg").join("config.toml"))
+    } else if cfg!(target_os = "macos") {
+        Ok(home()?.join("Library/Application Support/omg/config.toml"))
     } else {
         Ok(std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
@@ -57,11 +61,22 @@ pub fn volume_sample(root: &Path) -> Option<(u64, u64)> {
                 .saturating_mul(sample.f_frsize),
         ))
     }
+    #[cfg(target_os = "macos")]
+    {
+        let sample = rustix::fs::fstatvfs(&macos::root(root).ok()?).ok()?;
+        Some((
+            sample.f_blocks.saturating_mul(sample.f_frsize),
+            sample
+                .f_blocks
+                .saturating_sub(sample.f_bfree)
+                .saturating_mul(sample.f_frsize),
+        ))
+    }
     #[cfg(windows)]
     {
         windows::volume_sample(root)
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = root;
         None
@@ -203,9 +218,10 @@ pub fn absolute(path: &Path) -> Result<PathBuf> {
     }
     Ok(value)
 }
-/// Windows file names are case-insensitive; Unix names are compared exactly.
+/// Windows and macOS (default volumes) file names are case-insensitive; Linux names are compared
+/// exactly. Matching case-insensitively on macOS is deliberate: it can only protect more.
 fn same_name(part: &std::ffi::OsStr, name: &str) -> bool {
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "macos")) {
         part.to_string_lossy().eq_ignore_ascii_case(name)
     } else {
         part == std::ffi::OsStr::new(name)
@@ -235,6 +251,12 @@ pub fn excluded(path: &Path, custom: &[PathBuf]) -> Option<String> {
         "pagefile.sys",
         "hiberfil.sys",
         "swapfile.sys",
+        // macOS volume metadata and cloud-sync folders: system-managed, never user data.
+        ".Spotlight-V100",
+        ".fseventsd",
+        ".Trashes",
+        ".DocumentRevisions-V100",
+        ".TemporaryItems",
     ];
     if path.components().any(|part| {
         mandatory
@@ -259,6 +281,14 @@ pub fn excluded(path: &Path, custom: &[PathBuf]) -> Option<String> {
     ]
     .iter()
     .any(|root| path.starts_with(root))
+    {
+        return Some("unsupported or system-managed filesystem".into());
+    }
+    // macOS: the sealed system volume, swap and the volfs mount.
+    if cfg!(target_os = "macos")
+        && ["/System", "/private/var/vm", "/.vol"]
+            .iter()
+            .any(|root| path.starts_with(root))
     {
         return Some("unsupported or system-managed filesystem".into());
     }
@@ -300,12 +330,17 @@ pub fn entry_from_meta(relative: &Path, meta: &Meta) -> crate::model::Entry {
     }
 }
 
-/// Platform adapter used by the scanner. Linux anchors every open at a directory descriptor. Windows
+/// Platform adapter used by the scanner. Linux and macOS anchor every open at a directory descriptor
+/// and refuse links on the whole path. Windows
 /// opens with reparse points visible and checks each opened directory's final path and file identity
 /// against the enumeration that named it.
 pub mod native {
     #[cfg(target_os = "linux")]
     pub use super::linux::{
+        Dir, dir_meta, for_each_child, inode_usage, open_dir, open_root, volume,
+    };
+    #[cfg(target_os = "macos")]
+    pub use super::macos::{
         Dir, dir_meta, for_each_child, inode_usage, open_dir, open_root, volume,
     };
     #[cfg(windows)]
@@ -492,9 +527,227 @@ pub mod linux {
     }
 }
 
+/// Darwin kernel major version from `uname -r` (macOS 15 is Darwin 24, macOS 26 is Darwin 25).
+#[cfg(any(target_os = "macos", test))]
+fn darwin_major(release: &str) -> Option<u32> {
+    release.split('.').next()?.parse().ok()
+}
+
+/// macOS adapter. Every open is anchored at a directory descriptor with `O_NOFOLLOW_ANY` (no link
+/// anywhere in the path) and `O_RESOLVE_BENEATH` (the path cannot leave the anchor), the macOS
+/// equivalents of Linux `RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH`. Behaviour measured on macOS 15 and
+/// 26 (arm64 and Intel) in `docs/macos-evidence.md`. Analysis only: nothing here removes or
+/// changes a file.
+#[cfg(target_os = "macos")]
+pub mod macos {
+    use super::*;
+    use crate::capability::Filesystem;
+    use rustix::{
+        fd::OwnedFd,
+        fs::{self, AtFlags, Dir as Listing, FileType, Mode, OFlags},
+    };
+    use std::{
+        ffi::OsString,
+        os::unix::ffi::{OsStrExt, OsStringExt},
+    };
+
+    /// An open, verified directory.
+    pub type Dir = OwnedFd;
+
+    // Values from the macOS SDK, confirmed by the R03 probe. rustix does not name them.
+    const O_NOFOLLOW_ANY: u32 = 0x2000_0000;
+    const O_RESOLVE_BENEATH: u32 = 0x1000;
+    /// `statfs.f_flags`: the filesystem is local.
+    const MNT_LOCAL: u32 = 0x1000;
+    /// `statfs.f_flags`: the sealed, read-only system volume.
+    const MNT_ROOTFS: u32 = 0x4000;
+    /// `st_flags`: contents live in the cloud (iCloud "dataless"); reading would download them.
+    const SF_DATALESS: u32 = 0x4000_0000;
+    /// Oldest Darwin kernel that enforces the two open flags above (macOS 15). An older kernel
+    /// could ignore an unknown flag without error and silently lose the protection.
+    const MIN_DARWIN: u32 = 24;
+
+    fn anchored() -> OFlags {
+        OFlags::from_bits_retain(O_NOFOLLOW_ANY | O_RESOLVE_BENEATH)
+    }
+
+    fn require_supported_kernel() -> Result<()> {
+        let uname = rustix::system::uname();
+        let release = uname.release().to_string_lossy();
+        match darwin_major(&release) {
+            Some(major) if major >= MIN_DARWIN => Ok(()),
+            _ => bail!("macOS 15 or newer is required (kernel {release})"),
+        }
+    }
+
+    /// Filesystem family and mount flags of an open directory.
+    pub fn filesystem(fd: &OwnedFd) -> Result<(Filesystem, u32)> {
+        let stat = fs::fstatfs(fd)?;
+        let name: Vec<u8> = stat
+            .f_fstypename
+            .iter()
+            .take_while(|&&byte| byte != 0)
+            .map(|&byte| byte as u8)
+            .collect();
+        Ok((
+            Filesystem::from_name(&String::from_utf8_lossy(&name)),
+            stat.f_flags,
+        ))
+    }
+
+    pub fn root(path: &Path) -> Result<OwnedFd> {
+        require_supported_kernel()?;
+        let fd = fs::open(
+            path,
+            OFlags::RDONLY
+                | OFlags::DIRECTORY
+                | OFlags::CLOEXEC
+                | OFlags::from_bits_retain(O_NOFOLLOW_ANY),
+            Mode::empty(),
+        )
+        .map_err(|error| {
+            if error == rustix::io::Errno::LOOP {
+                anyhow::anyhow!(
+                    "root acquisition denied: the path passes through a symbolic link (on macOS /tmp, /var and /etc are links); give the real path, for example /private/tmp"
+                )
+            } else {
+                anyhow::anyhow!("root acquisition denied: missing, inaccessible or redirected path")
+            }
+        })?;
+        let (filesystem, flags) = filesystem(&fd)?;
+        if flags & MNT_ROOTFS != 0 {
+            bail!(
+                "the sealed macOS system volume is not scanned; choose a folder in your home folder"
+            );
+        }
+        if flags & MNT_LOCAL == 0 || filesystem == Filesystem::Other {
+            bail!("unsupported filesystem profile; use a local APFS, HFS+, exFAT or FAT volume");
+        }
+        Ok(fd)
+    }
+    fn acquire(root: &OwnedFd, relative: &Path) -> Result<OwnedFd> {
+        Ok(fs::openat(
+            root,
+            if relative.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                relative
+            },
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | anchored(),
+            Mode::empty(),
+        )?)
+    }
+    /// Neutral metadata from one `stat` (never follows links).
+    pub fn meta(stat: &fs::Stat) -> Meta {
+        let kind = match FileType::from_raw_mode(stat.st_mode) {
+            FileType::RegularFile => "file",
+            FileType::Directory => "directory",
+            FileType::Symlink => "symlink",
+            _ => "special",
+        };
+        let device = u64::from(stat.st_dev as u32);
+        Meta {
+            identity: format!("{}:{}", device, stat.st_ino),
+            kind,
+            volume: device,
+            apparent: stat.st_size.max(0) as u64,
+            allocated: (stat.st_blocks.max(0) as u64).saturating_mul(512),
+            links: u64::from(stat.st_nlink),
+            modified_ns: (stat.st_mtime as i64)
+                .saturating_mul(1_000_000_000)
+                .saturating_add(stat.st_mtime_nsec as i64),
+            changed_ns: (stat.st_ctime as i64)
+                .saturating_mul(1_000_000_000)
+                .saturating_add(stat.st_ctime_nsec as i64),
+            restricted: (stat.st_flags & SF_DATALESS != 0)
+                .then_some("cloud placeholder (dataless) not read"),
+        }
+    }
+    pub fn volume(fd: &OwnedFd) -> Result<(u64, u64)> {
+        let sample = fs::fstatvfs(fd)?;
+        Ok((
+            sample.f_blocks.saturating_mul(sample.f_frsize),
+            sample.f_bavail.saturating_mul(sample.f_frsize),
+        ))
+    }
+
+    pub fn open_root(path: &Path) -> Result<Dir> {
+        root(path)
+    }
+    /// Open a directory below `root` and check that it is still the object the scan enumerated.
+    pub fn open_dir(root: &Dir, relative: &Path, expected: &str) -> Result<Dir> {
+        let fd = acquire(root, relative)?;
+        if meta(&fs::fstat(&fd)?).identity != expected {
+            bail!("directory identity changed");
+        }
+        Ok(fd)
+    }
+    pub fn dir_meta(dir: &Dir) -> Result<Meta> {
+        Ok(meta(&fs::fstat(dir)?))
+    }
+    /// Visit every child of `dir` (no `.` or `..`) with metadata read relative to the open
+    /// directory. Returns `Ok(false)` if `visit` stopped the walk early.
+    pub fn for_each_child(
+        dir: &Dir,
+        mut visit: impl FnMut(OsString, Result<Meta>) -> Result<bool>,
+    ) -> Result<bool> {
+        let mut listing = Listing::read_from(dir)?;
+        while let Some(value) = listing.read() {
+            let value = value?;
+            let bytes = value.file_name().to_bytes();
+            if bytes == b"." || bytes == b".." {
+                continue;
+            }
+            let name = OsString::from_vec(bytes.to_vec());
+            // One no-follow stat relative to the open directory; it describes the object that
+            // currently has this name and never follows a link.
+            let metadata = fs::statat(dir, value.file_name(), AtFlags::SYMLINK_NOFOLLOW)
+                .map(|stat| meta(&stat))
+                .map_err(anyhow::Error::from);
+            if !visit(name, metadata)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+    /// Used inodes, for progress estimates. Only APFS reports a meaningful figure; HFS+ allocates
+    /// inodes dynamically and exFAT/FAT report none, so those are unknown rather than zero.
+    pub fn inode_usage(dir: &Dir) -> Result<Option<u64>> {
+        if filesystem(dir)?.0 != Filesystem::Apfs {
+            return Ok(None);
+        }
+        let stat = fs::fstatvfs(dir)?;
+        Ok(Some(stat.f_files.saturating_sub(stat.f_ffree)))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn open_flags_match_the_sdk_values_seen_on_the_probe() {
+            assert_eq!(O_NOFOLLOW_ANY, 0x2000_0000);
+            assert_eq!(O_RESOLVE_BENEATH, 0x1000);
+        }
+
+        #[test]
+        fn a_link_in_the_root_path_is_refused_with_a_hint() {
+            let base = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+            let target = base.join(format!("omg-mac-target-{}", std::process::id()));
+            let link = base.join(format!("omg-mac-link-{}", std::process::id()));
+            std::fs::create_dir(&target).unwrap();
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let error = root(&link).unwrap_err().to_string();
+            std::fs::remove_file(&link).unwrap();
+            std::fs::remove_dir(&target).unwrap();
+            assert!(error.contains("symbolic link"), "{error}");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{wtf8_decode, wtf8_encode};
+    use super::{darwin_major, wtf8_decode, wtf8_encode};
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()
@@ -528,5 +781,14 @@ mod tests {
         assert_eq!(wtf8_decode(&[0xFF]), None);
         assert_eq!(wtf8_decode(&[0xC0, 0x80]), None, "overlong encoding");
         assert_eq!(wtf8_decode(&[0xE2, 0x82]), None, "truncated sequence");
+    }
+
+    #[test]
+    fn darwin_kernel_versions_map_to_macos_releases() {
+        assert_eq!(darwin_major("24.6.0"), Some(24));
+        assert_eq!(darwin_major("25.0.0"), Some(25));
+        assert_eq!(darwin_major("23.6.0"), Some(23));
+        assert_eq!(darwin_major("junk"), None);
+        assert_eq!(darwin_major(""), None);
     }
 }

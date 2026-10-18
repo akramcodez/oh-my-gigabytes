@@ -40,6 +40,10 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
+      # macOS temp folders live under /var, a symlink; omg refuses links in a root or state path, so
+      # tests need the real location.
+      - if: runner.os == 'macOS'
+        run: echo "TMPDIR=$(cd "$RUNNER_TEMP" && pwd -P)" >> "$GITHUB_ENV"
       - run: cargo fmt --all -- --check
       # The default build and the analysis-only build (the one that ships) are both linted and tested.
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings

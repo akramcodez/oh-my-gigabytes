@@ -15,11 +15,11 @@ pub fn scan(
         bail!("workers must be between 1 and 16");
     }
     let _owner = lock(&index.state, "scan.lock")?;
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     {
         walk::run(index, options, cancel, progress)
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = (options, cancel, progress);
         bail!("native scanner not certified on this platform")
@@ -59,13 +59,13 @@ pub fn default_workers() -> usize {
 /// Approximate number of entries to expect: the filesystem's used-inode count. This is an upper
 /// bound when the scan root is smaller than its volume, and it includes skipped locations.
 pub fn estimate_entries(root: &std::path::Path) -> Option<u64> {
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     {
         let dir =
             crate::platform::native::open_root(&crate::platform::absolute(root).ok()?).ok()?;
         crate::platform::native::inode_usage(&dir).ok().flatten()
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = root;
         None
@@ -74,7 +74,7 @@ pub fn estimate_entries(root: &std::path::Path) -> Option<u64> {
 
 /// The walk itself is platform-neutral. Only the native operations (open a verified directory,
 /// enumerate it, read a volume) come from `platform::native`.
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 mod walk {
     use super::*;
     use crate::platform::{self, native};

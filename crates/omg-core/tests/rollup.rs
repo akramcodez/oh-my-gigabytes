@@ -1,4 +1,4 @@
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 use omg_core::{Index, ScanOptions, scanner};
 use std::{
     collections::HashSet,
