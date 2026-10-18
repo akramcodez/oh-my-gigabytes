@@ -445,11 +445,11 @@ pub mod linux {
             modified_ns: stat
                 .st_mtime
                 .saturating_mul(1_000_000_000)
-                .saturating_add(stat.st_mtime_nsec),
+                .saturating_add(stat.st_mtime_nsec as i64),
             changed_ns: stat
                 .st_ctime
                 .saturating_mul(1_000_000_000)
-                .saturating_add(stat.st_ctime_nsec),
+                .saturating_add(stat.st_ctime_nsec as i64),
             restricted: None,
         }
     }
