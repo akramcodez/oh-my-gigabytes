@@ -89,7 +89,8 @@ function signRelease({ artifacts, version, publicKey, privateKey, out, repo, ski
   fs.copyFileSync(publicKey, path.join(out, 'release-public.pem'));
   fs.writeFileSync(path.join(out, 'KEY-FINGERPRINT.txt'), `${keyId}\n`);
   const files = [...fs.readdirSync(tarballs).map(name => path.join('tarballs', name)), ...fs.readdirSync(offline).map(name => path.join('offline', name))].sort();
-  fs.writeFileSync(path.join(out, 'SHA256SUMS'), files.map(file => `${sha256(path.join(out, file))}  ${file}`).join('\n') + '\n');
+  // Plain file names, so `sha256sum -c SHA256SUMS` works in a folder holding the downloaded assets.
+  fs.writeFileSync(path.join(out, 'SHA256SUMS'), files.map(file => `${sha256(path.join(out, file))}  ${path.basename(file)}`).join('\n') + '\n');
   fs.rmSync(work, { recursive: true, force: true });
   return { version, targets: natives, keyId, files, out };
 }

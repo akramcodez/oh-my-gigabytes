@@ -1,0 +1,167 @@
+name: Install smoke test
+# Clean-machine check of the signed packages (release plan R20). Two sources:
+#   dry-run  signs the binaries of a Release build run with a throwaway key made inside this run, then
+#            installs the result. It exercises the whole signing and install path with no release.
+#   release  installs the assets of a draft or published GitHub Release signed with the real key, and
+#            checks the key against the fingerprint you pass in (compare it against a copy you trust).
+# Nothing here publishes anything or creates a release.
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: dry-run (throwaway key) or release (real assets)
+        type: choice
+        options: [dry-run, release]
+        default: dry-run
+      run_id:
+        description: dry-run - id of a successful "Release build" run
+        type: string
+        default: ''
+      release_tag:
+        description: release - tag of the release holding the signed assets
+        type: string
+        default: ''
+      expected_key_id:
+        description: release - SHA-256 key fingerprint you trust (required for release)
+        type: string
+        default: ''
+      previous_tag:
+        description: release - optional earlier release to upgrade from
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  prepare:
+    name: prepare the bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write # a draft release is visible only to a token that can push
+      actions: read
+      id-token: write
+      attestations: read
+    outputs:
+      version: ${{ steps.bundle.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE: ${{ inputs.source }}
+      RUN_ID: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      EXPECTED_KEY_ID: ${{ inputs.expected_key_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir bundle
+          if [ "$SOURCE" = release ]; then
+            [ -n "$RELEASE_TAG" ] && [ -n "$EXPECTED_KEY_ID" ] || { echo "release needs release_tag and expected_key_id" >&2; exit 1; }
+            gh release download "$RELEASE_TAG" --dir bundle
+            version="${RELEASE_TAG#v}"
+          else
+            [ -n "$RUN_ID" ] || { echo "dry-run needs run_id" >&2; exit 1; }
+            version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+            gh run download "$RUN_ID" --dir ci-artifacts
+            node -e "
+              const c = require('node:crypto'), fs = require('node:fs');
+              const { publicKey, privateKey } = c.generateKeyPairSync('ed25519');
+              fs.mkdirSync('keys', { mode: 0o700 });
+              fs.writeFileSync('keys/public.pem', publicKey.export({ type: 'spki', format: 'pem' }));
+              fs.writeFileSync('keys/private.pem', privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });"
+            node scripts/sign-release.js --artifacts ci-artifacts --version "$version" \
+              --public-key keys/public.pem --private-key keys/private.pem --out signed --repo "$GITHUB_REPOSITORY"
+            cp signed/tarballs/* signed/offline/* signed/SHA256SUMS signed/release-public.pem signed/KEY-FINGERPRINT.txt bundle/
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          ls -la bundle
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: bundle
+          if-no-files-found: error
+  smoke:
+    name: ${{ matrix.os }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-latest, macos-15, macos-15-intel, macos-26]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      EXPECTED_KEY_ID: ${{ inputs.expected_key_id }}
+      PREVIOUS_TAG: ${{ inputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundle
+          path: bundle
+      - name: Check the downloaded files and the signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd bundle && (sha256sum -c SHA256SUMS || shasum -a 256 -c SHA256SUMS))
+          # The fingerprint of the public key shipped with the bundle, computed here and not read from
+          # the bundle's own text file, must equal the one you trust.
+          actual="$(node -e "
+            const c = require('node:crypto'), fs = require('node:fs');
+            const key = c.createPublicKey(fs.readFileSync('bundle/release-public.pem'));
+            process.stdout.write(c.createHash('sha256').update(key.export({ type: 'spki', format: 'der' })).digest('hex'));")"
+          [ "$actual" = "$(tr -d '\r\n' < bundle/KEY-FINGERPRINT.txt)" ]
+          if [ -n "$EXPECTED_KEY_ID" ]; then [ "$actual" = "$EXPECTED_KEY_ID" ] || { echo "signing key is not the trusted one" >&2; exit 1; }; fi
+          echo "key $actual"
+      - name: Install, run, reinstall and uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          native() { if command -v cygpath > /dev/null; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+          target="$(node -e "console.log(require('./packages/oh-my-gigabytes/lib/verify').hostTarget())")"
+          echo "target $target, version $VERSION"
+          wrapper="$(native "$PWD/bundle/oh-my-gigabytes-$VERSION.tgz")"
+          platform="$(native "$PWD/bundle/oh-my-gigabytes-$target-$VERSION.tgz")"
+          prefix="$RUNNER_TEMP/prefix with spaces" # a space on purpose
+          if [ "$RUNNER_OS" = Windows ]; then omg="$prefix/omg"; else omg="$prefix/bin/omg"; fi
+          install() { npm install --global --prefix "$(native "$prefix")" --ignore-scripts --offline --no-audit --no-fund "$@"; }
+
+          # Optional upgrade path: start from an earlier release, scan, then install the new one over it.
+          state="$(native "$RUNNER_TEMP/state")"
+          mkdir -p "$RUNNER_TEMP/smoke-root/sub"; echo hello > "$RUNNER_TEMP/smoke-root/sub/file.txt"
+          root="$(native "$(cd "$RUNNER_TEMP/smoke-root" && pwd -P)")"
+          if [ -n "$PREVIOUS_TAG" ]; then
+            mkdir previous
+            gh release download "$PREVIOUS_TAG" --dir previous --pattern "oh-my-gigabytes-*.tgz"
+            previous="${PREVIOUS_TAG#v}"
+            install "$(native "$PWD/previous/oh-my-gigabytes-$previous.tgz")" "$(native "$PWD/previous/oh-my-gigabytes-$target-$previous.tgz")"
+            "$omg" --state-dir "$state" scan --root "$root" > /dev/null
+          fi
+
+          install "$wrapper" "$platform"
+          "$omg" --version | tee version.txt
+          grep -q "${VERSION}" version.txt
+          "$omg" --state-dir "$state" doctor | tee doctor.txt
+          grep -q 'permanent delete: unsupported' doctor.txt
+          "$omg" --state-dir "$state" scan --root "$root"
+          "$omg" --state-dir "$state" status > /dev/null
+          [ -f "$RUNNER_TEMP/state/index.sqlite" ]
+
+          install "$wrapper" "$platform" # reinstall over itself
+          "$omg" --state-dir "$state" status > /dev/null
+          npm uninstall --global --prefix "$(native "$prefix")" --ignore-scripts --offline oh-my-gigabytes "oh-my-gigabytes-$target"
+          [ ! -e "$omg" ] || { echo "launcher still present after uninstall" >&2; exit 1; }
+          [ -f "$RUNNER_TEMP/state/index.sqlite" ] # uninstall keeps the user's data
+
+          # The offline bundle installs by itself, with no platform package.
+          rm -rf "$prefix"
+          install "$(native "$PWD/bundle/oh-my-gigabytes-offline-$target-$VERSION.tgz")"
+          "$omg" --version

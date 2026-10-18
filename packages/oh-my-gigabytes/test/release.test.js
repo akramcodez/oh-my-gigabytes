@@ -144,8 +144,9 @@ test('sign-release signs every target and names them all in the published wrappe
   const lines = fs.readFileSync(path.join(out, 'SHA256SUMS'), 'utf8').trim().split('\n');
   assert.equal(lines.length, 11);
   for (const line of lines) {
-    const [digest, file] = line.split('  ');
-    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join(out, file))).digest('hex'), digest, file);
+    const [digest, name] = line.split('  ');
+    const file = fs.existsSync(path.join(out, 'tarballs', name)) ? path.join(out, 'tarballs', name) : path.join(out, 'offline', name);
+    assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'), digest, name);
   }
   assert.ok(!fs.existsSync(path.join(out, 'work')), 'staging folders are removed');
 });
