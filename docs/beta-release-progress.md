@@ -1,6 +1,6 @@
 # Analysis-only beta: progress
 
-Target: `0.1.0-beta.1`, analysis only (permanent delete compiled out), Linux, Windows and macOS. Status as of 2026-10-19: **not released.** Nothing is tagged, uploaded or published, and no production signing key exists. Evidence lives in the platform pages: [linux-qualification.md](linux-qualification.md), [windows-evidence.md](windows-evidence.md), [macos-evidence.md](macos-evidence.md), [release.md](release.md).
+Target: `0.1.0-beta.1`, analysis only (permanent delete compiled out), Linux, Windows and macOS. Status as of 2026-10-19: **engineering complete for the analysis-only beta; not released.** Final dry run on commit `71b1538`: Checks green on all nine platform legs plus supply chain, release build run 39245775796 (five targets), install smoke run 39246347274 (eight machines). What remains is the owner's: production signing key, security contact, npm names and publishing, and the go-ahead to tag and publish. Nothing is tagged, uploaded or published, and no production signing key exists. Evidence lives in the platform pages: [linux-qualification.md](linux-qualification.md), [windows-evidence.md](windows-evidence.md), [macos-evidence.md](macos-evidence.md), [release.md](release.md).
 
 Scope decisions (owner, 2026-10-18): analysis-only first; native macOS analysis adapter tested on GitHub-hosted runners; GitHub Releases plus npm, Ed25519 signing only (no Authenticode, no Apple notarization).
 
