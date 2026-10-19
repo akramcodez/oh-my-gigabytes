@@ -8,7 +8,8 @@ OMG (Oh My Gigabytes) is a local-first, keyboard-first storage analyzer for deve
 
 It is a **development preview**:
 - **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. Permanent delete runs on Linux and on Windows NTFS. The older `planning::execute` still always fails closed.
-- **Linux and Windows.** Native scanning, state and permanent delete work on Linux and Windows. Windows scans NTFS, ReFS and FAT32 and deletes on NTFS only. The background service is Linux only. macOS compiles with the native adapters disabled. Windows status and gaps: `docs/windows-evidence.md`.
+- **Linux, Windows and macOS.** Native scanning and state work on all three. Permanent delete exists on Linux and Windows NTFS in the default build only; macOS is analysis only. Windows scans NTFS, ReFS and FAT32. The background service is Linux only. macOS scans APFS, HFS+, exFAT and FAT through `platform::macos` (macOS 15 or newer) and has been tested only on GitHub-hosted runners. Status and gaps: `docs/windows-evidence.md`, `docs/macos-evidence.md`, `docs/linux-qualification.md`.
+- **First release is an analysis-only beta (`0.1.0-beta.1`).** Release builds use `--no-default-features`, which compiles permanent delete out. Progress and what is left: `docs/beta-release-progress.md`. Procedure: `docs/release.md`, "Releasing the beta".
 - **Phases ship as development milestones.** Phases 0–5 are recorded as milestones with unpassed acceptance gates. See `docs/checklist.md`.
 
 ## Source-of-truth documents
@@ -31,9 +32,11 @@ The toolchain is pinned to Rust 1.95.0 in `rust-toolchain.toml` (edition 2024, w
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
-cargo build -p omg-cli --locked && python3 -m unittest discover -s tests -p 'test_*.py' -v   # Linux PTY smoke test; needs target/debug/omg
+cargo build -p omg-cli --locked && python3 -m unittest discover -s tests -p 'test_*.py' -v   # Unix PTY smoke test (Linux, macOS); needs target/debug/omg
 node --test packages/oh-my-gigabytes/test/release.test.js                                     # npm launcher/signing tests (Node 22+)
 ```
+
+CI runs those on nine runners (ubuntu-22.04/24.04/24.04-arm, windows-2022/latest/11-arm, macos-15/15-intel/26) in both the default and the `--no-default-features` (analysis-only) build, plus `cargo deny` and a CycloneDX schema check. Run the analysis-only build locally with `cargo test --workspace --no-default-features --locked`; it replaces `target/debug/omg`, so rebuild with `cargo build -p omg-cli --locked` before `release.test.js`. Actions are pinned by commit SHA.
 
 Running a subset of tests:
 
@@ -41,12 +44,15 @@ Running a subset of tests:
 cargo test -p omg-core --test service                      # one integration-test file (scanner, policy, planning, service)
 cargo test -p omg-core --test service ipc_is_a_closed      # one test by name substring
 cargo test -p omg-cli --test cli service::                 # CLI end-to-end tests (use the built binary via CARGO_BIN_EXE_omg)
+cargo test -p omg-core --test migrations                   # schema 1..11 upgrade and recovery
+cargo test -p omg-core --test macos                        # macOS only: hdiutil disk images (APFS, HFS+, exFAT, FAT32)
+scripts/fs-sandbox.sh ext4|xfs|btrfs up|test|down          # loop-image filesystem sandbox (needs sudo and mkfs tools)
 cargo run --release -p omg-core --example benchmark        # synthetic scan benchmark
 python3 -m unittest discover -s spikes/phase0 -p 'test_*.py' -v   # Phase 0 Python probe (not the engine)
 cargo test -p omg-core --test windows                     # Windows only: native scan and delete tests
 ```
 
-Windows: CI's `windows-latest` builds with MSVC. Local builds can use `1.95.0-x86_64-pc-windows-gnu` with a MinGW linker on a path without spaces. Build from a copy on a Windows drive, not from `\\wsl.localhost`. The deletion tests skip, with a message, when `TMP` is inside a Git repository; set `TMP` to a folder outside one.
+Windows: CI's Windows runners build with MSVC and a static C runtime (`.cargo/config.toml`). Local builds can use `1.95.0-x86_64-pc-windows-gnu` with a MinGW linker on a path without spaces. Build from a copy on a Windows drive, not from `\\wsl.localhost`. The deletion tests skip, with a message, when `TMP` is inside a Git repository; set `TMP` to a folder outside one.
 
 Running the app. Always use a separate private state directory for experiments. The default is `$XDG_STATE_HOME/omg` (Windows: `%LOCALAPPDATA%\omg`), or `OMG_STATE_DIR` if set.
 
@@ -57,8 +63,8 @@ cargo run -p omg-cli -- --state-dir /tmp/omg-state             # TUI; needs a re
 ```
 
 Constraints that affect tests and running:
-- **Filesystem.** Linux: scan roots and the state directory must be on ext-family, tmpfs or Btrfs; `platform::linux::root` checks the filesystem magic and requires `openat2`. Windows: a local drive-letter path on NTFS, ReFS or FAT32; `platform::windows::open_root` refuses links, network drives and other filesystems.
-- **Permissions.** On Unix the state directory must be owned by the current user with mode `0700`. Tests create it with `private_state()`. On Windows the owner-only ACL check is not implemented yet.
+- **Filesystem.** Linux: scan roots and the state directory must be on ext-family, XFS, tmpfs or Btrfs; `platform::linux::root` checks the filesystem magic and requires `openat2` (Linux 5.6+). macOS: a local APFS, HFS+, exFAT or FAT volume, given by its real path (`/tmp` and `/var` are links; use `/private/tmp`); the sealed system volume is refused. Windows: a local drive-letter path on NTFS, ReFS or FAT32; `platform::windows::open_root` refuses links, network drives and other filesystems.
+- **Permissions.** On Unix the state directory must be owned by the current user with mode `0700`. Tests create it with `private_state()`. On Windows `platform::windows_state` creates it with an access list for you and SYSTEM only and refuses one open to others; Windows tests call `platform::windows_state::protect` on their temp folders. macOS tests need a canonical `TMPDIR` (CI sets it with `pwd -P`) because omg refuses links in a root or state path.
 
 ## Architecture
 
@@ -103,6 +109,7 @@ Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per fi
 
 The walk is platform-neutral. `platform::native` supplies the five native operations (open root, open a verified directory, read its metadata, list its children, read the volume):
 - **Linux:** `openat2` (`RESOLVE_NO_SYMLINKS | BENEATH | NO_XDEV`) and one `statat` per entry.
+- **macOS** (`platform::macos`): `openat` with `O_NOFOLLOW_ANY | O_RESOLVE_BENEATH` and one `statat` per entry; a different `st_dev` is a mount boundary; the sealed system volume (`MNT_ROOTFS`) and non-local mounts are refused; iCloud dataless files (`SF_DATALESS`) are recorded and never read; a Darwin kernel older than 24 (macOS 15) is refused because an older kernel could ignore the open flags. Values and behaviour: `docs/macos-evidence.md`.
 - **Windows** (`platform/windows.rs`): verbatim `\\?\` paths opened with reparse points visible; children listed with `FileIdExtdDirectoryInfo`, with no per-entry open; each directory's final path and file id checked against the listing. Links, mount points and cloud placeholders are recorded as excluded and never read.
 
 Only a `complete` scan replaces the `active` singleton, which is the published view. `partial`, `cancelled` and `failed` scans keep the previous valid index. Older scans are deleted, and a volume/trend sample is recorded after every complete or partial scan.
@@ -152,9 +159,9 @@ Only `config`, `notify`, `schedule` and `trend` are portable. `daemon`, `ipc` an
 - **Structural guard test.** `service_logic_contains_no_deletion_or_cleanup_calls` in `crates/omg-core/tests/service.rs` greps the service sources for `remove_file`, `remove_dir`, `rename(`, `planning`, `Trash`, `unlink` and `authoriz`. **Comments count too.** Choose wording that avoids those words in `daemon.rs`, `notify.rs`, `trend.rs`, `schedule.rs` and `config.rs`.
 - **Unknown is not zero.** Represent unknown sizes and identities as unknown. Keep paths as raw bytes; display strings are never path authority. Notifications and default diagnostics must not contain paths or filenames.
 - **Strict, bounded parsers.** All external input — catalog, config, IPC, release manifests — is size-bounded and rejects unknown fields. Keep it that way.
-- **Packaging capability coupling.** Manifest `capabilities` are produced in `scripts/assemble-release.js` and validated exactly in `packages/oh-my-gigabytes/lib/verify.js`. Change both together, and update `release.test.js`. Linux and Windows full builds declare `cleanup: development-unqualified`; Windows declares `analysis: development-windows` and `service: disabled`.
+- **Packaging capability coupling.** Manifest `capabilities` are produced in `scripts/assemble-release.js` and validated exactly in `packages/oh-my-gigabytes/lib/verify.js`. Change both together, and update `release.test.js`. Linux and Windows full builds declare `cleanup: development-unqualified`; Windows declares `analysis: development-windows` and `service: disabled`; macOS declares `analysis: development-macos`, `cleanup: disabled` and `service: disabled`. `assemble-release.js` defaults to the `analysis-only` variant and only runs a binary the host can execute; `scripts/sign-release.js` is the owner's multi-target signing step (the signing key never goes to CI).
 - **Tests must not touch the real user session.** systemd tests use a fake `systemctl` script (`Systemd { systemctl, unit_dir, unit }`). CLI tests set `XDG_CONFIG_HOME` and `HOME` to temp directories. Never let a test write to the real `~/.config/systemd/user`.
-- **Platform gating.** Linux-only code stays behind `#[cfg(target_os = "linux")]` and Windows-only code behind `#[cfg(windows)]`, so every CI leg compiles. Declare every `windows-sys` feature omg-core uses in its own `Cargo.toml`: `cargo test -p omg-core` builds it without the CLI's dependencies, which otherwise enable some features by accident.
+- **Platform gating.** Linux-only code stays behind `#[cfg(target_os = "linux")]`, macOS-only code behind `#[cfg(target_os = "macos")]` and Windows-only code behind `#[cfg(windows)]`, so every CI leg compiles. There is no local Mac: macOS code is compiled and tested only by CI, so push and read the macOS legs before relying on it. Declare every `windows-sys` feature omg-core uses in its own `Cargo.toml`: `cargo test -p omg-core` builds it without the CLI's dependencies, which otherwise enable some features by accident.
 
 ## Style
 

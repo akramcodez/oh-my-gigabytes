@@ -18,17 +18,21 @@ Status: **no profile is qualified.** This page records what was actually run, an
 | Fedora 44, kernel 7.2.9-201, x86_64, Btrfs `/home` | Owner's desktop | Scan and CLI tests passed (native, prior session; ignored Btrfs tests not re-run after cleanup in this session) | Unit and integration tests run on tmpfs; not run on this Btrfs home | Reported by `stat -c %w` on 2026-10-15 | Development only |
 | tmpfs (`/tmp`) on the same host | Same | Full test suite passed (2026-10-15) | Full cleanup suite passed (16 tests, including race barriers and hard-link oracle) | Reported | Development only |
 | ext4 (loop image, `scripts/ext4-sandbox.sh`, kernel 7.2.9) | Owner's host, 2026-10-15 | Scanner suite: 9 passed, 1 ignored (Btrfs-only) | Cleanup suite: 16 passed (race barriers, hard-link oracle, partial removal, interrupted attempt) | Not captured in that run; `up` now prints it | Development: passed on ext4 |
-| WSL2 ext4 | **Not available** | Not run | Not run | Not measured | **Missing** |
-| Linux ARM64 GNU | **Not available** | Not built | Not run | — | **Missing** |
-| Oldest supported kernel (openat2) | **Not available** | Not run | Not run | — | **Missing** |
+| WSL2 ext4 (Ubuntu 24.04.3, kernel 5.15.167.4, glibc 2.39, x86_64; `/` and `/tmp` are ext4) | Owner's PC, 2026-10-18 | Full workspace suite passed: scanner 9, rollup 5, policy 3, planning 1, CLI 10, core unit 16, migrations 4, service 20 | Cleanup suite 19 passed in the default build; the analysis-only build (the one released) passed too | Not recorded | Development: passed on WSL2 ext4. Same host, kernel 5.15 also confirms `openat2` works on 5.15 |
+| Linux ARM64 GNU (GitHub `ubuntu-24.04-arm`, Ubuntu 24.04, aarch64) | Hosted runner, 2026-10-18 and 2026-10-19 | Full workspace suite passed in the default and analysis-only builds (run 39111223427); a `st_nlink` type error on aarch64 was found and fixed | Cleanup suite passed in the default build | Not recorded | Development: hosted-runner evidence only |
+| Ubuntu 22.04 (GitHub `ubuntu-22.04`, glibc 2.35, x86_64) | Hosted runner | Full suite passed | Passed | Not recorded | Development: hosted-runner evidence only |
+| Distro userlands in containers (`ubuntu:20.04`, `22.04`, `24.04`, `debian:11`, `12`, `almalinux:8`, `9`, `fedora:latest`, `amazonlinux:2023`) | Owner's PC, Docker 29.1.3, 2026-10-18 | The glibc 2.28 release binary ran `--version`, `scan`, `status` and `doctor` on a bind-mounted ext4 folder in each | Not run | — | Passed. All containers share the WSL kernel 5.15, so this tests the C library and userland, not kernels. `alpine:3.20` cannot run the binary (no glibc), as intended |
+| glibc floor | Release build, 2026-10-19 (run 39111562168) | Built in `manylinux_2_28` for x86_64 and aarch64; `scripts/check-glibc.sh` found a maximum of `GLIBC_2.28` in both | — | — | Passed |
+| Oldest supported kernel (openat2, Linux 5.6) | **Not available** | Not run | Not run | — | **Missing**. Lowest kernel observed: 5.15. The error for a kernel without `openat2` is unit-tested only for its wording, not exercised on such a kernel |
+| XFS (loop image) | **Not available** | Not run: `mkfs.xfs` is not installed and `sudo` needs a password on the test host | Refused by design | — | **Missing**. XFS is accepted for scanning in code and the magic number is unit-tested; `scripts/fs-sandbox.sh xfs` is untried |
 | FUSE, cloud, network mounts (sshfs, rclone, gvfs) | Not tested | Expected to be refused by root acquisition (filesystem allowlist); not verified | Not run | — | **Missing** |
 
 ## Requirements observed (not yet proven minimums)
 
 - `openat2` with `RESOLVE_NO_SYMLINKS | BENEATH | NO_XDEV` is used for every root and descendant walk. The oldest kernel that provides it has not been tested.
 - The state directory must be owned by the current user with mode 0700 (checked on every open).
-- glibc build from `cargo build --locked`. The minimum glibc baseline is not measured.
-- Filesystem families accepted: ext2/3/4 (`0xef53`), tmpfs, Btrfs. All others are refused at root acquisition.
+- Release binaries are built in a glibc 2.28 container and need glibc 2.28 or newer (measured, see above). A development build made on a newer distro needs that distro's glibc.
+- Filesystem families accepted for scanning: ext2/3/4 (`0xef53`), XFS (`0x58465342`), tmpfs, Btrfs. All others are refused at root acquisition. Permanent delete is never offered on XFS.
 
 ## Known limits in this matrix
 

@@ -1,6 +1,6 @@
 # macOS evidence
 
-Status: **no native macOS adapter yet.** macOS compiles with the native adapters disabled. This page records what was measured on GitHub-hosted macOS runners so the adapter (work package R04) is built on facts. The owner has no Mac, so the hosted runners are the only test bed. Nothing here is a certification. Plan: `docs/checklist.md`, release plan R03-R06.
+Status: **native analysis-only adapter, tested only on GitHub-hosted runners.** `platform::macos` scans APFS, HFS+, exFAT and FAT volumes and never changes a file. Permanent delete, OS Trash and a background service do not exist on macOS. The owner has no Mac, so the hosted runners are the only test bed; nothing here is a certification. See [beta-release-progress.md](beta-release-progress.md).
 
 ## Test bed
 
@@ -48,6 +48,24 @@ The repository is public, so standard hosted runners are free. Workflow: `.githu
 - Gatekeeper and quarantine behaviour of a binary a user downloads in a browser.
 - Anything on macOS older than 15.
 
+## Adapter results (2026-10-18 and 2026-10-19)
+
+`platform::macos` follows the decisions above. Verified on `macos-15`, `macos-15-intel` and `macos-26` (Checks run 39111223427, commit `ad22c81`): fmt, clippy `-D warnings` (default and analysis-only builds), the full workspace tests, the PTY terminal smoke test and the Node release tests.
+
+| Check | Result |
+| --- | --- |
+| Roots through a link (`/tmp`) | Refused with a hint to use `/private/tmp`; a real folder opens |
+| Sealed system volume (`/`) | Refused (`MNT_ROOTFS`) |
+| Home-like tree on APFS | Totals, hard-link identity (links = 2), links recorded and not followed, sparse apparent greater than allocated, unique total counts hard-linked data once |
+| Disk-image matrix (`tests/macos.rs`) | APFS, case-sensitive APFS, HFS+, case-sensitive HFS+, exFAT and FAT32 images each mounted, scanned with no errors, sizes exact, hard links and links on the volumes that support them |
+| Mount boundary | A mounted image inside the scan root is recorded as "mount boundary not crossed" and nothing below it is indexed |
+| Delete capability | `omg doctor` says `permanent delete: unsupported`; APFS, HFS+ and FAT are refused by `capability::permanent_delete` |
+| Quarantined copy of the binary | A copy with `com.apple.quarantine` set runs from a terminal (`--version`). Gatekeeper's dialog for a Finder launch is not testable on a runner |
+| Raw-byte file names | APFS rejects file names that are not valid UTF-8 (`EILSEQ`), so that fixture is created only where allowed |
+| Release binary | `darwin-arm64` (built on macos-15) and `darwin-x64` (macos-15-intel) with `MACOSX_DEPLOYMENT_TARGET=15.0`; the signed packages installed and ran on macos-15, macos-15-intel and macos-26 (smoke run 39196125718) |
+
+Minimum macOS is 15: the adapter checks `uname -r` for Darwin 24 or newer before opening a root.
+
 ## Gates not passed
 
-No adapter, no scanner test on macOS, no PTY test on macOS, no packaged install on macOS. The checklist items for macOS stay unchecked.
+No macOS older than 15, no real Mac, no TCC / Full Disk Access / iCloud / Time Machine / Gatekeeper dialog behaviour, no Apple notarization or code-signing identity. The macOS items in `docs/checklist.md` stay unchecked.

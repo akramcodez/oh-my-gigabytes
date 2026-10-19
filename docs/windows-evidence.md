@@ -77,11 +77,25 @@ Release manifest: Windows full builds now declare `analysis: development-windows
 
 The owner's home folder is a Git repository (`C:\Users\SK AKRAM\.git` exists). The existing policy walks up from each entry to find a repository, so under the current rule almost everything in the home is "inside an active repository". Only build and dependency folders stay deletable there. This is existing policy, not Windows-specific, and it is not changed here. Decide before the deletion milestone whether the home-as-repository case should be treated differently.
 
+## Owner-only state directory (2026-10-19)
+
+`platform::windows_state` is the counterpart of the Unix "owned by you, mode 0700" check. A state directory OMG creates gets a protected access list (`D:PAI(A;OICI;FA;;;<you>)(A;OICI;FA;;;SY)`: no inherited entries, full control for you and SYSTEM, inherited by files inside). Every open verifies that you (or your token's default owner, for an elevated administrator) own the directory and that no access entry grants anything to anyone else. SYSTEM, Administrators, CREATOR OWNER and OWNER RIGHTS are accepted. A directory that fails is refused with the `icacls` command that fixes it, and `omg doctor` refuses it too without changing anything. `platform/windows.rs` stays read-only; the new module touches only OMG's own state directory.
+
+Existing state directories created by earlier builds inherit their parent's access list. Under `%LOCALAPPDATA%` that list is already private, but a folder under a drive root such as `C:\src\omg-state` usually inherits "Authenticated Users" and is now refused until the `icacls` fix is applied.
+
+Verified: `tests/windows.rs` module `state_acl` (a created directory lists no Everyone/Users/Authenticated Users; a directory granted to Everyone is refused, `omg doctor` does not repair it, and it is accepted again after the grant is removed). Run natively on the owner's PC (Rust 1.95.0 GNU toolchain from a copy on C:, 15 tests passed) and on `windows-2022`, `windows-latest` and `windows-11-arm` (run 39111223427). `cargo clippy -D warnings` and `cargo fmt --check` were clean natively in both build modes.
+
+## Hosted CI and release binary (2026-10-19)
+
+- CI legs: `windows-2022`, `windows-latest` (MSVC) and `windows-11-arm` pass fmt, clippy and tests in the default and analysis-only builds, plus the Node release tests (not on Arm).
+- The released `omg.exe` is built with a static C runtime (`.cargo/config.toml`). Its import table lists only `KERNEL32`, `USER32`, `advapi32`, `ntdll`, `bcryptprimitives` and `api-ms-win-core-synch`; no Visual C++ runtime DLL (`objdump -p` on the file from release run 39108897938).
+- The signed `win32-x64` package installed, ran, scanned, reinstalled and uninstalled on `windows-2022` and `windows-latest` (smoke run 39196125718). Authenticode signing is not done, so SmartScreen may warn on a manual download.
+
 ## Known gaps (not done, not claimed)
 
 - **Hard-link counts.** Enumeration does not read link counts, so each Windows name counts once. Data reachable by two names is double-counted in folder totals until link counts are read (plan W02).
 - **Containment.** Each directory is checked by final path and file ID, which refuses a junction swapped into an intermediate component. Relative `NtCreateFile` opens (the stronger design in the plan) are not used.
-- **State directory ACLs.** The owner-only ACL check (W03) is not implemented. The Unix mode check does not apply on Windows.
+- **State directory ACLs.** Done 2026-10-19: see "Owner-only state directory" below.
 - **Cloud placeholders.** Placeholder detection uses attributes and reparse tags. It is not tested against a live OneDrive sync root.
 - **Drive root and system folders.** Scanning `C:\` as a whole is untested. `System Volume Information` and `$Recycle.Bin` are excluded by name.
 - **Progress estimate.** No used-inode count is available on Windows, so the ETA is unavailable.

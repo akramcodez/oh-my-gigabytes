@@ -8,7 +8,7 @@ Status: partly done. Items marked **owner** cannot be completed in the repositor
 - Signed binary manifests use Ed25519 with a pinned `keyId` and the tests use synthetic keys only.
 - Catalog import requires a signed payload. Import is disabled until a release verification key is provisioned (`catalog.rs`).
 - CI permissions are `contents: read` in both workflows. The artifact job requests `id-token` and `attestations` only for provenance.
-- Native artifacts are restricted to Linux x86_64 GNU (`artifacts.yml`). macOS and Windows stay compile checks (`check.yml`), as the plan requires.
+- Native artifacts are built by `release.yml` for Linux x86_64/aarch64 GNU, Windows x64 and macOS arm64/Intel (updated 2026-10-19; `artifacts.yml` was removed). Nothing is signed or published by CI.
 - `scripts/sbom.js` produces a CycloneDX 1.5 dependency inventory from `Cargo.lock` (local inventory, not a validated release SBOM).
 - License files `LICENSE-MIT` and `LICENSE-APACHE` are present.
 - `SECURITY.md` describes scope and how to report.

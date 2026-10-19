@@ -81,7 +81,7 @@ See [phase3-evidence.md](phase3-evidence.md): read-only navigation/details/filte
 
 ## Phase 4 — Cross-platform release
 
-In progress: [phase4-evidence.md](phase4-evidence.md) and [release.md](release.md) record local signed packaging/verification, offline install tests and blocked cross-target qualification.
+In progress: [phase4-evidence.md](phase4-evidence.md) and [release.md](release.md) record local signed packaging/verification, offline install tests and blocked cross-target qualification. The analysis-only beta (`0.1.0-beta.1`) is tracked work package by work package in [beta-release-progress.md](beta-release-progress.md); hosted-runner builds, attestations and clean-machine installs exist, but no production key is provisioned and nothing is published, so the unchecked items below stay unchecked.
 
 - [ ] Establish native analysis/Trash certification and final OS/filesystem/architecture matrix.
 - [ ] Publish security reporting channel and adopted license/notices.

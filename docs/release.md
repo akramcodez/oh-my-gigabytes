@@ -1,6 +1,6 @@
 # Development distribution, authenticity and installation
 
-Status: Phase 4 development packaging implementation. **No npm package or signed public release is published.** Source wrapper/native packages are private; signing keys and namespace ownership are not provisioned. Native macOS/Windows analysis and all cleanup/services remain disabled. **Update (WP02, 2026-10-15):** Linux packages declare permanent delete as `development-unqualified` (home-only, unqualified). OS Trash is not implemented. Services are unchanged.
+Status: Phase 4 development packaging implementation. **No npm package or signed public release is published.** Source wrapper/native packages are private; the production signing key and npm namespace ownership are not provisioned. **Update (2026-10-19):** the first release is an analysis-only beta (`0.1.0-beta.1`) for Linux, Windows and macOS; see [Releasing the beta](#releasing-the-beta) and [beta-release-progress.md](beta-release-progress.md). Releases default to the analysis-only variant, in which permanent delete is compiled out. A full build still declares permanent delete as `development-unqualified` on Linux and Windows; OS Trash is not implemented.
 
 ## What exists
 
@@ -8,7 +8,10 @@ Status: Phase 4 development packaging implementation. **No npm package or signed
 - `scripts/assemble-release.js`: builds exact-version platform package, wrapper with optional dependency, and self-contained offline wrapper from an explicitly supplied binary and maintainer-controlled Ed25519 key pair.
 - `scripts/verify-release.js`: offline verification using an independently trusted public key, expected target and version.
 - `scripts/sbom.js`: CycloneDX 1.5 dependency inventory from locked Cargo metadata; validate against the CycloneDX schema and review licenses before production release.
-- `.github/workflows/artifacts.yml`: explicit native build/test/provenance development-artifact workflow. It never signs an application release, publishes npm or installs services. It has not run on hosted runners in this session.
+- `.github/workflows/release.yml`: builds the analysis-only binaries for all five targets (Linux x64 and arm64 in a `manylinux_2_28` container, Windows with a static C runtime, macOS arm64 and Intel), checks them, attests their provenance and uploads them as workflow artifacts. It never signs, creates a release, publishes to npm or installs a service.
+- `scripts/sign-release.js`: the owner's step. Verifies the CI binaries (recorded digest and `gh attestation verify`), signs them with the offline key through `assemble-release.js`, and writes the npm tarballs, offline bundles, `SHA256SUMS`, the public key and its fingerprint.
+- `.github/workflows/smoke.yml`: installs the signed packages on eight clean runners (`dry-run` signs with a throwaway key made inside the run; `release` installs real release assets and checks the key fingerprint you pass in).
+- `scripts/build-manylinux.sh`, `scripts/check-glibc.sh`, `scripts/validate-sbom.py`: the Linux build recipe, the glibc ceiling check and the CycloneDX 1.5 schema validation.
 
 ## Local build and signed assembly
 
@@ -50,7 +53,7 @@ Ed25519 signs `OMG-BINARY-MANIFEST-V1\0` followed by the **exact UTF-8 manifest 
 
 - `schema`, application `version`, platform `target`, Rust `triple`.
 - Fixed `file` (`omg` or `omg.exe`), exact `size`, SHA-256 `sha256`, pinned `keyId`.
-- `capabilities`: Linux analysis and service `development-linux`; Windows analysis `development-windows` and service `disabled`; other OS `disabled`. Permanent delete is `development-unqualified` on Linux and Windows full builds (`disabled` for the analysis-only variant and other OS). The binary refuses unknown filesystems, and on Windows everything except NTFS. OS Trash is not implemented and is not declared. The manifest field is still named `cleanup`; its value is the permanent-delete capability. The packages still never register or start a service; registration is the user's explicit `omg start`/`omg service install`.
+- `capabilities`: Linux analysis and service `development-linux`; Windows analysis `development-windows` and service `disabled`; macOS analysis `development-macos`, cleanup `disabled` and service `disabled`. Permanent delete is `development-unqualified` on Linux and Windows full builds (`disabled` for the analysis-only variant and other OS). The binary refuses unknown filesystems, and on Windows everything except NTFS. OS Trash is not implemented and is not declared. The manifest field is still named `cleanup`; its value is the permanent-delete capability. The packages still never register or start a service; registration is the user's explicit `omg start`/`omg service install`.
 
 The launcher rejects unsupported fields/schema/capabilities, unsigned/untrusted metadata, signature tampering, mismatched version/target, traversal file names, oversize/redirected files and changed or wrong-format binary payloads. It re-verifies **every launch** and spawns the absolute packaged binary with inherited stdio/argv, no shell or PATH replacement. Signals/exit codes are forwarded. No automatic network fallback.
 
@@ -92,10 +95,33 @@ npm uninstall --global oh-my-gigabytes
 
 Uninstall removes the launcher/platform package; it **preserves the local index/history/preferences**. No service is installed by these packages. If you registered the service, run `omg service uninstall` first (npm lifecycle hooks are not relied on); `omg doctor` reports an orphaned registration whose binary no longer exists. Uninstall never cleans scanned user files or Trash. State removal is a separate explicit scoped user decision.
 
+## Releasing the beta
+
+Everything below runs on a commit that has passed `Checks`. Steps marked **owner** need the owner's key, account or explicit go; nothing is automatic.
+
+1. **Build.** Run the `Release build` workflow on the commit (`gh workflow run release.yml --ref main`, or push a `v*` tag, which is an owner action). It uploads `omg-<target>` artifacts and an SBOM.
+2. **Download.** `gh run download RUN_ID --dir ci-artifacts`.
+3. **Sign (owner).** With the production key kept outside the repository and `gh` 2.49 or newer:
+
+   ```sh
+   node scripts/sign-release.js --artifacts ci-artifacts --version 0.1.0-beta.1 \
+     --public-key /safe/release-public.pem --private-key /safe/release-private.pem \
+     --out signed --repo akramcodez/oh-my-gigabytes
+   ```
+
+   Add `--publishable` only for the build you intend to put on npm; without it the packages stay `private` and npm refuses to publish them.
+4. **Check locally.** Install `signed/offline/oh-my-gigabytes-offline-<target>-<version>.tgz` on your machines (WSL and PowerShell) and run `omg --version`, `omg doctor`, `omg scan`. `node scripts/verify-release.js` verifies an artifact directory offline.
+5. **Draft release (owner).** Create a draft GitHub Release and upload `signed/tarballs/*`, `signed/offline/*`, `SHA256SUMS`, `release-public.pem`, `KEY-FINGERPRINT.txt` and the SBOM. Publish the key fingerprint somewhere independent of the release (the README, `SECURITY.md`, a post).
+6. **Smoke.** Run `Install smoke test` with `source=release`, the release tag and the trusted fingerprint (and `previous_tag` for an upgrade check).
+7. **npm (owner).** `npm publish --tag beta` each tarball with the platform packages first and `oh-my-gigabytes-<version>.tgz` last, so a plain `npm install oh-my-gigabytes` never selects the beta. Names `oh-my-gigabytes` and `oh-my-gigabytes-<target>` were unclaimed on 2026-10-18.
+8. **Publish the release**, and record the run ids in [beta-release-progress.md](beta-release-progress.md).
+
+A user verifies a manual download with `sha256sum -c SHA256SUMS` in the download folder, compares `KEY-FINGERPRINT.txt` with the fingerprint published elsewhere, and installs with `npm install --global --ignore-scripts --offline <offline tarball>`. On macOS a binary downloaded in a browser carries a quarantine mark and is not notarized; the npm path avoids that, and `xattr -d com.apple.quarantine` clears it for a manual copy.
+
 ## Release controls still required
 
-- Confirm npm name/platform-package ownership and repository/publisher identities; enable reviewed trusted publishing/provenance rather than shipping private test keys.
-- Pin/review CI actions and native runtime/OS targets; run actual hosted/native tests, audit dependencies/licenses and validate SBOM output.
+- Confirm npm name/platform-package ownership and repository/publisher identities; consider trusted publishing for provenance on npm (a local publish has none). Never ship the dry-run key.
+- CI actions are pinned by commit SHA and updated through Dependabot; keep reviewing those pull requests. Hosted runners now test Linux x64/arm64, Windows x64/arm64 and macOS arm64/Intel; `cargo deny` and the SBOM schema check run in CI.
 - Authenticate release key fingerprints; implement rotation/revocation and offline trust instructions with actual identities.
 - Sign final bytes after any code signing/notarization, attest actual binary and npm builds, inspect package contents/notices and release matrix.
 - Certify native metadata/cloud/Trash/state permissions, recovery and every advertised capability. macOS/Windows stub builds are not cross-platform cleaner support.
