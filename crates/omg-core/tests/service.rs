@@ -893,6 +893,12 @@ fn a_connection_from_another_user_is_dropped_without_an_answer() {
     fs::copy(std::env::current_exe().unwrap(), &client).unwrap();
     fs::set_permissions(&client, fs::Permissions::from_mode(0o755)).unwrap();
 
+    // The path travels in a file beside the copy: `sudo` drops environment variables.
+    fs::write(
+        dir.path().join("client.socket"),
+        ipc::socket_path(&state).as_os_str().as_encoded_bytes(),
+    )
+    .unwrap();
     let mut words = prefix.split_whitespace();
     let mut command = std::process::Command::new(words.next().unwrap());
     command
@@ -904,7 +910,6 @@ fn a_connection_from_another_user_is_dropped_without_an_answer() {
             "--nocapture",
             "--test-threads=1",
         ])
-        .env("OMG_TEST_CLIENT_SOCKET", ipc::socket_path(&state))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let child = command.spawn().unwrap();
@@ -942,7 +947,11 @@ fn a_connection_from_another_user_is_dropped_without_an_answer() {
 /// Client side of the test above, run as another user. Does nothing in normal test runs.
 #[test]
 fn other_user_client() {
-    let Some(path) = std::env::var_os("OMG_TEST_CLIENT_SOCKET") else {
+    // Only the copy made by the cross-user test has a `client.socket` file beside it.
+    let beside = std::env::current_exe()
+        .unwrap()
+        .with_file_name("client.socket");
+    let Ok(path) = fs::read_to_string(beside) else {
         return;
     };
     let mut stream = match UnixStream::connect(&path) {
