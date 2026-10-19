@@ -8,7 +8,7 @@ OMG (Oh My Gigabytes) is a local-first, keyboard-first storage analyzer for deve
 
 It is a **development preview**:
 - **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. Permanent delete runs on Linux and on Windows NTFS. The older `planning::execute` still always fails closed.
-- **Linux, Windows and macOS.** Native scanning and state work on all three. Permanent delete exists on Linux and Windows NTFS in the default build only; macOS is analysis only. Windows scans NTFS, ReFS and FAT32. The background service is Linux only. macOS scans APFS, HFS+, exFAT and FAT through `platform::macos` (macOS 15 or newer) and has been tested only on GitHub-hosted runners. Status and gaps: `docs/windows-evidence.md`, `docs/macos-evidence.md`, `docs/linux-qualification.md`.
+- **Linux, Windows and macOS.** Native scanning and state work on all three. Permanent delete exists on Linux and Windows NTFS in the default build only; macOS is analysis only. Windows scans NTFS and ReFS (FAT32/exFAT are refused with a message). The background service is Linux only. macOS scans APFS, HFS+, exFAT and FAT through `platform::macos` (macOS 15 or newer) and has been tested only on GitHub-hosted runners. Status and gaps: `docs/windows-evidence.md`, `docs/macos-evidence.md`, `docs/linux-qualification.md`.
 - **First release is an analysis-only beta (`0.1.0-beta.1`).** Release builds use `--no-default-features`, which compiles permanent delete out. Progress and what is left: `docs/beta-release-progress.md`. Procedure: `docs/release.md`, "Releasing the beta".
 - **Phases ship as development milestones.** Phases 0–5 are recorded as milestones with unpassed acceptance gates. See `docs/checklist.md`.
 
@@ -63,7 +63,7 @@ cargo run -p omg-cli -- --state-dir /tmp/omg-state             # TUI; needs a re
 ```
 
 Constraints that affect tests and running:
-- **Filesystem.** Linux: scan roots and the state directory must be on ext-family, XFS, tmpfs or Btrfs; `platform::linux::root` checks the filesystem magic and requires `openat2` (Linux 5.6+). macOS: a local APFS, HFS+, exFAT or FAT volume, given by its real path (`/tmp` and `/var` are links; use `/private/tmp`); the sealed system volume is refused. Windows: a local drive-letter path on NTFS, ReFS or FAT32; `platform::windows::open_root` refuses links, network drives and other filesystems.
+- **Filesystem.** Linux: scan roots and the state directory must be on ext-family, XFS, tmpfs or Btrfs; `platform::linux::root` checks the filesystem magic and requires `openat2` (Linux 5.6+). macOS: a local APFS, HFS+, exFAT or FAT volume, given by its real path (`/tmp` and `/var` are links; use `/private/tmp`); the sealed system volume is refused. Windows: a local drive-letter path on NTFS or ReFS; `platform::windows::open_root` refuses links, network drives, FAT32/exFAT and other filesystems.
 - **Permissions.** On Unix the state directory must be owned by the current user with mode `0700`. Tests create it with `private_state()`. On Windows `platform::windows_state` creates it with an access list for you and SYSTEM only and refuses one open to others; Windows tests call `platform::windows_state::protect` on their temp folders. macOS tests need a canonical `TMPDIR` (CI sets it with `pwd -P`) because omg refuses links in a root or state path.
 
 ## Architecture

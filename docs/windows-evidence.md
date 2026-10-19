@@ -1,6 +1,6 @@
 # Windows evidence
 
-Status: **development build: native Windows scanning, read-only views and permanent delete on NTFS (`development-unqualified`, owner request 2026-10-15).** Recycle Bin is not implemented. Recorded 2026-10-15 on the owner's machine. Plan: [windows-implementation-plan.md](windows-implementation-plan.md). Safety invariants S01–S12 still apply.
+Status: **development build: native Windows scanning of NTFS and ReFS, read-only views and permanent delete on NTFS (`development-unqualified`, owner request 2026-10-15).** Recycle Bin is not implemented. Recorded 2026-10-15 on the owner's machine. Plan: [windows-implementation-plan.md](windows-implementation-plan.md). Safety invariants S01–S12 still apply.
 
 ## Environment
 
@@ -103,7 +103,8 @@ Verified: `tests/windows.rs` module `state_acl` (a created directory lists no Ev
 - **Deletion through the TUI** was reached up to the confirmation dialog in Windows Terminal (plan accepted, "Are you sure? 1 item(s)"). The confirmed removal itself is verified by the integration tests, which call the same backend functions the TUI calls; an automated keypress run of the final `y` was abandoned because desktop focus moved.
 - **Launcher Ctrl+C.** `bin/omg.js` no longer force-kills the child on Windows. This was not run through a packaged binary.
 - **TUI.** Checked by screenshots of Overview, Browse and Findings, and quit with `q`. Ctrl+C and window-close behaviour were not exercised.
-- **ReFS and FAT32** are recognised but not tested on a real volume.
+- **FAT32 and exFAT** are refused. The virtual-disk matrix (`scripts/win-vhd-matrix.ps1`, run on `windows-2022` and `windows-latest`, 2026-10-19) found that scanning such a volume failed with "The parameter is incorrect" (error 87), because the scanner's file identity and directory listing use information classes that only NTFS and ReFS provide. `open_root` now refuses them with "FAT32 and exFAT volumes cannot be scanned on Windows yet". Supporting them needs a separate enumeration path and is not part of the beta. (macOS scans FAT32 and exFAT.)
+- **ReFS** is exercised by the same matrix on the Windows Server runners; see the result recorded below once it has run.
 
 ## Test artifacts
 

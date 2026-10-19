@@ -44,7 +44,8 @@ pub enum Filesystem {
     Ntfs,
     /// Windows ReFS. Scanning only.
     Refs,
-    /// Windows FAT32 or exFAT. Scanning only; these carry no ownership or permission data.
+    /// FAT32 or exFAT. Scanned on macOS; refused on Windows, whose scanner needs NTFS/ReFS file
+    /// identifiers. Never offered for deletion. These carry no ownership or permission data.
     Fat,
     Other,
 }

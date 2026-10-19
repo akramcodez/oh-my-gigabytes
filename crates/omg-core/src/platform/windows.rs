@@ -463,8 +463,16 @@ pub fn open_root(path: &Path) -> Result<Dir> {
     if unsafe { GetDriveTypeW(drive.as_ptr()) } == DRIVE_REMOTE {
         bail!("network drives are not supported");
     }
-    if filesystem(&handle)? == Filesystem::Other {
-        bail!("unsupported filesystem profile; use a local NTFS, ReFS or FAT32 volume");
+    match filesystem(&handle)? {
+        Filesystem::Other => {
+            bail!("unsupported filesystem profile; use a local NTFS or ReFS volume")
+        }
+        // Identities and listings come from NTFS/ReFS-only information classes; on FAT32 and exFAT
+        // the system answers "the parameter is incorrect". Refuse clearly instead.
+        Filesystem::Fat => bail!(
+            "FAT32 and exFAT volumes cannot be scanned on Windows yet (they lack 128-bit file identifiers); use an NTFS or ReFS volume"
+        ),
+        _ => {}
     }
     let (volume, _) = identity(&handle)?;
     Ok(Dir {

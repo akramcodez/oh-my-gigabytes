@@ -65,12 +65,20 @@ assign
         if ($FileSystem -in 'NTFS', 'ReFS') {
             cmd /c "mklink /H `"$root\docs\a-link.txt`" `"$root\docs\a.txt`"" 2>&1 | Out-Null
         }
-        $expected = (Get-ChildItem -Path $root -Recurse -File -Force |
-            Where-Object { $_.FullName -notmatch 'System Volume Information|\$RECYCLE' } |
-            Measure-Object -Property Length -Sum)
+        # An independent count of the files made above (not the whole volume: system folders are
+        # unreadable by design).
+        $made = @(Get-ChildItem -Path "$root\docs" -Recurse -File -Force) + @(Get-Item "$root\big.bin")
+        $expected = $made | Measure-Object -Property Length -Sum
 
         $state = Join-Path $work "state-$FileSystem"
         $scan = (& $Omg --state-dir $state scan --root $root 2>&1 | Out-String)
+        if ($FileSystem -in 'FAT32', 'exFAT') {
+            # Not supported on Windows yet: the scan must be refused with a clear reason, not crash.
+            if ($LASTEXITCODE -eq 0 -or $scan -notmatch 'FAT32 and exFAT volumes cannot be scanned') {
+                throw "expected a clear refusal, got:`n$scan"
+            }
+            return [pscustomobject]@{ FileSystem = $FileSystem; Result = 'refused as designed'; Entries = ''; Bytes = '' }
+        }
         if ($LASTEXITCODE -ne 0) { throw "scan failed:`n$scan" }
         $report = $scan | ConvertFrom-Json
         if ($report.state -ne 'complete' -or $report.errors -ne 0) { throw "scan was not clean:`n$scan" }
@@ -83,9 +91,7 @@ assign
             throw "indexed $($status.unique_apparent) bytes, expected $want"
         }
         $doctor = (& $Omg --state-dir $state doctor 2>&1 | Out-String)
-        if ($doctor -notmatch 'permanent delete: unsupported|permanent delete: development-unqualified|permanent delete: ') {
-            throw "doctor output not understood:`n$doctor"
-        }
+        if ($doctor -notmatch 'permanent delete: ') { throw "doctor output not understood:`n$doctor" }
         [pscustomobject]@{ FileSystem = $FileSystem; Result = 'ok'; Entries = $report.entries; Bytes = $status.unique_apparent }
     }
     finally {
