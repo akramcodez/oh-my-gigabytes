@@ -209,6 +209,54 @@ fn notification_text_and_persistence_are_privacy_safe() {
     assert!(text.is_some_and(|t| !t.contains("v2")));
 }
 
+/// `notify-send` is replaced by a script that records its arguments, so the delivery contract is
+/// checked on any machine, including ones where the real program is missing or broken.
+#[test]
+fn desktop_delivery_uses_a_constant_argument_list_and_the_message_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("argv");
+    let program = dir.path().join("notify-send");
+    fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done > '{}.tmp'\nmv '{}.tmp' '{}'\n",
+            record.display(),
+            record.display(),
+            record.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    // Text that would be dangerous if it ever reached a shell or looked like an option.
+    let text = "$(touch pwned) -- --urgency=critical `id`";
+    notify::deliver_with(&program, text).unwrap();
+    wait_until("the stand-in program to run", 10, || record.exists());
+    let argv = fs::read_to_string(&record).unwrap();
+    assert_eq!(
+        argv.lines().collect::<Vec<_>>(),
+        ["--app-name=omg", "--", "omg: low free space", text],
+        "options are constant and the text comes last, after --"
+    );
+    assert!(
+        !dir.path().join("pwned").exists(),
+        "the text was not run by a shell"
+    );
+    // The real message never contains a path (privacy), whatever the free space.
+    for free in [0, 1, 1 << 30, u64::MAX] {
+        let message = notify::message(free);
+        assert!(
+            !message.contains('/') && !message.contains('\\'),
+            "{message}"
+        );
+    }
+}
+
+/// A missing program is reported, never fatal to the service's decisions.
+#[test]
+fn desktop_delivery_reports_a_missing_program_without_panicking() {
+    assert!(notify::deliver_with(Path::new("/nonexistent/notify-send"), "text").is_err());
+}
+
 // ---------- schedule helpers ----------
 
 #[test]
@@ -821,6 +869,100 @@ fn executables_must_be_private_regular_files() {
     symlink(&target, &link).unwrap();
     assert!(unit::validate_executable(&link).is_err(), "symlink");
     assert!(unit::validate_executable(dir.path()).is_err(), "directory");
+}
+
+/// Cross-user check. It needs a second account, so it is ignored unless run on purpose:
+///   OMG_TEST_AS_OTHER_USER='sudo -n -u omgother' cargo test -p omg-core --test service \
+///     a_connection_from_another_user -- --ignored
+/// or `runuser -u nobody --` as root. The socket and its folder are opened to everyone here so that
+/// only the kernel-reported peer credential stands between the other account and the service.
+#[test]
+#[ignore = "needs a second user account: set OMG_TEST_AS_OTHER_USER"]
+fn a_connection_from_another_user_is_dropped_without_an_answer() {
+    let prefix = std::env::var("OMG_TEST_AS_OTHER_USER")
+        .expect("set OMG_TEST_AS_OTHER_USER to a command that runs a program as another user");
+    let dir = tempfile::tempdir().unwrap();
+    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    let state = dir.path().join("state");
+    fs::create_dir(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut server = ipc::Server::bind(&state).unwrap();
+    fs::set_permissions(ipc::socket_path(&state), fs::Permissions::from_mode(0o666)).unwrap();
+    // The other account runs a copy of this test binary in client mode.
+    let client = dir.path().join("client");
+    fs::copy(std::env::current_exe().unwrap(), &client).unwrap();
+    fs::set_permissions(&client, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let mut words = prefix.split_whitespace();
+    let mut command = std::process::Command::new(words.next().unwrap());
+    command
+        .args(words)
+        .arg(&client)
+        .args([
+            "--exact",
+            "other_user_client",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("OMG_TEST_CLIENT_SOCKET", ipc::socket_path(&state))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = command.spawn().unwrap();
+    let mut answered = 0u32;
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let done = Arc::new(AtomicBool::new(false));
+    let waiter = {
+        let done = done.clone();
+        std::thread::spawn(move || {
+            let output = child.wait_with_output().unwrap();
+            done.store(true, Ordering::Relaxed);
+            output
+        })
+    };
+    while !done.load(Ordering::Relaxed) && Instant::now() < deadline {
+        server
+            .poll(|_| {
+                answered += 1;
+                Response::ok(None)
+            })
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let output = waiter.join().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains("CLIENT_RESULT: closed-without-answer"),
+        "stdout: {text}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(server.rejected_peers, 1);
+    assert_eq!(answered, 0, "the request was never handled");
+}
+
+/// Client side of the test above, run as another user. Does nothing in normal test runs.
+#[test]
+fn other_user_client() {
+    let Some(path) = std::env::var_os("OMG_TEST_CLIENT_SOCKET") else {
+        return;
+    };
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(stream) => stream,
+        Err(error) => {
+            println!("CLIENT_RESULT: connect-failed: {error}");
+            return;
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let _ = stream.write_all(b"{\"v\":1,\"op\":\"status\"}\n");
+    let mut reply = String::new();
+    let _ = stream.read_to_string(&mut reply);
+    if reply.is_empty() {
+        println!("CLIENT_RESULT: closed-without-answer");
+    } else {
+        println!("CLIENT_RESULT: answered: {reply}");
+    }
 }
 
 // ---------- structural guard: the service can only observe ----------

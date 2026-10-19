@@ -156,6 +156,12 @@ pub fn deliver_desktop(text: &str) -> Result<()> {
         .into_iter()
         .find(|p| std::path::Path::new(p).is_file())
         .ok_or_else(|| anyhow::anyhow!("notify-send is not installed"))?;
+    deliver_with(std::path::Path::new(program), text)
+}
+
+/// The delivery itself: constant argument list, no shell, message text last after `--`. Public so
+/// tests can run it against a stand-in program; production always passes a fixed absolute path.
+pub fn deliver_with(program: &std::path::Path, text: &str) -> Result<()> {
     let mut child = std::process::Command::new(program)
         .args(["--app-name=omg", "--", "omg: low free space", text])
         .stdin(std::process::Stdio::null())
