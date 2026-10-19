@@ -364,7 +364,7 @@ mod walk {
             estimated_total,
             ..Default::default()
         };
-        let mut aggregate = crate::rollup::Aggregator::new();
+        let mut aggregate = crate::rollup::Aggregator::new(platform::LINKS_KNOWN);
         let result = (|| -> Result<()> {
             loop {
                 let first = match rx.recv_timeout(Duration::from_millis(100)) {

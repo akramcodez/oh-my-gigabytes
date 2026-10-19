@@ -29,6 +29,15 @@ fn catalog_labels_cannot_override_protected_paths_or_unknown_handler() {
         "../escape",
         "OneDrive/file",
         "secret.pem",
+        "Library/Messages/Archive/2024",
+        "Library/Safari/History",
+        "Library/Mail/V10/INBOX",
+        "Library/Application Support/AddressBook/Sources/one",
+        "Library/Application Support/MobileSync/Backup/abc/Info",
+        "Library/Group Containers/group.example/data",
+        "Pictures/Photos Library.photoslibrary/originals/a",
+        "Backups/disk.sparsebundle/bands/0",
+        "installer.dmg",
     ] {
         assert!(
             policy::protection(root.path(), &entry(path)).is_some(),
@@ -75,4 +84,21 @@ fn stale_repositories_and_unknown_age() {
     // .git itself stays hard-protected either way.
     let mut memo = policy::RepositoryMemo::with_ages(&old);
     assert!(policy::protection_with(root.path(), &entry("old/.git/config"), &mut memo).is_some());
+}
+
+#[test]
+fn macos_personal_data_is_protected_but_ordinary_folders_are_not() {
+    let root = tempfile::tempdir().unwrap();
+    for path in [
+        "src/mail/send.rs",
+        "app/messages/inbox.rs",
+        "Library/Caches/pip/wheel",
+        "Library/Application Support/Code/User/settings.json",
+        "docs/safari-notes.md",
+    ] {
+        assert!(
+            policy::hard_protection(root.path(), &entry(path)).is_none(),
+            "{path} is ordinary"
+        );
+    }
 }

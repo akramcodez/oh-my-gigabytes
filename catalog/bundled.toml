@@ -231,3 +231,26 @@ compatibility = "inventory-only"
 deprecated = false
 fixtures = ["stale-node-modules", "fresh-project-near-miss"]
 source = "https://docs.npmjs.com/cli/v11/configuring-npm/folders"
+
+[[rules]]
+id = "dev.homebrew.cache"
+name = "Homebrew download cache"
+revision = 1
+platforms = ["macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "package_caches"
+tier = "info"
+action = "info"
+discovery = "homebrew_cache"
+explanation = "Homebrew keeps downloaded bottles and source archives here."
+side_effects = "Installing or upgrading a formula downloads its files again."
+regeneration = "Homebrew downloads the files again when a formula is installed or upgraded."
+warnings = ["Cache layout and the HOMEBREW_CACHE override are not read; inventory only."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["homebrew-positive", "homebrew-near-miss"]
+source = "https://docs.brew.sh/Manpage"

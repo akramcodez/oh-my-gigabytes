@@ -63,6 +63,9 @@ fn bucket<'a>(map: &'a mut HashMap<Vec<u8>, Totals>, key: &[u8]) -> &'a mut Tota
 /// over the stored rows is needed. A hard-linked file counts once, under its first path.
 #[derive(Default)]
 pub struct Aggregator {
+    /// Whether entries carry real link counts. Windows enumeration does not read them (`links` is
+    /// always 1), so hard-linked names cannot be recognised while walking.
+    links_known: bool,
     totals: HashMap<Vec<u8>, Totals>,
     /// identity -> (first path, max apparent, max allocated, newest, bytes among non-excluded)
     links: HashMap<String, LinkedFile>,
@@ -77,10 +80,11 @@ struct LinkedFile {
     live: Option<(u64, u64)>,
 }
 impl Aggregator {
-    pub fn new() -> Self {
+    pub fn new(links_known: bool) -> Self {
         let mut totals = HashMap::new();
         totals.insert(Vec::new(), Totals::default());
         Self {
+            links_known,
             totals,
             ..Default::default()
         }
@@ -154,6 +158,42 @@ impl Aggregator {
     }
     /// Folded rollups plus the scan-wide unique (apparent, allocated) bytes of non-excluded entries.
     pub fn finish(mut self, index: &Index, scan_id: i64) -> Result<(u64, u64)> {
+        let started = std::time::Instant::now();
+        let shared = !self.links_known && shares_identity(index, scan_id)?;
+        timing("shared-names check", started);
+        if shared {
+            // Several names of one file exist and the walk could not tell, so every name was counted.
+            // Recompute sizes from the stored rows, which are grouped by identity. The protected
+            // counts the walk already gathered do not depend on links and are kept, which avoids the
+            // slow per-entry policy pass. Trees without hard links (the usual case) never reach this
+            // and pay only the cheap query above.
+            // The exact pass reads the whole entries table; a larger page cache keeps it from
+            // re-reading pages. The usual small cache is restored afterwards, whatever happens.
+            let normal: i64 = index
+                .db
+                .pragma_query_value(None, "cache_size", |r| r.get(0))?;
+            index
+                .db
+                .pragma_update(None, "cache_size", EXACT_PASS_CACHE_KIB)?;
+            let result = (|| -> Result<(u64, u64)> {
+                let mut totals = sizes_by_identity(index, scan_id)?;
+                timing("sizes by identity", started);
+                for (path, counted) in &self.totals {
+                    if counted.protected > 0 {
+                        bucket(&mut totals, path).protected = counted.protected;
+                    }
+                }
+                fold_and_store(index, scan_id, totals)?;
+                timing("fold and store", started);
+                let unique = unique_totals(index, scan_id)?;
+                timing("unique totals", started);
+                Ok(unique)
+            })();
+            let restored = index.db.pragma_update(None, "cache_size", normal);
+            let unique = result?;
+            restored?;
+            return Ok(unique);
+        }
         for (_, l) in std::mem::take(&mut self.links) {
             self.count(&l.path, false, l.apparent, l.allocated, l.newest);
             if let Some((a, b)) = l.live {
@@ -167,40 +207,80 @@ impl Aggregator {
     }
 }
 
+/// Page cache (negative means KiB) used while the exact pass reads every stored entry: 128 MiB.
+const EXACT_PASS_CACHE_KIB: i64 = -131_072;
+
+/// `OMG_TIMINGS=1` prints cumulative rollup times to stderr (diagnostics only).
+fn timing(phase: &str, started: std::time::Instant) {
+    if std::env::var_os("OMG_TIMINGS").is_some() {
+        eprintln!(
+            "omg-timing rollup/{phase}: {:.1}s",
+            started.elapsed().as_secs_f64()
+        );
+    }
+}
+
+/// Whether any non-directory identity is stored under more than one name.
+fn shares_identity(index: &Index, scan_id: i64) -> Result<bool> {
+    Ok(index
+        .db
+        .query_row(
+            "SELECT 1 FROM entries WHERE scan_id=? AND kind<>'directory' GROUP BY identity HAVING count(*)>1 LIMIT 1",
+            [scan_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// Scan-wide unique (apparent, allocated) bytes of non-excluded entries, from the stored rows.
+fn unique_totals(index: &Index, scan_id: i64) -> Result<(u64, u64)> {
+    Ok(index.db.query_row(
+        "SELECT coalesce(sum(apparent),0),coalesce(sum(allocated),0) FROM (SELECT max(apparent) apparent,max(allocated) allocated FROM entries WHERE scan_id=? AND excluded IS NULL GROUP BY identity)",
+        [scan_id],
+        |r| Ok((unsigned(r, 0)?, unsigned(r, 1)?)),
+    )?)
+}
+
+/// Per-directory sizes, file and folder counts and newest times, with each identity counted once
+/// under its lexicographically first path. Protected counts are not included.
+fn sizes_by_identity(index: &Index, scan_id: i64) -> Result<HashMap<Vec<u8>, Totals>> {
+    let mut totals: HashMap<Vec<u8>, Totals> = HashMap::new();
+    bucket(&mut totals, b"");
+    let mut statement = index.db.prepare(
+        "SELECT min(path),max(apparent),max(allocated),kind,max(modified_ns) FROM entries WHERE scan_id=? AND path<>x'' GROUP BY identity",
+    )?;
+    let mut rows = statement.query([scan_id])?;
+    while let Some(row) = rows.next()? {
+        let path: Vec<u8> = row.get(0)?;
+        let (apparent, allocated) = (unsigned(row, 1)?, unsigned(row, 2)?);
+        let directory = row.get::<_, String>(3)? == "directory";
+        let modified = row.get::<_, i64>(4)? / 1_000_000_000;
+        // Derived from the path: bare columns are unreliable with several min/max aggregates.
+        let t = bucket(&mut totals, parent_of(&path));
+        t.dirs += u64::from(directory);
+        t.files += u64::from(!directory);
+        // Bytes go to the entry's own bucket for directories (the fold carries them up) and to
+        // the parent for files, so nothing is counted twice.
+        let owner = if directory {
+            path.as_slice()
+        } else {
+            parent_of(&path)
+        };
+        let t = bucket(&mut totals, owner);
+        t.allocated += allocated;
+        t.apparent += apparent;
+        t.newest = t.newest.max(modified);
+    }
+    Ok(totals)
+}
+
 /// Aggregate and insert rollups for `scan_id` from the stored rows (reference implementation;
 /// scans use `Aggregator`). Each entry is added once to its parent's bucket;
 /// buckets are then folded upward deepest-first, so work is O(entries + directories·log) and memory
 /// is proportional to the number of directories.
 pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
-    let mut totals: HashMap<Vec<u8>, Totals> = HashMap::new();
-    bucket(&mut totals, b"");
-    {
-        let mut statement = index.db.prepare(
-            "SELECT min(path),max(apparent),max(allocated),kind,max(modified_ns) FROM entries WHERE scan_id=? AND path<>x'' GROUP BY identity",
-        )?;
-        let mut rows = statement.query([scan_id])?;
-        while let Some(row) = rows.next()? {
-            let path: Vec<u8> = row.get(0)?;
-            let (apparent, allocated) = (unsigned(row, 1)?, unsigned(row, 2)?);
-            let directory = row.get::<_, String>(3)? == "directory";
-            let modified = row.get::<_, i64>(4)? / 1_000_000_000;
-            // Derived from the path: bare columns are unreliable with several min/max aggregates.
-            let t = bucket(&mut totals, parent_of(&path));
-            t.dirs += u64::from(directory);
-            t.files += u64::from(!directory);
-            // Bytes go to the entry's own bucket for directories (the fold below carries them up)
-            // and to the parent for files, so nothing is counted twice.
-            let owner = if directory {
-                path.as_slice()
-            } else {
-                parent_of(&path)
-            };
-            let t = bucket(&mut totals, owner);
-            t.allocated += allocated;
-            t.apparent += apparent;
-            t.newest = t.newest.max(modified);
-        }
-    }
+    let mut totals = sizes_by_identity(index, scan_id)?;
     {
         // Every path (not deduplicated by identity): any protected link name protects its ancestors.
         let mut statement = index.db.prepare(
@@ -355,4 +435,116 @@ pub fn relative_raw(root: &Path, absolute: &Path) -> Option<Vec<u8>> {
         .strip_prefix(root)
         .ok()
         .and_then(|p| platform::raw(p).ok())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::{ScanOptions, scanner};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64},
+    };
+
+    /// Windows cannot read link counts while walking. Feeding a real scan's entries with their
+    /// counts hidden must give the same folder and scan totals as the Linux (counts known) path.
+    #[test]
+    fn totals_without_link_counts_match_totals_with_them() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(state.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::create_dir_all(root.path().join("a/deep")).unwrap();
+        std::fs::create_dir(root.path().join("b")).unwrap();
+        std::fs::write(root.path().join("a/deep/data.bin"), vec![3u8; 40_000]).unwrap();
+        std::fs::hard_link(
+            root.path().join("a/deep/data.bin"),
+            root.path().join("b/alias.bin"),
+        )
+        .unwrap();
+        std::fs::write(root.path().join("a/solo.bin"), vec![4u8; 5_000]).unwrap();
+        // A protected name inside a folder with a shared file: protected counts must survive.
+        std::fs::create_dir(root.path().join("b/.ssh")).unwrap();
+        std::fs::write(root.path().join("b/.ssh/id"), b"key").unwrap();
+
+        let mut index = Index::open(state.path()).unwrap();
+        scanner::scan(
+            &mut index,
+            &ScanOptions {
+                root: root.path().to_path_buf(),
+                workers: 2,
+                exclusions: vec![],
+                full: true,
+                publish_partial: false,
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+        )
+        .unwrap();
+        let scan_id: i64 = index
+            .db
+            .query_row("SELECT scan_id FROM active WHERE singleton=1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let stored = |index: &Index| -> Vec<(Vec<u8>, Totals)> {
+            ["", "a", "a/deep", "b"]
+                .iter()
+                .map(|p| {
+                    (
+                        p.as_bytes().to_vec(),
+                        index.subtree(p.as_bytes()).unwrap().unwrap(),
+                    )
+                })
+                .collect()
+        };
+        let expected = stored(&index);
+        let expected_unique = unique_totals(&index, scan_id).unwrap();
+
+        // Rebuild the rollups as a platform without link counts would: every entry says links = 1.
+        index
+            .db
+            .execute("DELETE FROM dir_totals WHERE scan_id=?", [scan_id])
+            .unwrap();
+        let mut aggregate = Aggregator::new(false);
+        for mut entry in index.entries(1000, 0).unwrap() {
+            entry.links = 1;
+            let protected = policy::hard_protection(root.path(), &entry).is_some();
+            aggregate.add(&entry, protected);
+        }
+        let unique = aggregate.finish(&index, scan_id).unwrap();
+        assert_eq!(stored(&index), expected);
+        assert_eq!(unique, expected_unique);
+        // `.ssh` is excluded, so its contents are not indexed: two files remain, not three names.
+        assert_eq!(expected[0].1.files, 2);
+        assert!(
+            expected[3].1.protected > 0,
+            "the protected folder is still counted"
+        );
+    }
+
+    #[test]
+    fn a_tree_without_shared_names_takes_the_fast_path() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(state.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(root.path().join("one.bin"), b"1").unwrap();
+        std::fs::write(root.path().join("two.bin"), b"22").unwrap();
+        let mut index = Index::open(state.path()).unwrap();
+        scanner::scan(
+            &mut index,
+            &ScanOptions {
+                root: root.path().to_path_buf(),
+                workers: 2,
+                exclusions: vec![],
+                full: true,
+                publish_partial: false,
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+        )
+        .unwrap();
+        assert!(!shares_identity(&index, 1).unwrap());
+    }
 }

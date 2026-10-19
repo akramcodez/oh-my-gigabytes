@@ -11,6 +11,9 @@ pub mod windows_state;
 pub fn supported() -> bool {
     cfg!(any(target_os = "linux", target_os = "macos", windows))
 }
+/// Whether the native scanner reads each file's link count. Windows enumeration does not, so folder
+/// totals there find hard-linked names after the walk (see `rollup::Aggregator::finish`).
+pub const LINKS_KNOWN: bool = cfg!(not(windows));
 pub fn home() -> Result<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)

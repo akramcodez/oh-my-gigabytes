@@ -154,6 +154,27 @@ pub fn protection_with(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) ->
     })
 }
 
+/// Personal-data folders below a macOS `Library` folder (mail, messages, Safari, calendars, address
+/// book, iPhone backups, app containers and cloud folders). Matched only directly below `Library`,
+/// so an ordinary project folder such as `src/mail` is not caught.
+fn private_library(parts: &[String]) -> bool {
+    let Some(at) = parts.iter().position(|part| part == "library") else {
+        return false;
+    };
+    let below = &parts[at + 1..];
+    match below.first().map(String::as_str) {
+        Some(
+            "mail" | "messages" | "safari" | "calendars" | "cookies" | "containers"
+            | "group containers" | "keychains" | "mobile documents" | "cloudstorage",
+        ) => true,
+        Some("application support") => matches!(
+            below.get(1).map(String::as_str),
+            Some("addressbook" | "mobilesync" | "icloud" | "cloudstorage")
+        ),
+        _ => false,
+    }
+}
+
 /// Protection that never depends on repository membership: exclusions, scope, entry type,
 /// sensitive component names (including `.git`) and database/credential/disk-image names.
 pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
@@ -178,8 +199,28 @@ pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
     if !matches!(entry.kind.as_str(), "file" | "directory") || entry.identity.is_empty() {
         return Some("uncertain type or identity".into());
     }
-    for component in absolute.components() {
-        let value = component.as_os_str().to_string_lossy().to_ascii_lowercase();
+    let parts: Vec<String> = absolute
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .collect();
+    if private_library(&parts) {
+        return Some("personal data folder".into());
+    }
+    // Media libraries and disk images are packages or containers of personal data.
+    if parts.iter().any(|part| {
+        [
+            ".photoslibrary",
+            ".musiclibrary",
+            ".tvlibrary",
+            ".sparsebundle",
+            ".sparseimage",
+        ]
+        .iter()
+        .any(|suffix| part.ends_with(suffix))
+    }) {
+        return Some("media library or disk image package".into());
+    }
+    for value in &parts {
         if [
             ".git",
             ".ssh",
@@ -215,6 +256,9 @@ pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
         ".vhdx",
         ".qcow2",
         ".vmdk",
+        ".dmg",
+        ".keychain",
+        ".keychain-db",
         ".pem",
         ".key",
         ".partial",

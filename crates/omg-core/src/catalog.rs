@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
 /// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
-pub const DISCOVERIES: [&str; 10] = [
+pub const DISCOVERIES: [&str; 11] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -16,6 +16,7 @@ pub const DISCOVERIES: [&str; 10] = [
     "cargo_registry",
     "go_build_cache",
     "gradle_caches",
+    "homebrew_cache",
     "stale_dependencies",
     "large_file",
 ];
@@ -25,9 +26,41 @@ pub const DISCOVERIES: [&str; 10] = [
 pub fn discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
     if cfg!(windows) {
         windows_discovery_root(kind, home)
+    } else if cfg!(target_os = "macos") {
+        macos_discovery_root(kind, home)
     } else {
         unix_discovery_root(kind, home)
     }
+}
+
+/// macOS defaults, per each tool's documented per-user location (pip, pnpm, Homebrew and Go are
+/// checked against the tool's own documentation). Yarn Classic's macOS location is not stated in its
+/// documentation, so it has no macOS root and the rule finds nothing there rather than guessing.
+fn macos_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
+    let env = |name: &str| {
+        std::env::var_os(name)
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    let caches = home.join("Library/Caches");
+    Some(match kind {
+        "npm_content_cache" => home.join(".npm/_cacache"),
+        "pip_cache" => caches.join("pip"),
+        "uv_cache" => home.join(".cache/uv"),
+        "pnpm_store" => env("PNPM_HOME")
+            .map(|p| p.join("store"))
+            .or_else(|| env("XDG_DATA_HOME").map(|p| p.join("pnpm/store")))
+            .unwrap_or_else(|| home.join("Library/pnpm/store")),
+        "cargo_registry" => env("CARGO_HOME")
+            .unwrap_or_else(|| home.join(".cargo"))
+            .join("registry"),
+        "go_build_cache" => env("GOCACHE").unwrap_or_else(|| caches.join("go-build")),
+        "gradle_caches" => env("GRADLE_USER_HOME")
+            .unwrap_or_else(|| home.join(".gradle"))
+            .join("caches"),
+        "homebrew_cache" => env("HOMEBREW_CACHE").unwrap_or_else(|| caches.join("Homebrew")),
+        _ => return None,
+    })
 }
 
 /// Windows defaults of the same discoveries (npm, pip, uv, pnpm, Yarn, Go, Cargo, Gradle), per
@@ -612,9 +645,25 @@ mod tests {
     #[cfg(target_os = "linux")]
     use ed25519_dalek::Signer;
     #[test]
+    fn macos_cache_locations_follow_each_tools_documented_default() {
+        let home = std::path::Path::new("/Users/dev");
+        let root = |kind| macos_discovery_root(kind, home).unwrap();
+        assert_eq!(root("pip_cache"), home.join("Library/Caches/pip"));
+        assert_eq!(root("npm_content_cache"), home.join(".npm/_cacache"));
+        assert!(macos_discovery_root("large_file", home).is_none());
+        assert!(macos_discovery_root("yarn_cache", home).is_none());
+        // These read the tool's own override variable, so their default is asserted only when unset.
+        if std::env::var_os("PNPM_HOME").is_none() && std::env::var_os("XDG_DATA_HOME").is_none() {
+            assert_eq!(root("pnpm_store"), home.join("Library/pnpm/store"));
+        }
+        if std::env::var_os("HOMEBREW_CACHE").is_none() {
+            assert_eq!(root("homebrew_cache"), home.join("Library/Caches/Homebrew"));
+        }
+    }
+    #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 10);
+        assert_eq!(parse(payload).unwrap().rules.len(), 11);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());

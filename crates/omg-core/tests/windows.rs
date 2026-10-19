@@ -149,6 +149,33 @@ fn hard_links_share_one_identity() {
     assert_eq!(original.identity, alias.identity);
 }
 
+/// Windows enumeration does not report link counts, so a hard-linked file shows up as two ordinary
+/// files while walking. Folder and scan totals must still count its data once, under its first name.
+#[test]
+fn hard_linked_data_is_counted_once_in_folder_and_scan_totals() {
+    let home = tempfile::tempdir().unwrap();
+    let root = home.path();
+    fs::create_dir(root.join("a")).unwrap();
+    fs::create_dir(root.join("b")).unwrap();
+    fs::write(root.join("a/data.bin"), vec![5u8; 40_000]).unwrap();
+    fs::hard_link(root.join("a/data.bin"), root.join("b/alias.bin")).unwrap();
+    fs::write(root.join("solo.bin"), vec![6u8; 1_000]).unwrap();
+    let state = state();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, root);
+
+    let whole = index.subtree(b"").unwrap().unwrap();
+    assert_eq!(whole.files, 2, "two files, not three names");
+    assert_eq!(whole.apparent, 41_000);
+    assert_eq!(index.subtree(b"a").unwrap().unwrap().apparent, 40_000);
+    assert_eq!(
+        index.subtree(b"b").unwrap().unwrap().apparent,
+        0,
+        "the shared data is charged to its first name only"
+    );
+    assert_eq!(index.status().unwrap().unique_apparent, 41_000);
+}
+
 #[test]
 fn paths_longer_than_max_path_are_scanned() {
     let home = tempfile::tempdir().unwrap();
