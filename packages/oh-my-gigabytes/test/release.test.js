@@ -151,6 +151,15 @@ test('sign-release signs every target and names them all in the published wrappe
   assert.ok(!fs.existsSync(path.join(out, 'work')), 'staging folders are removed');
 });
 
+test('sign-release accepts relative paths', t => {
+  const f = fixture(t);
+  const relative = item => path.relative(process.cwd(), item);
+  const out = path.join(f.directory, 'signed-relative');
+  signRelease({ artifacts: relative(ciArtifacts(f.directory)), version: '0.1.0-beta.1', publicKey: relative(f.publicFile), privateKey: relative(f.privateFile),
+    out: relative(out), skipAttestation: true, checkBinary: false });
+  assert.ok(fs.existsSync(path.join(out, 'tarballs', 'oh-my-gigabytes-0.1.0-beta.1.tgz')));
+});
+
 test('sign-release can mark the packages publishable only when asked', t => {
   const f = fixture(t);
   const out = path.join(f.directory, 'signed-public');

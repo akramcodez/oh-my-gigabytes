@@ -54,6 +54,8 @@ function pack(directory, destination, expectedName) {
 }
 
 function signRelease({ artifacts, version, publicKey, privateKey, out, repo, skipAttestation = false, publishable = false, checkBinary = true }) {
+  // npm pack runs in another directory, so every path must be absolute.
+  [artifacts, publicKey, privateKey, out] = [artifacts, publicKey, privateKey, out].map(item => path.resolve(item));
   if (!skipAttestation && !repo) throw new Error('--repo owner/name is required to verify build provenance (or pass --skip-attestation)');
   const targets = Object.keys(TARGETS).filter(target => fs.existsSync(path.join(artifacts, `omg-${target}`)));
   if (!targets.length) throw new Error(`No omg-<target> folders found in ${artifacts}`);
