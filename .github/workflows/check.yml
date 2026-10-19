@@ -56,6 +56,17 @@ jobs:
         run: |
           sudo useradd --create-home omgother
           OMG_TEST_AS_OTHER_USER='sudo -n -u omgother' cargo test -p omg-core --test service a_connection_from_another_user --locked -- --ignored
+      # Windows x64: the interface through ConPTY, and real NTFS, FAT32, exFAT and ReFS volumes made
+      # from virtual disks (the runners are administrators; ReFS may be unavailable on some images).
+      - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
+        run: cargo build -p omg-cli --locked
+      - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
+        run: python -m pip install --quiet pywinpty==2.0.15
+      - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
+        run: python -m unittest discover -s tests -p 'test_terminal_windows.py' -v
+      - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
+        shell: pwsh
+        run: ./scripts/win-vhd-matrix.ps1 -Omg ./target/debug/omg.exe -Optional ReFS
       - if: runner.os != 'Windows'
         run: cargo build -p omg-cli --locked && python3 -m unittest discover -s tests -p 'test_*.py' -v
       # Windows on Arm is a Rust-only leg: the launcher has no win32-arm64 target in this release.
