@@ -104,7 +104,7 @@ Verified: `tests/windows.rs` module `state_acl` (a created directory lists no Ev
 - **Launcher Ctrl+C.** `bin/omg.js` no longer force-kills the child on Windows. This was not run through a packaged binary.
 - **TUI.** Checked by screenshots of Overview, Browse and Findings, and quit with `q`. Ctrl+C and window-close behaviour were not exercised.
 - **FAT32 and exFAT** are refused. The virtual-disk matrix (`scripts/win-vhd-matrix.ps1`, run on `windows-2022` and `windows-latest`, 2026-10-19) found that scanning such a volume failed with "The parameter is incorrect" (error 87), because the scanner's file identity and directory listing use information classes that only NTFS and ReFS provide. `open_root` now refuses them with "FAT32 and exFAT volumes cannot be scanned on Windows yet". Supporting them needs a separate enumeration path and is not part of the beta. (macOS scans FAT32 and exFAT.)
-- **ReFS** is exercised by the same matrix on the Windows Server runners; see the result recorded below once it has run.
+- **ReFS** scans correctly on a real ReFS volume: the virtual-disk matrix on `windows-2022` and `windows-latest` (Server 2022 and 2025, run 39201129096, 2026-10-19) built NTFS and ReFS volumes from virtual disks and scanned each from its root: 7 entries, 200,005 bytes, equal to an independent count, hard link counted once. Windows 11 Home cannot format ReFS, so this is hosted-runner evidence only.
 
 ## Test artifacts
 
