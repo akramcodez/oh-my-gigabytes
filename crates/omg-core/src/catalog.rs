@@ -174,7 +174,11 @@ pub struct Ignore {
 }
 
 pub fn digest(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    // Lowercase hex, byte by byte: sha2 0.11 digests no longer implement `LowerHex`.
+    Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 pub fn signed_message(payload: &str) -> Vec<u8> {
     let mut message = DOMAIN.to_vec();

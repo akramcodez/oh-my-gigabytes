@@ -21,7 +21,7 @@ crossterm = "0.29"
 tempfile = "3"
 ctrlc = { version = "3", features = ["termination"] }
 toml = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 ed25519-dalek = "3"
 
 [profile.release]
