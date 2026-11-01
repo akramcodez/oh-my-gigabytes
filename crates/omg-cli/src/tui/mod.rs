@@ -24,6 +24,12 @@ use std::{
 };
 use worker::{Request, Response, Summary};
 
+/// Whether this build on this platform can delete at all (macOS and the analysis-only build cannot).
+/// Delete keys and menu entries are hidden when it cannot; `cleanup.rs` refuses regardless.
+pub fn delete_available() -> bool {
+    omg_core::capability::platform_permanent_delete() != omg_core::capability::Support::Unsupported
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Tab {
     #[default]
@@ -265,7 +271,7 @@ impl App {
                 Action::Mark,
                 Tone::Normal,
             );
-            if omg_core::PERMANENT_DELETE {
+            if delete_available() {
                 push(
                     "Delete permanently…",
                     Some('d'),
@@ -283,7 +289,7 @@ impl App {
                 Tone::Normal,
             );
         }
-        if s.tab == Tab::Trash && !s.marked_ids().is_empty() && omg_core::PERMANENT_DELETE {
+        if s.tab == Tab::Trash && !s.marked_ids().is_empty() && delete_available() {
             push(
                 "Delete selected permanently…",
                 Some('d'),
@@ -406,9 +412,13 @@ impl App {
         if matches!(
             action,
             Action::DeleteNow | Action::DeleteSelected | Action::EmptyTrash | Action::Confirm(_)
-        ) && !omg_core::PERMANENT_DELETE
+        ) && !delete_available()
         {
-            self.state.message = "Permanent delete is not available in this build.".into();
+            self.state.message = if omg_core::PERMANENT_DELETE {
+                "Permanent delete is not available on this platform.".into()
+            } else {
+                "Permanent delete is not available in this build.".into()
+            };
             return Ok(false);
         }
         match action {
@@ -852,7 +862,7 @@ pub fn run(index: Index) -> Result<()> {
                 if app.job.as_ref().is_some_and(|j| j.is_finished()) {
                     app.state.message = match app.job.take().map(|j| j.join()) {
                         Some(Ok(Ok((r, suggested)))) => format!(
-                            "Scan {}: {} entries, {} unreadable folders.{}",
+                            "Scan {}: {} entries, {} unreadable folders.{}{}",
                             r.state,
                             theme::count(r.entries),
                             r.errors,
@@ -860,7 +870,8 @@ pub fn run(index: Index) -> Result<()> {
                                 .map(|n| format!(
                                     " {n} cache folder(s) waiting in OMG Trash (press 4)."
                                 ))
-                                .unwrap_or_default()
+                                .unwrap_or_default(),
+                            if r.errors > 0 { crate::gap_hint() } else { "" }
                         ),
                         Some(Ok(Err(e))) => {
                             format!("⚠ Scan failed: {e:#}. The previous index is untouched.")

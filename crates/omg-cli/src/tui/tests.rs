@@ -65,6 +65,8 @@ fn browse_shows_sizes_escapes_names_and_progress() {
         dirs: 3,
         protected: 1,
         newest: 0,
+        incomplete: false,
+        excluded: false,
     };
     let mut state = AppState {
         tab: Tab::Browse,
@@ -94,6 +96,62 @@ fn browse_shows_sizes_escapes_names_and_progress() {
         "terminal escapes must not reach the screen"
     );
     assert!(text.contains("50%"));
+}
+
+/// A folder the scan could not read (permission, macOS privacy protection) must not look empty, and
+/// one with an unreadable part must show its size as a lower bound.
+#[test]
+fn unreadable_folders_show_unknown_not_zero() {
+    let folder = |name: &str, allocated: u64, files: u64, incomplete: bool| Child {
+        path: name.as_bytes().to_vec(),
+        kind: "directory".into(),
+        allocated,
+        apparent: allocated,
+        files,
+        dirs: 0,
+        protected: 0,
+        newest: 0,
+        incomplete,
+        excluded: false,
+    };
+    let mut state = AppState {
+        tab: Tab::Browse,
+        ..Default::default()
+    };
+    state.dirs.insert(
+        Vec::new(),
+        DirView {
+            children: vec![
+                folder("Library", 2 << 30, 900, true),
+                folder("Documents", 0, 0, true),
+                folder("Movies", 0, 1, true),
+                folder("empty", 0, 0, false),
+                Child {
+                    excluded: true,
+                    ..folder(".ssh", 0, 0, false)
+                },
+            ],
+            marks: vec![],
+            total: None,
+        },
+    );
+    let text = draw(&state, 110, 30);
+    let line = |name: &str| {
+        text.lines()
+            .find(|l| l.contains(name))
+            .unwrap_or_else(|| panic!("{name} missing:\n{text}"))
+            .to_string()
+    };
+    assert!(line("Documents/").contains("unknown"), "{text}");
+    assert!(line("Documents/").contains("unreadable"), "{text}");
+    assert!(!line("Documents/").contains("0.00 B"), "{text}");
+    assert!(line("Library/").contains("≥ 2.00 GiB"), "{text}");
+    assert!(line("Library/").contains("incomplete"), "{text}");
+    assert!(line("Movies/").contains("unknown"), "{text}");
+    assert!(!line("Movies/").contains("≥"), "{text}");
+    assert!(line("empty/").contains("0.00 B"), "{text}");
+    assert!(line(".ssh/").contains("not scanned"), "{text}");
+    assert!(!line(".ssh/").contains("0.00 B"), "{text}");
 }
 
 #[test]
@@ -176,6 +234,8 @@ fn preview_screens() {
         dirs: 2,
         protected,
         newest: 0,
+        incomplete: false,
+        excluded: false,
     };
     let mut state = AppState {
         now: 10_000,
@@ -212,6 +272,8 @@ fn paths_saved_in_omg_trash_are_red_and_underlined() {
         dirs: 0,
         protected: 0,
         newest: 0,
+        incomplete: false,
+        excluded: false,
     };
     let mut state = AppState {
         tab: Tab::Browse,

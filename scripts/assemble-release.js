@@ -11,7 +11,8 @@ const { TARGETS, MAX_BINARY, readRegular, signedMessage, validateBinaryTarget, v
 
 // Ask the binary what it can do. The claim in the manifest must match this, not a label we typed.
 function reportedCleanup(binary) {
-  const state = fs.mkdtempSync(path.join(os.tmpdir(), 'omg-capability-'));
+  // The real path: on macOS os.tmpdir() is under /var, a link, and omg refuses a state path through a link.
+  const state = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'omg-capability-'));
   try {
     const run = spawnSync(binary, ['--state-dir', state, 'doctor'], { encoding: 'utf8', timeout: 20000 });
     const match = /"cleanup": "([^"]+)"/.exec(run.stdout || '');

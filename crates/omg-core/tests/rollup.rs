@@ -252,3 +252,63 @@ fn in_walk_rollups_equal_the_reference_computation() {
         .unwrap();
     assert_eq!(stored.0, expected);
 }
+
+/// A folder the scan cannot read is marked incomplete, with its ancestors, instead of looking empty.
+/// Siblings and files stay unmarked.
+#[test]
+fn unreadable_folders_are_marked_incomplete_up_the_tree() {
+    let root = tempfile::tempdir().unwrap();
+    let state = private_state();
+    fs::create_dir_all(root.path().join("outer/locked")).unwrap();
+    fs::write(root.path().join("outer/locked/data.bin"), vec![1u8; 9000]).unwrap();
+    fs::write(root.path().join("outer/readable.bin"), vec![2u8; 5000]).unwrap();
+    fs::create_dir(root.path().join("sibling")).unwrap();
+    // A mandatory exclusion is never opened: "not scanned", and it does not mark its parent.
+    fs::create_dir_all(root.path().join("sibling/.git/objects")).unwrap();
+    fs::write(
+        root.path().join("sibling/.git/objects/pack"),
+        vec![3u8; 7000],
+    )
+    .unwrap();
+    let locked = root.path().join("outer/locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&locked).is_ok() {
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+        eprintln!("skipped: running with privileges that read a mode-000 folder");
+        return;
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    let report = scanner::scan(
+        &mut index,
+        &ScanOptions {
+            root: root.path().to_path_buf(),
+            workers: 2,
+            exclusions: vec![],
+            full: true,
+            publish_partial: true,
+        },
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(report.state, "partial");
+    assert_eq!(report.errors, 1);
+
+    let top = index.children(b"", 10, 0).unwrap();
+    let find = |list: &[omg_core::rollup::Child], name: &[u8]| {
+        list.iter().find(|c| c.path == name).unwrap().clone()
+    };
+    assert!(find(&top, b"outer").incomplete);
+    assert!(!find(&top, b"sibling").incomplete);
+    let inner = index.children(b"outer", 10, 0).unwrap();
+    let unreadable = find(&inner, b"outer/locked");
+    assert!(unreadable.incomplete);
+    assert_eq!(unreadable.allocated_label(), "unknown");
+    assert!(!find(&inner, b"outer/readable.bin").incomplete);
+    assert!(find(&top, b"outer").allocated_label().starts_with("≥ "));
+    assert!(!find(&top, b"sibling").allocated_label().starts_with("≥"));
+    let git = find(&index.children(b"sibling", 10, 0).unwrap(), b"sibling/.git");
+    assert!(git.excluded && !git.incomplete);
+    assert_eq!(git.allocated_label(), "not scanned");
+}

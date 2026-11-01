@@ -12,7 +12,7 @@ OMG (Oh My Gigabytes) shows where your disk space went. It is a local-first, key
 | Windows x64 | Windows 11 and Windows Server 2022/2025 tested; Windows 10 untested | NTFS, ReFS | FAT32 and exFAT drives are refused with a message. No background service. The binary needs no Visual C++ redistributable. |
 | macOS arm64 and Intel | macOS 15 or newer | APFS, HFS+, exFAT, FAT | No background service. |
 
-How each platform was tested is recorded in [Linux](docs/linux-qualification.md), [Windows](docs/windows-evidence.md) and [macOS](docs/macos-evidence.md) evidence pages. In short: Linux x86_64 was tested on WSL2 and on hosted runners (Linux ARM64 and the glibc 2.28 floor on hosted runners and in distro containers), Windows on hosted runners and a Windows 11 PC, and macOS on hosted runners only. **No platform is certified.** macOS has never run on a real Mac; privacy prompts (Full Disk Access), iCloud placeholder files and Gatekeeper dialogs are untested.
+How each platform was tested is recorded in [Linux](docs/linux-qualification.md), [Windows](docs/windows-evidence.md) and [macOS](docs/macos-evidence.md) evidence pages. In short: Linux x86_64 was tested on WSL2 and on hosted runners (Linux ARM64 and the glibc 2.28 floor on hosted runners and in distro containers), Windows on hosted runners and a Windows 11 PC, and macOS on hosted runners and one Apple silicon Mac (macOS 26). **No platform is certified.** On macOS, Full Disk Access, iCloud placeholder files and Intel Macs are untested on real hardware.
 
 ## Install
 
@@ -45,7 +45,7 @@ omg findings                   # known caches and large files, with explanations
 omg doctor                     # read-only health check; also says what this build can do
 ```
 
-Use `--state-dir <folder>` to keep a separate index. Give `scan --root` the real path of a folder: on macOS `/tmp` and `/var` are links, so use `/private/tmp`. Hard-linked files and links are counted without being followed. Sizes are what the filesystem reports; on Btrfs, APFS and similar, shared blocks mean that deleting something may free less than shown.
+Use `--state-dir <folder>` to keep a separate index. Give `scan --root` the real path of a folder: on macOS `/tmp` and `/var` are links, so use `/private/tmp`. Folders omg cannot read are shown as `unknown` (or their size as `≥ N`), never as empty; on macOS, privacy protection blocks Desktop, Documents, Downloads and parts of `~/Library` until you allow your terminal app in System Settings › Privacy & Security. Hard-linked files and links are counted without being followed. Sizes are what the filesystem reports; on Btrfs, APFS and similar, shared blocks mean that deleting something may free less than shown.
 
 ## Not in this release
 

@@ -364,6 +364,9 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
     let mut spans = vec![Span::raw(" ")];
     for (key, label) in options {
         let danger = label.starts_with("delete") || label.starts_with("empty");
+        if danger && !super::delete_available() {
+            continue;
+        }
         spans.push(Span::styled(
             format!(" {key} "),
             if danger {
@@ -497,7 +500,14 @@ fn overview(state: &AppState, theme: &Theme, width: usize) -> Lines {
                 "·".repeat(bar_width.saturating_sub(filled.chars().count())),
                 theme.dim(),
             ),
-            Span::styled(format!(" {:>10}", bytes(child.allocated)), theme.bold()),
+            Span::styled(
+                format!(" {:>10}", child.allocated_label()),
+                if child.incomplete {
+                    theme.warn()
+                } else {
+                    theme.bold()
+                },
+            ),
             Span::styled(
                 format!(" {:>4.0}%  ", child.allocated as f64 / total as f64 * 100.0),
                 theme.dim(),
@@ -652,7 +662,16 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
                 " ".repeat(bar_width.saturating_sub(filled.chars().count())),
                 Style::new(),
             ),
-            Span::styled(format!(" {:>10}  ", bytes(child.allocated)), theme.bold()),
+            Span::styled(
+                format!(" {:>11}  ", child.allocated_label()),
+                if child.incomplete {
+                    theme.warn()
+                } else if child.excluded {
+                    theme.dim()
+                } else {
+                    theme.bold()
+                },
+            ),
             Span::styled(
                 format!(
                     "{}{}",
@@ -670,12 +689,20 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
                 ),
             ),
             Span::styled(
-                if child.kind == "directory" {
-                    format!("  {} files", short_count(child.files))
-                } else {
+                if child.kind != "directory" || child.excluded {
                     String::new()
+                } else if child.incomplete && child.files == 0 && child.dirs == 0 {
+                    "  unreadable".into()
+                } else if child.incomplete {
+                    format!("  {} files · incomplete", short_count(child.files))
+                } else {
+                    format!("  {} files", short_count(child.files))
                 },
-                theme.dim(),
+                if child.incomplete {
+                    theme.warn()
+                } else {
+                    theme.dim()
+                },
             ),
             flag,
         ]));
@@ -774,7 +801,11 @@ fn details(f: &Finding, theme: &Theme) -> Lines {
         line("Source", f.rule.source.clone()),
         Line::from(""),
         Line::from(Span::styled(
-            "  ⏎ back · space add/remove OMG Trash · d delete… · p dry-run preview",
+            if super::delete_available() {
+                "  ⏎ back · space add/remove OMG Trash · d delete… · p dry-run preview"
+            } else {
+                "  ⏎ back · space add/remove OMG Trash · p dry-run preview"
+            },
             theme.dim(),
         )),
     ]
@@ -892,8 +923,15 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
             "space",
             "add / remove from OMG Trash (saves the path; nothing changes on disk)",
         ),
-        row("d", "delete permanently… (always asks; cannot be undone)"),
-        row("D", "in OMG Trash: delete everything listed…"),
+    ];
+    if super::delete_available() {
+        out.push(row(
+            "d",
+            "delete permanently… (always asks; cannot be undone)",
+        ));
+        out.push(row("D", "in OMG Trash: delete everything listed…"));
+    }
+    out.extend([
         row("u", "remove from OMG Trash"),
         row(
             "capability",
@@ -910,7 +948,7 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
             "  Protected forever: .git, credentials, databases, disk images, anything outside your home.",
             theme.dim(),
         )),
-    ];
+    ]);
     if wsl {
         out.push(Line::from(Span::styled(
             "  WSL: deleting here frees space inside Linux; Windows (C:) gets it back only after the WSL virtual disk",

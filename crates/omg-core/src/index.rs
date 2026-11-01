@@ -161,6 +161,11 @@ impl Index {
             current.push(component);
             match fs::symlink_metadata(&current) {
                 Ok(meta) if !meta.is_dir() || meta.file_type().is_symlink() => {
+                    if cfg!(target_os = "macos") {
+                        bail!(
+                            "state ancestor must be a real directory, not a link; on macOS /tmp and /var are links, so use /private/tmp"
+                        )
+                    }
                     bail!("state ancestor must be a real directory")
                 }
                 Ok(_) => (),

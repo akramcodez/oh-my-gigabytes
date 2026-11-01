@@ -27,7 +27,9 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Index a folder's metadata (default: the saved root, else your home); never changes files
     Scan {
+        /// Folder to scan (give the real path; on macOS /private/tmp, not /tmp)
         #[arg(long)]
         root: Option<PathBuf>,
         #[arg(long)]
@@ -44,6 +46,7 @@ enum Command {
         #[arg(long)]
         exclude: Vec<PathBuf>,
     },
+    /// Summary of the published index: totals, scan state and explained estimate
     Status,
     /// Show OMG Trash (saved paths waiting for your decision; nothing has been deleted)
     Trash {
@@ -53,6 +56,7 @@ enum Command {
     },
     /// Finish removing rows of superseded scans (housekeeping; scans only prune for a few seconds)
     Prune,
+    /// Read-only check of this build, platform capabilities and the state directory
     Doctor,
     /// Start the scan-only background service (asks before registering it)
     Start,
@@ -77,24 +81,29 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
+    /// Known developer caches and large files in the index, with explanations
     Findings {
         #[arg(long, default_value_t = 0)]
         offset: usize,
     },
+    /// Show, import (signed) or roll back the rule catalog
     Catalog {
         #[command(subcommand)]
         command: CatalogCommand,
     },
+    /// List ignored findings, or remove one with --remove ID
     Ignores {
         #[arg(long)]
         remove: Option<i64>,
     },
+    /// Record a dry-run preview for finding ids; never changes files
     Cleanup {
         #[arg(long, required = true)]
         dry_run: bool,
         #[arg(long,required=true,num_args=1..)]
         candidate: Vec<String>,
     },
+    /// Recorded dry-run previews
     History,
 }
 // Only the Linux service controller (svc.rs) reads these fields.
@@ -143,6 +152,14 @@ impl Meter {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+/// The likely cause of unreadable folders where the platform has a known one (no paths named).
+fn gap_hint() -> &'static str {
+    if cfg!(target_os = "macos") {
+        " macOS privacy protection can block folders such as Desktop, Documents and Downloads; allow your terminal app in System Settings › Privacy & Security (Files and Folders or Full Disk Access)."
+    } else {
+        ""
     }
 }
 fn progress_meter(root: &std::path::Path, progress: Arc<std::sync::atomic::AtomicU64>) -> Meter {
@@ -233,6 +250,8 @@ fn run() -> Result<()> {
             "(not included in this analysis-only build)"
         } else if cfg!(windows) {
             "(Windows: NTFS only; ReFS and FAT32 refused; cloud placeholders never deleted)"
+        } else if cfg!(target_os = "macos") {
+            "(macOS is analysis only)"
         } else {
             "(Linux: ext-family, XFS, tmpfs, Btrfs; unknown filesystems refused)"
         };
@@ -295,12 +314,14 @@ fn run() -> Result<()> {
             match (report.state.as_str(), accept_gaps) {
                 ("complete", _) => (),
                 ("partial", true) => eprintln!(
-                    "omg: published as partial: {} directories could not be read (permission or changes during scan)",
-                    report.errors
+                    "omg: published as partial: {} directories could not be read (permission or changes during scan); their sizes are shown as unknown or as a lower bound.{}",
+                    report.errors,
+                    gap_hint()
                 ),
                 ("partial", false) => bail!(
-                    "scan finished with {} unreadable/changed directories and was not published; re-run with --accept-gaps to publish it labelled partial",
-                    report.errors
+                    "scan finished with {} unreadable/changed directories and was not published; re-run with --accept-gaps to publish it labelled partial.{}",
+                    report.errors,
+                    gap_hint()
                 ),
                 _ => bail!("scan incomplete; last valid index retained"),
             }
@@ -397,11 +418,15 @@ fn run() -> Result<()> {
                         "path": omg_core::display_path(&c.path),
                         "kind": c.kind,
                         "allocated": c.allocated,
-                        "allocated_human": omg_core::bytes(c.allocated),
+                        "allocated_human": c.allocated_label(),
                         "apparent": c.apparent,
                         "files": c.files,
                         "directories": c.dirs,
                         "protected_or_excluded": c.protected,
+                        // Some folder at or below this one was unreadable: the numbers are a lower bound.
+                        "incomplete": c.incomplete,
+                        // Excluded by policy and never opened: its size is unknown.
+                        "excluded": c.excluded,
                     })
                 })
                 .collect();
@@ -429,10 +454,18 @@ fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&plan)?);
         }
         Some(Command::History) => println!("{}", serde_json::to_string_pretty(&index.history()?)?),
-        Some(Command::Findings { offset }) => println!(
-            "{}",
-            serde_json::to_string_pretty(&index.findings(1000, offset, false)?)?
-        ),
+        Some(Command::Findings { offset }) => {
+            let mut findings = serde_json::to_value(index.findings(1000, offset, false)?)?;
+            // `entry.path` stays the raw bytes (the path authority); `path` is for reading only.
+            for finding in findings.as_array_mut().into_iter().flatten() {
+                let raw: Option<Vec<u8>> =
+                    serde_json::from_value(finding["entry"]["path"].clone()).ok();
+                if let Some(raw) = raw {
+                    finding["path"] = omg_core::display_path(&raw).into();
+                }
+            }
+            println!("{}", serde_json::to_string_pretty(&findings)?);
+        }
         Some(Command::Ignores { remove }) => {
             if let Some(id) = remove {
                 index.remove_ignore(id)?;

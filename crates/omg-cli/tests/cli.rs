@@ -70,6 +70,9 @@ fn scan_status_findings_and_dry_run_roundtrip() {
     assert!(output.status.success());
     let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     let id = findings[0]["id"].as_str().unwrap();
+    // A readable path beside the raw bytes, which stay the authority.
+    assert!(findings[0]["entry"]["path"].is_array());
+    assert!(findings[0]["path"].is_string());
     let preview = invoke(&["cleanup", "--dry-run", "--candidate", id]);
     assert!(preview.status.success());
     let plan: serde_json::Value = serde_json::from_slice(&preview.stdout).unwrap();

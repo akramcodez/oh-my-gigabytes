@@ -30,6 +30,9 @@ pub fn scan(
 /// (comparison, folder totals, publication). Readers mask it off to get the entry count.
 pub const FINISHING: u64 = 1 << 63;
 
+/// Unreadable paths stored per scan; past this only the count is kept.
+pub const MAX_ISSUES: usize = 1000;
+
 /// Fixed cost after folder totals: bounded pruning of the previous scan, checkpoint, trend sample.
 const FINISH_FIXED: f64 = 4.0;
 
@@ -405,7 +408,7 @@ mod walk {
                     }
                     for (path, reason) in batch.issues {
                         report.errors += 1;
-                        if report.errors <= 1000 {
+                        if report.errors <= MAX_ISSUES as u64 {
                             tx.execute(
                                 "INSERT INTO issues VALUES(?,?,?)",
                                 params![id, path, reason],

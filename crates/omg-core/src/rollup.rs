@@ -43,6 +43,28 @@ pub struct Child {
     pub protected: u64,
     /// Newest modification time (Unix seconds) in the subtree (or of the file).
     pub newest: i64,
+    /// Directories: some folder at or below this one could not be read (permission, macOS privacy
+    /// protection, or change during the scan), so the totals are a lower bound, not a size.
+    pub incomplete: bool,
+    /// Directories: excluded by policy (sensitive, cloud or system folder), so never opened and its
+    /// size is unknown. Its parents are not marked: exclusions are deliberate and documented.
+    pub excluded: bool,
+}
+
+impl Child {
+    /// Allocated size for people. Unknown is never shown as zero: "not scanned" for an excluded
+    /// folder, "unknown" when nothing in an unreadable folder was counted, "≥ N" when part was.
+    pub fn allocated_label(&self) -> String {
+        if self.excluded {
+            "not scanned".into()
+        } else if !self.incomplete {
+            crate::bytes(self.allocated)
+        } else if self.allocated == 0 {
+            "unknown".into()
+        } else {
+            format!("≥ {}", crate::bytes(self.allocated))
+        }
+    }
 }
 
 fn parent_of(path: &[u8]) -> &[u8] {
@@ -422,10 +444,32 @@ impl Index {
                     dirs: unsigned(r, 5)?,
                     protected: unsigned(r, 6)?,
                     newest: r.get(7)?,
+                    incomplete: false,
+                    excluded: false,
                 })
             },
         )?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        let mut children: Vec<Child> = rows.collect::<rusqlite::Result<_>>()?;
+        let gaps: Vec<Vec<u8>> = self
+            .db
+            .prepare("SELECT path FROM issues WHERE scan_id=?")?
+            .query_map([id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        // Past the stored cap any folder may hold an unrecorded gap, so all are marked.
+        let overflow = gaps.len() >= crate::scanner::MAX_ISSUES;
+        let mut excluded = self.db.prepare_cached(
+            "SELECT 1 FROM entries WHERE scan_id=? AND path=? AND excluded IS NOT NULL",
+        )?;
+        for child in children.iter_mut().filter(|c| c.kind == "directory") {
+            child.excluded = excluded.exists(params![id, child.path])?;
+            child.incomplete = !child.excluded
+                && (overflow
+                    || gaps.iter().any(|gap| {
+                        gap.strip_prefix(child.path.as_slice())
+                            .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
+                    }));
+        }
+        Ok(children)
     }
 }
 
