@@ -123,7 +123,8 @@ fn unreadable_folders_show_unknown_not_zero() {
         DirView {
             children: vec![
                 folder("Library", 2 << 30, 900, true),
-                folder("Documents", 0, 0, true),
+                // ext4 gives the folder itself 4 KiB; nothing inside was counted, so still unknown.
+                folder("Documents", 4096, 0, true),
                 folder("Movies", 0, 1, true),
                 folder("empty", 0, 0, false),
                 Child {

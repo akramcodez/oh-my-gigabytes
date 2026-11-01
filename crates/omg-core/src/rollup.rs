@@ -58,12 +58,14 @@ pub struct Child {
 impl Child {
     /// Allocated size for people. Unknown is never shown as zero: "not scanned" for an excluded
     /// folder, "unknown" when nothing in an unreadable folder was counted, "≥ N" when part was.
+    /// Nothing counted means no files or folders inside: the folder's own blocks (4 KiB on ext4,
+    /// 0 on APFS) say nothing about its contents.
     pub fn allocated_label(&self) -> String {
         if self.excluded {
             "not scanned".into()
         } else if !self.incomplete {
             crate::bytes(self.allocated)
-        } else if self.allocated == 0 {
+        } else if self.allocated == 0 || (self.files == 0 && self.dirs == 0) {
             "unknown".into()
         } else {
             format!("≥ {}", crate::bytes(self.allocated))
