@@ -54,6 +54,8 @@ cargo test -p omg-core --test windows                     # Windows only: native
 
 Windows: CI's Windows runners build with MSVC and a static C runtime (`.cargo/config.toml`). Local builds can use `1.95.0-x86_64-pc-windows-gnu` with a MinGW linker on a path without spaces. Build from a copy on a Windows drive, not from `\\wsl.localhost`. The deletion tests skip, with a message, when `TMP` is inside a Git repository; set `TMP` to a folder outside one.
 
+macOS: `scripts/mac-check.sh` runs the same steps as CI's macOS legs on a Mac. It installs Rust and Node 22 into `~/.cargo`, `~/.rustup` and `~/.local` if they are missing (no sudo). Options: `--quick` (fmt, clippy and analysis-only tests), `--smoke` (also runs the built `omg` against real paths with a private state directory), `--no-bootstrap` (fail instead of installing). It sets `TMPDIR` to its canonical path and `OMG_REQUIRE_DISK_IMAGES=1`, which a manual `cargo test` on a Mac needs too: `TMPDIR=$(cd "$TMPDIR" && pwd -P) OMG_REQUIRE_DISK_IMAGES=1 cargo test --workspace --locked`. The disk-image tests attach images with `hdiutil`, so a stuck test can leave an `omg-*` image mounted (`hdiutil info`).
+
 Running the app. Always use a separate private state directory for experiments. The default is `$XDG_STATE_HOME/omg` (Windows: `%LOCALAPPDATA%\omg`), or `OMG_STATE_DIR` if set.
 
 ```sh

@@ -489,12 +489,17 @@ fn interactive_tui_refuses_without_a_terminal_and_changes_nothing() {
     assert!(!state.exists(), "refusal must not create state");
 }
 
-/// A binary fetched by a browser carries the quarantine attribute. Running it from a terminal must
-/// still work for an ad-hoc signed build; Gatekeeper's dialog for Finder launches cannot be tested
-/// on a hosted runner (docs/macos-evidence.md).
+/// A binary fetched by a browser carries the quarantine attribute. On a hosted runner it still runs
+/// from a terminal. On a real Mac Gatekeeper kills it (SIGKILL) and shows an "Apple could not verify"
+/// dialog, because the build is ad-hoc signed and not notarized (docs/macos-evidence.md, "Real Mac").
+/// So this test runs only where `CI` is set, and never pops a dialog on a developer's Mac.
 #[test]
 #[cfg(target_os = "macos")]
 fn a_quarantined_copy_of_the_binary_runs_from_a_terminal() {
+    if std::env::var_os("CI").is_none() {
+        eprintln!("skipped: a real Mac shows a Gatekeeper dialog for this; set CI=1 to run it");
+        return;
+    }
     let fixture = tempfile::tempdir().unwrap();
     let copy = fixture.path().join("omg");
     std::fs::copy(env!("CARGO_BIN_EXE_omg"), &copy).unwrap();
