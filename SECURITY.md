@@ -1,6 +1,6 @@
 # Security policy
 
-OMG is a development preview. It deletes files only when you confirm an exact plan, and it is not yet released for general use.
+OMG is a development preview. The `0.1.0-beta.1` release is analysis only: permanent delete is compiled out, and OMG reads file metadata without changing files. The source tree also contains an unqualified permanent-delete feature (Linux and Windows development builds) that deletes only after you confirm an exact plan.
 
 ## Reporting a vulnerability
 
@@ -15,4 +15,6 @@ Include the OMG version (`omg --version`), your OS and filesystem, and the steps
 
 In scope: anything that deletes, moves or reads data outside what the user confirmed; path, link or race escapes; authorization bypass for permanent delete; service code that can change user files; notification or diagnostic output that leaks paths.
 
-Out of scope for now: a hostile process running as the same user (OMG does not defend against that), unsupported filesystems, and Windows or macOS builds, which are compile checks only.
+In scope on every supported platform (Linux, Windows and macOS): the scanner following a link or crossing a mount it should not, reading file contents, and the npm launcher running a binary that does not match its signed manifest.
+
+Out of scope for now: a hostile process running as the same user (OMG does not defend against that) and unsupported filesystems.
