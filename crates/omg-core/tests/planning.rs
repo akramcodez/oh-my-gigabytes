@@ -52,7 +52,13 @@ fn explicit_preview_is_read_only_and_execution_cannot_bypass_denial() {
         .unwrap();
     assert!(planning::revalidate(root.path(), &finding.entry).is_err());
     let stale = index.preview(&[finding.id]).unwrap();
-    assert!(stale.items[0].decision.contains("Stale"));
+    if cfg!(target_os = "linux") {
+        assert!(stale.items[0].decision.contains("Stale"));
+    } else {
+        // No native re-check here: a present target must not be called stale.
+        assert!(plan.items[0].decision.contains("cannot re-check"));
+        assert!(stale.items[0].decision.contains("cannot re-check"));
+    }
     assert!(
         policy::cleanup_denial(root.path(), &finding.entry).contains("OS Trash is not implemented")
     );

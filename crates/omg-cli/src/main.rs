@@ -434,6 +434,8 @@ fn run() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "directory": omg_core::display_path(&raw),
+                    // Some folder below could not be read: the totals are a lower bound.
+                    "incomplete": totals.incomplete,
                     "totals": totals,
                     "scan_state": status.last_report.as_ref().map(|r| r.state.clone()),
                     "last_successful": status.last_successful,

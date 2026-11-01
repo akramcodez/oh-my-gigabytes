@@ -100,6 +100,11 @@ impl Index {
             estimated = estimated.saturating_add(finding.estimate);
             let decision = match revalidate(&root, &finding.entry) {
                 Ok(()) => policy::cleanup_denial(&root, &finding.entry),
+                // Re-checking a target natively exists only on Linux; elsewhere say so rather than
+                // calling a present target stale.
+                Err(_) if !cfg!(target_os = "linux") => {
+                    "Preview cannot re-check targets on this platform yet; skipped".into()
+                }
                 Err(_) => "Stale, inaccessible or redirected target; skipped".into(),
             };
             items.push(PlanItem {

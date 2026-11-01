@@ -30,6 +30,10 @@ pub struct Totals {
     /// Newest modification time (Unix seconds) anywhere in the subtree; 0 when unknown.
     #[serde(default)]
     pub newest: i64,
+    /// Some folder at or below this one could not be read, so the totals are a lower bound. Not
+    /// serialized: finding ids hash these totals and must stay stable.
+    #[serde(skip)]
+    pub incomplete: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 pub struct Child {
@@ -402,7 +406,7 @@ impl Index {
         let Some(id) = self.active_scan()? else {
             return Ok(None);
         };
-        Ok(self
+        let totals = self
             .db
             .query_row(
                 "SELECT allocated,apparent,files,dirs,protected,coalesce(newest,0) FROM dir_totals WHERE scan_id=? AND path=?",
@@ -415,10 +419,27 @@ impl Index {
                         dirs: unsigned(r, 3)?,
                         protected: unsigned(r, 4)?,
                         newest: r.get(5)?,
+                        incomplete: false,
                     })
                 },
             )
-            .optional()?)
+            .optional()?;
+        let Some(mut totals) = totals else {
+            return Ok(None);
+        };
+        totals.incomplete = self.gaps(id)?.covers(path);
+        Ok(Some(totals))
+    }
+    /// Paths the scan could not read (stored up to `MAX_ISSUES`).
+    fn gaps(&self, id: i64) -> Result<Gaps> {
+        let paths: Vec<Vec<u8>> = self
+            .db
+            .prepare_cached("SELECT path FROM issues WHERE scan_id=?")?
+            .query_map([id], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        // Past the stored cap any folder may hold an unrecorded gap, so all are covered.
+        let overflow = paths.len() >= crate::scanner::MAX_ISSUES;
+        Ok(Gaps { paths, overflow })
     }
     /// Largest direct children (subdirectory subtrees and files) of a directory. The planner would
     /// otherwise pick the size index and scan every entry, so the parent index is forced.
@@ -450,26 +471,32 @@ impl Index {
             },
         )?;
         let mut children: Vec<Child> = rows.collect::<rusqlite::Result<_>>()?;
-        let gaps: Vec<Vec<u8>> = self
-            .db
-            .prepare("SELECT path FROM issues WHERE scan_id=?")?
-            .query_map([id], |r| r.get(0))?
-            .collect::<rusqlite::Result<_>>()?;
-        // Past the stored cap any folder may hold an unrecorded gap, so all are marked.
-        let overflow = gaps.len() >= crate::scanner::MAX_ISSUES;
+        let gaps = self.gaps(id)?;
         let mut excluded = self.db.prepare_cached(
             "SELECT 1 FROM entries WHERE scan_id=? AND path=? AND excluded IS NOT NULL",
         )?;
         for child in children.iter_mut().filter(|c| c.kind == "directory") {
             child.excluded = excluded.exists(params![id, child.path])?;
-            child.incomplete = !child.excluded
-                && (overflow
-                    || gaps.iter().any(|gap| {
-                        gap.strip_prefix(child.path.as_slice())
-                            .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
-                    }));
+            child.incomplete = !child.excluded && gaps.covers(&child.path);
         }
         Ok(children)
+    }
+}
+
+struct Gaps {
+    paths: Vec<Vec<u8>>,
+    overflow: bool,
+}
+impl Gaps {
+    /// Whether a gap lies at or below `dir` (`""` is the scan root, which holds every gap).
+    fn covers(&self, dir: &[u8]) -> bool {
+        self.overflow
+            || self.paths.iter().any(|gap| {
+                dir.is_empty()
+                    || gap
+                        .strip_prefix(dir)
+                        .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
+            })
     }
 }
 

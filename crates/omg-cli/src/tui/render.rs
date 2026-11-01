@@ -607,7 +607,8 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
     if let Some(total) = &view.total {
         crumbs.push(Span::styled(
             format!(
-                "   {} · {} files",
+                "   {}{} · {} files",
+                if total.incomplete { "≥ " } else { "" },
                 bytes(total.allocated),
                 short_count(total.files)
             ),
@@ -748,14 +749,14 @@ fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lin
         out.push(Line::from(vec![
             Span::styled(if selected { "❯ " } else { "  " }, theme.selected()),
             Span::styled(
-                format!("● {:<9}", f.effective_tier),
+                format!("● {:<10}", f.effective_tier),
                 theme.tier(&f.effective_tier),
             ),
             Span::styled(format!("{:>10}  ", bytes(f.estimate)), theme.bold()),
             Span::styled(
                 truncate_middle(
                     &state.shorten_home(&state.absolute(&f.entry.path)),
-                    width.saturating_sub(28),
+                    width.saturating_sub(29),
                 ),
                 path_style(
                     if selected {

@@ -300,6 +300,11 @@ fn unreadable_folders_are_marked_incomplete_up_the_tree() {
         list.iter().find(|c| c.path == name).unwrap().clone()
     };
     assert!(find(&top, b"outer").incomplete);
+    // The folder's own totals carry the same mark (root included); a clean sibling does not.
+    assert!(index.subtree(b"").unwrap().unwrap().incomplete);
+    assert!(index.subtree(b"outer").unwrap().unwrap().incomplete);
+    assert!(index.subtree(b"outer/locked").unwrap().unwrap().incomplete);
+    assert!(!index.subtree(b"sibling").unwrap().unwrap().incomplete);
     assert!(!find(&top, b"sibling").incomplete);
     let inner = index.children(b"outer", 10, 0).unwrap();
     let unreadable = find(&inner, b"outer/locked");
