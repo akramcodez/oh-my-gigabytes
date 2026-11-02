@@ -110,7 +110,7 @@ New ConPTY tests (`tests/test_terminal_windows.py`, also run by CI's Windows x64
 - `test_delete_removes_only_the_confirmed_file_and_refuses_protected_ones`: Browse, `d` on a 3 MiB file, "Are you sure?" names it and defaults to Cancel; Esc leaves the file and the message "Nothing was deleted" stays; `d`, "Yes, delete permanently" removes exactly that file and leaves its neighbour; `d` on `secret.pem` is refused ("cannot add to OMG Trash") with no delete offered.
 - `test_a_cache_holding_a_protected_folder_is_deleted_around_it`: uv's Windows cache (`%LOCALAPPDATA%\uv\cache`) holding a `credentials` package folder cannot be deleted whole; "Delete everything except the protected items" plans around it, asks again, and deletes the rest while the protected folder survives.
 
-This closes the gap "the confirmed removal through the interface was never run on Windows" for the GNU-toolchain release build on NTFS. The shipped binary is built with MSVC in CI; CI runs these tests with its debug MSVC build, not the release one.
+This closes the gap "the confirmed removal through the interface was never run on Windows" for the GNU-toolchain release build on NTFS. The shipped binary is built with MSVC in CI; CI runs these tests with its debug MSVC build, not the release one (both passed on windows-2022 and windows-latest, `Checks` run 41395760636).
 
 Found and fixed by this run:
 

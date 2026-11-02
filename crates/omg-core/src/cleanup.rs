@@ -34,9 +34,14 @@ const FREED_SQL: &str = "SELECT kind,count(*),max(links),max(apparent),max(alloc
 
 /// Removing a subtree from the index: the name, then the range below it, in each table. Never one
 /// statement with `path=? OR (path>? AND path<?)`: SQLite cannot use an index for that in a DELETE.
+/// Used by the Linux and Windows delete path (macOS has none) and by the query-plan test.
+#[cfg(any(target_os = "linux", windows, test))]
 const FORGET_ENTRY: &str = "DELETE FROM entries WHERE scan_id=?1 AND path=?2";
+#[cfg(any(target_os = "linux", windows, test))]
 const FORGET_ENTRIES_BELOW: &str = "DELETE FROM entries WHERE scan_id=?1 AND path>?2 AND path<?3";
+#[cfg(any(target_os = "linux", windows, test))]
 const FORGET_TOTAL: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path=?2";
+#[cfg(any(target_os = "linux", windows, test))]
 const FORGET_TOTALS_BELOW: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path>?2 AND path<?3";
 
 /// A path or name for a message: lossy, with control characters (terminal escapes) replaced.
