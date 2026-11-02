@@ -1,6 +1,6 @@
 # Security policy
 
-OMG is a development preview. The `0.1.0-beta.1` release is analysis only: permanent delete is compiled out, and OMG reads file metadata without changing files. The source tree also contains an unqualified permanent-delete feature (Linux and Windows development builds) that deletes only after you confirm an exact plan.
+OMG is a development preview. The beta release (`0.1.0-beta.1`) includes an unqualified permanent-delete feature on Linux and Windows, which deletes files only after you confirm an exact plan; the macOS build is analysis only and cannot delete. A build made with `--no-default-features` compiles delete out.
 
 ## Reporting a vulnerability
 

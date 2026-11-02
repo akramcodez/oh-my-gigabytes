@@ -8,8 +8,8 @@ OMG (Oh My Gigabytes) is a local-first, keyboard-first storage analyzer for deve
 
 It is a **development preview**:
 - **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. Permanent delete runs on Linux and on Windows NTFS. The older `planning::execute` still always fails closed.
-- **Linux, Windows and macOS.** Native scanning and state work on all three. Permanent delete exists on Linux and Windows NTFS in the default build only; macOS is analysis only. Windows scans NTFS and ReFS (FAT32/exFAT are refused with a message). The background service is Linux only. macOS scans APFS, HFS+, exFAT and FAT through `platform::macos` (macOS 15 or newer) and has been tested only on GitHub-hosted runners. Status and gaps: `docs/windows-evidence.md`, `docs/macos-evidence.md`, `docs/linux-qualification.md`.
-- **First release is an analysis-only beta (`0.1.0-beta.1`).** Release builds use `--no-default-features`, which compiles permanent delete out. Progress and what is left: `docs/beta-release-progress.md`. Procedure: `docs/release.md`, "Releasing the beta".
+- **Linux, Windows and macOS.** Native scanning and state work on all three. Permanent delete exists on Linux and Windows NTFS in the default build only; macOS is analysis only. Windows scans NTFS and ReFS (FAT32/exFAT are refused with a message). The background service is Linux only. macOS scans APFS, HFS+, exFAT and FAT through `platform::macos` (macOS 15 or newer) and has been tested on GitHub-hosted runners and one Apple silicon Mac. Status and gaps: `docs/windows-evidence.md`, `docs/macos-evidence.md`, `docs/linux-qualification.md`.
+- **First release is a development-preview beta (`0.1.0-beta.1`) and includes permanent delete on Linux and Windows (owner decision 2026-10-24).** Linux and Windows release builds use the default features and declare `cleanup: development-unqualified`; the macOS release build uses `--no-default-features` (macOS has no delete) and declares `disabled`. `--no-default-features` still builds, tests and lints the analysis-only variant. Progress and what is left: `docs/beta-release-progress.md`. Procedure: `docs/release.md`, "Releasing the beta".
 - **Phases ship as development milestones.** Phases 0–5 are recorded as milestones with unpassed acceptance gates. See `docs/checklist.md`.
 
 ## Source-of-truth documents
@@ -50,6 +50,7 @@ scripts/fs-sandbox.sh ext4|xfs|btrfs up|test|down          # loop-image filesyst
 cargo run --release -p omg-core --example benchmark        # synthetic scan benchmark
 python3 -m unittest discover -s spikes/phase0 -p 'test_*.py' -v   # Phase 0 Python probe (not the engine)
 cargo test -p omg-core --test windows                     # Windows only: native scan and delete tests
+python -m unittest discover -s tests -p 'test_terminal_windows.py' -v   # Windows only: ConPTY tests, including delete (pip install pywinpty==2.0.15; uses target/debug/omg.exe or OMG_BINARY)
 ```
 
 Windows: CI's Windows runners build with MSVC and a static C runtime (`.cargo/config.toml`). Local builds can use `1.95.0-x86_64-pc-windows-gnu` with a MinGW linker on a path without spaces. Build from a copy on a Windows drive, not from `\\wsl.localhost`. The deletion tests skip, with a message, when `TMP` is inside a Git repository; set `TMP` to a folder outside one.
@@ -143,7 +144,7 @@ All lock files live in the private state directory and use kernel advisory locks
 - `scan.lock` gives a single scan owner, foreground or service.
 - `service.lock` gives a single background service per profile.
 
-Contention returns the typed error `index::Busy`. Callers use `downcast_ref::<Busy>()` to coalesce or hand off instead of failing. `index::lock_held` probes a lock without creating its file; service health is based on it, never on a PID.
+Contention returns the typed error `index::Busy`. Callers use `downcast_ref::<Busy>()` to coalesce or hand off instead of failing. `scanner::scan` must stay strict (the foreground-to-service handoff needs an immediate `Busy`). Housekeeping (`Index::prune_stale`) holds `scan.lock` only in short slices and lets go between them; `cleanup.rs` and the interface's scan job use `index::lock_wait` (bounded by `LOCK_WAIT`) so housekeeping never makes a delete or a scan fail. `index::lock_held` probes a lock without creating its file; service health is based on it, never on a PID.
 
 ### Background service (`service/`, Phase 5)
 

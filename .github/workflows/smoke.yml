@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-latest, macos-15, macos-15-intel, macos-26]
+        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-latest, macos-15, macos-26]
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -150,7 +150,9 @@ jobs:
           "$omg" --version | tee version.txt
           grep -q "${VERSION}" version.txt
           "$omg" --state-dir "$state" doctor | tee doctor.txt
-          grep -q 'permanent delete: unsupported' doctor.txt
+          # Linux and Windows builds offer permanent delete; the macOS build has none.
+          case "$target" in darwin-*) expected=unsupported ;; *) expected=development-unqualified ;; esac
+          grep -q "permanent delete: $expected" doctor.txt
           "$omg" --state-dir "$state" scan --root "$root"
           "$omg" --state-dir "$state" status > /dev/null
           [ -f "$RUNNER_TEMP/state/index.sqlite" ]

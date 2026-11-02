@@ -25,14 +25,26 @@ pub enum Request {
     },
     Unmark(Vec<i64>),
     PrepareDelete(Vec<i64>),
+    /// Plan the deletion of these cache folders around the protected items inside them. `undo`
+    /// are saved items to take back out of OMG Trash if the user cancels.
+    PrepareDeleteKeeping {
+        ids: Vec<i64>,
+        undo: Vec<i64>,
+    },
     /// Add to OMG Trash and immediately prepare a one-item delete plan.
     DeleteNow {
         path: Vec<u8>,
         allocated: u64,
     },
     Delete(Box<DeletePlan>),
-    /// The user cancelled a confirmation: the backend forgets that plan.
+    /// The backend forgets a plan that is being replaced by another one.
     DiscardPlan(String),
+    /// The user cancelled a confirmation: take back what the review added to OMG Trash (`undo`),
+    /// forget the plan, then say so. One request, so no later reply overwrites "Nothing was deleted".
+    CancelPlan {
+        fingerprint: String,
+        undo: Vec<i64>,
+    },
     SetAutoTrash(bool),
     /// Progress of a scan run by another process.
     PollRunning,
@@ -70,11 +82,17 @@ pub enum Response {
         marks: Vec<RowMark>,
         total: Option<Totals>,
     },
-    Running(Option<omg_core::index::RunningScan>),
+    /// `locked` is whether anything holds the scan lock. A held lock with no scan row is not a
+    /// scan: it is housekeeping (pruning old scans) or a scan that has not recorded itself yet.
+    Running {
+        scan: Option<omg_core::index::RunningScan>,
+        locked: bool,
+    },
     Plan(Box<Plan>),
     DeletePlan {
         plan: Box<DeletePlan>,
-        added_now: bool,
+        /// Saved items this review put in OMG Trash; cancelling takes them back out.
+        undo: Vec<i64>,
     },
     Deleted(Box<DeleteReport>),
     Info(String),
@@ -157,7 +175,9 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                             });
                         }
                         Request::PollRunning => {
-                            send(Response::Running(index.running_scan()?));
+                            let scan = index.running_scan()?;
+                            let locked = omg_core::index::lock_held(&index.state, "scan.lock");
+                            send(Response::Running { scan, locked });
                         }
                         Request::Preview(id) => {
                             send(Response::Plan(Box::new(
@@ -194,7 +214,15 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                         Request::PrepareDelete(ids) => {
                             send(Response::DeletePlan {
                                 plan: Box::new(index.prepare_delete(&ids, &home)?),
-                                added_now: false,
+                                undo: vec![],
+                            });
+                        }
+                        Request::PrepareDeleteKeeping { ids, undo } => {
+                            send(Response::DeletePlan {
+                                plan: Box::new(
+                                    index.prepare_delete_keeping_protected(&ids, &home)?,
+                                ),
+                                undo,
                             });
                         }
                         Request::DeleteNow { path, allocated } => {
@@ -218,12 +246,14 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                                     return Err(error);
                                 }
                             };
-                            if plan.items.is_empty() && !existed {
+                            // A folder that can still be deleted around its protected items stays staged
+                            // for that choice; cancelling takes it back out.
+                            if plan.items.is_empty() && plan.keepable.is_empty() && !existed {
                                 index.unmark(id)?;
                             }
                             send(Response::DeletePlan {
                                 plan: Box::new(plan),
-                                added_now: !existed,
+                                undo: if existed { vec![] } else { vec![id] },
                             });
                             refresh = true;
                         }
@@ -237,6 +267,14 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                             refresh = true;
                         }
                         Request::DiscardPlan(fingerprint) => index.discard_plan(&fingerprint),
+                        Request::CancelPlan { fingerprint, undo } => {
+                            index.discard_plan(&fingerprint);
+                            refresh |= !undo.is_empty();
+                            for id in undo {
+                                index.unmark(id)?;
+                            }
+                            send(Response::Info("Cancelled. Nothing was deleted.".into()));
+                        }
                         Request::Delete(plan) => {
                             let fingerprint = plan.fingerprint.clone();
                             send(Response::Deleted(Box::new(index.delete_permanently(

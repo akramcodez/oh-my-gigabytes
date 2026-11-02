@@ -26,6 +26,33 @@ pub(crate) type IssuedPlans = HashMap<String, (i64, DeletePlan)>;
 /// Seconds a reviewed plan may wait for confirmation before it must be reviewed again.
 const PLAN_TTL: i64 = 900;
 
+/// What removing a subtree frees, grouped by file identity. The primary-key index is named on
+/// purpose: left alone, SQLite may walk the whole scan through `entry_identity` to get the grouping
+/// for free, which costs about a second per call on a large index. A plan of many small pieces
+/// calls this once per piece.
+const FREED_SQL: &str = "SELECT kind,count(*),max(links),max(apparent),max(allocated),coalesce(max(CASE WHEN excluded IS NULL THEN apparent END),0),coalesce(max(CASE WHEN excluded IS NULL THEN allocated END),0) FROM entries INDEXED BY sqlite_autoindex_entries_1 WHERE scan_id=?1 AND (path=?2 OR (path>?3 AND path<?4)) GROUP BY identity";
+
+/// Removing a subtree from the index: the name, then the range below it, in each table. Never one
+/// statement with `path=? OR (path>? AND path<?)`: SQLite cannot use an index for that in a DELETE.
+const FORGET_ENTRY: &str = "DELETE FROM entries WHERE scan_id=?1 AND path=?2";
+const FORGET_ENTRIES_BELOW: &str = "DELETE FROM entries WHERE scan_id=?1 AND path>?2 AND path<?3";
+const FORGET_TOTAL: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path=?2";
+const FORGET_TOTALS_BELOW: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path>?2 AND path<?3";
+
+/// A path or name for a message: lossy, with control characters (terminal escapes) replaced.
+fn printable(raw: &[u8]) -> String {
+    String::from_utf8_lossy(raw)
+        .chars()
+        .map(|c| if c.is_control() { '?' } else { c })
+        .collect()
+}
+
+/// Protected items looked for inside a folder when it is planned. More than this and the folder is
+/// refused rather than split around them.
+const PROTECTED_LIMIT: usize = 2_000;
+/// Most separate pieces a folder may be split into when it is deleted around protected items.
+const MAX_PIECES: usize = 5_000;
+
 /// Refusal for an item whose creation time is missing: identity alone cannot prove it is the saved object.
 const UNRECORDED_BIRTH: &str =
     "creation time was not recorded when added; add it to OMG Trash again";
@@ -100,6 +127,10 @@ pub struct DeletePlan {
     pub denied: Vec<(Vec<u8>, String)>,
     pub estimated: u64,
     pub created: i64,
+    /// Ids of cache folders that cannot be deleted whole because protected items are inside, but
+    /// can be deleted around them (`prepare_delete_keeping_protected`). They are listed in `denied`.
+    #[serde(default)]
+    pub keepable: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -360,9 +391,7 @@ impl Index {
     /// a group whose names are all inside the subtree is freed, a larger group is a survivor.
     fn freed(&self, scan: i64, path: &[u8]) -> Result<Freed> {
         let (prefix, upper) = descendants(path);
-        let mut statement = self.db.prepare(
-            "SELECT kind,count(*),max(links),max(apparent),max(allocated),coalesce(max(CASE WHEN excluded IS NULL THEN apparent END),0),coalesce(max(CASE WHEN excluded IS NULL THEN allocated END),0) FROM entries WHERE scan_id=?1 AND (path=?2 OR (path>?3 AND path<?4)) GROUP BY identity",
-        )?;
+        let mut statement = self.db.prepare(FREED_SQL)?;
         let mut freed = Freed::default();
         let mut rows = statement.query(params![scan, path, prefix, upper])?;
         while let Some(row) = rows.next()? {
@@ -554,6 +583,7 @@ impl Index {
         let all = self.marked()?;
         let mut items: Vec<Marked> = Vec::new();
         let mut denied = Vec::new();
+        let mut keepable: Vec<i64> = Vec::new();
         for id in ids {
             let Some(item) = all.iter().find(|m| m.id == *id) else {
                 bail!("item {id} is no longer in OMG Trash");
@@ -571,18 +601,65 @@ impl Index {
             }
             items.retain(|i| !policy::inside(&i.path, &item.path, true));
             match self.entry(&item.path)? {
-                Some(entry) => match self.verdict_for(&entry, home)?.gate {
-                    Gate::Denied(reason) => denied.push((item.path.clone(), reason)),
-                    Gate::Warn(text) => items.push(Marked {
-                        warning: Some(text),
+                Some(entry) => {
+                    let verdict = self.verdict_for(&entry, home)?;
+                    let warning = match verdict.gate {
+                        Gate::Denied(reason) => {
+                            denied.push((item.path.clone(), reason));
+                            continue;
+                        }
+                        Gate::Warn(text) => Some(text),
+                        Gate::Allowed => None,
+                    };
+                    // Protected names inside make the deletion refuse the whole folder. Say so now,
+                    // not after the user has confirmed.
+                    let inside = if entry.kind == "directory" {
+                        self.sensitive_inside(scan, &entry.path, PROTECTED_LIMIT)?
+                    } else {
+                        vec![]
+                    };
+                    if let Some(first) = inside.first() {
+                        let shown = printable(first);
+                        if verdict.kind == Kind::Cache {
+                            keepable.push(item.id);
+                            let count = if inside.len() >= PROTECTED_LIMIT {
+                                format!("{PROTECTED_LIMIT}+")
+                            } else {
+                                inside.len().to_string()
+                            };
+                            denied.push((
+                                item.path.clone(),
+                                format!(
+                                    "contains {count} protected item(s), for example {shown}; it cannot be deleted whole, but everything else in it can"
+                                ),
+                            ));
+                        } else {
+                            denied.push((
+                                item.path.clone(),
+                                format!("contains a sensitive item ({shown})"),
+                            ));
+                        }
+                        continue;
+                    }
+                    items.push(Marked {
+                        warning,
                         ..item.clone()
-                    }),
-                    Gate::Allowed => items.push(item.clone()),
-                },
+                    });
+                }
                 None => denied.push((item.path.clone(), "no longer in the index".into())),
             }
         }
-        // Only bytes this plan would free: a hard link whose other name survives is not counted.
+        self.issue(scan, items, denied, keepable)
+    }
+    /// Freeze `items` and `denied` as a plan and issue it to this session. Only bytes the plan would
+    /// free are estimated: a hard link whose other name survives is not counted.
+    fn issue(
+        &mut self,
+        scan: i64,
+        items: Vec<Marked>,
+        denied: Vec<(Vec<u8>, String)>,
+        keepable: Vec<i64>,
+    ) -> Result<DeletePlan> {
         let mut estimated = 0;
         for item in &items {
             estimated += self.freed(scan, &item.path)?.allocated;
@@ -595,11 +672,198 @@ impl Index {
             denied,
             estimated,
             created,
+            keepable,
         };
         self.issued
             .retain(|_, (_, held)| now() - held.created <= PLAN_TTL);
         self.issued.insert(fingerprint, (scan, plan.clone()));
         Ok(plan)
+    }
+    /// Entries strictly inside the directory `path` whose name is one of `policy::ALWAYS_SENSITIVE`
+    /// (the names the deletion itself refuses to remove anywhere inside a folder), from the index.
+    fn sensitive_inside(&self, scan: i64, path: &[u8], limit: usize) -> Result<Vec<Vec<u8>>> {
+        use rusqlite::types::Value;
+        let (prefix, upper) = descendants(path);
+        let tests = (0..policy::ALWAYS_SENSITIVE.len())
+            .map(|n| format!("CAST(path AS TEXT) LIKE ?{}", n + 5))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        let mut values = vec![
+            Value::Integer(scan),
+            Value::Blob(prefix),
+            Value::Blob(upper),
+            Value::Integer(i64::try_from(limit)?),
+        ];
+        values.extend(
+            policy::ALWAYS_SENSITIVE
+                .iter()
+                .map(|name| Value::Text(format!("%/{name}"))),
+        );
+        let mut statement = self.db.prepare(&format!(
+            "SELECT path FROM entries WHERE scan_id=?1 AND path>?2 AND path<?3 AND ({tests}) LIMIT ?4"
+        ))?;
+        let rows = statement.query_map(rusqlite::params_from_iter(values), |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+    /// What the index lists directly inside the directory `parent`.
+    fn children_entries(&self, scan: i64, parent: &[u8]) -> Result<Vec<Entry>> {
+        let mut statement = self.db.prepare(
+            "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries INDEXED BY entry_parent WHERE scan_id=? AND parent=?",
+        )?;
+        let rows = statement.query_map(params![scan, parent], crate::index::row_entry)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+    /// Plan the deletion of cache folders around the protected items inside them: everything except
+    /// those items and the folders on the way to them. A folder is split into ordinary pieces (files
+    /// and folders with nothing protected inside) that are validated and removed exactly like any
+    /// other item at deletion time; a protected item is never a piece, and one that appears after
+    /// the review still stops the piece that contains it. Only cache and build folders qualify:
+    /// splitting a user's ordinary folder would leave it half deleted.
+    pub fn prepare_delete_keeping_protected(
+        &mut self,
+        ids: &[i64],
+        home: &Path,
+    ) -> Result<DeletePlan> {
+        if ids.is_empty() || ids.len() > 100 {
+            bail!("select 1–100 folders in OMG Trash");
+        }
+        let (scan, root, _) = self.scope()?;
+        if delete_support(&root)? == crate::capability::Support::Unsupported {
+            bail!("permanent deletion is not available in this build or on this filesystem");
+        }
+        let all = self.marked()?;
+        let mut items: Vec<Marked> = Vec::new();
+        let mut denied: Vec<(Vec<u8>, String)> = Vec::new();
+        let mut pieces: Vec<Entry> = Vec::new();
+        let mut kept: Vec<Vec<u8>> = Vec::new();
+        for id in ids {
+            let Some(item) = all.iter().find(|m| m.id == *id) else {
+                bail!("item {id} is no longer in OMG Trash");
+            };
+            let Some(entry) = self.entry(&item.path)? else {
+                denied.push((item.path.clone(), "no longer in the index".into()));
+                continue;
+            };
+            let verdict = self.verdict_for(&entry, home)?;
+            if let Gate::Denied(reason) = verdict.gate {
+                denied.push((item.path.clone(), reason));
+                continue;
+            }
+            if verdict.kind != Kind::Cache || entry.kind != "directory" {
+                denied.push((
+                    item.path.clone(),
+                    "only cache and build folders can be deleted around protected items".into(),
+                ));
+                continue;
+            }
+            let hits = self.sensitive_inside(scan, &entry.path, PROTECTED_LIMIT)?;
+            if hits.len() >= PROTECTED_LIMIT {
+                denied.push((
+                    item.path.clone(),
+                    "too many protected items inside to keep them all safely".into(),
+                ));
+                continue;
+            }
+            if hits.is_empty() {
+                // Nothing to keep: the folder goes as a whole, like any other item.
+                if item.birth.is_none() {
+                    denied.push((item.path.clone(), UNRECORDED_BIRTH.into()));
+                } else {
+                    items.retain(|i| !policy::inside(&i.path, &item.path, true));
+                    items.push(item.clone());
+                }
+                continue;
+            }
+            // The folders on the way to a protected item stay; so does the item. Everything else
+            // beside them is a piece.
+            let mut ancestors: std::collections::HashSet<Vec<u8>> = Default::default();
+            for hit in &hits {
+                let mut above = hit.as_slice();
+                while let Some(end) = above.iter().rposition(|b| *b == b'/') {
+                    above = &above[..end];
+                    if above.len() < entry.path.len() {
+                        break;
+                    }
+                    ancestors.insert(above.to_vec());
+                    if above.len() == entry.path.len() {
+                        break;
+                    }
+                }
+            }
+            let protected: std::collections::HashSet<&[u8]> =
+                hits.iter().map(Vec::as_slice).collect();
+            let mut stack = vec![entry.path.clone()];
+            while let Some(dir) = stack.pop() {
+                for child in self.children_entries(scan, &dir)? {
+                    if protected.contains(child.path.as_slice()) {
+                        kept.push(child.path);
+                    } else if ancestors.contains(&child.path) {
+                        stack.push(child.path);
+                    } else {
+                        pieces.push(child);
+                    }
+                    if pieces.len() > MAX_PIECES {
+                        bail!(
+                            "{} would be split into more than {MAX_PIECES} pieces; delete smaller folders instead",
+                            printable(&item.path)
+                        );
+                    }
+                }
+            }
+        }
+        for (position, piece) in pieces.into_iter().enumerate() {
+            let warning = match self.verdict_for(&piece, home)?.gate {
+                Gate::Denied(reason) => {
+                    denied.push((piece.path.clone(), reason));
+                    continue;
+                }
+                Gate::Warn(text) => Some(text),
+                Gate::Allowed => None,
+            };
+            #[cfg(any(target_os = "linux", windows))]
+            let birth = match live_identity(&root, &piece.path) {
+                Ok((identity, Some(created))) if identity == piece.identity => Some(created),
+                Ok((identity, _)) if identity != piece.identity => {
+                    denied.push((
+                        piece.path.clone(),
+                        "changed on disk since the last scan; rescan first".into(),
+                    ));
+                    continue;
+                }
+                _ => {
+                    denied.push((piece.path.clone(), UNRECORDED_BIRTH.into()));
+                    continue;
+                }
+            };
+            #[cfg(not(any(target_os = "linux", windows)))]
+            let birth: Option<String> = {
+                let _ = &root;
+                None
+            };
+            let allocated = if piece.kind == "directory" {
+                self.subtree(&piece.path)?
+                    .map_or(piece.allocated, |t| t.allocated)
+            } else {
+                piece.allocated
+            };
+            items.push(Marked {
+                // Pieces are not saved in OMG Trash; a negative id cannot be one that is.
+                id: -(i64::try_from(position)?) - 1,
+                path: piece.path,
+                identity: piece.identity,
+                kind: piece.kind,
+                allocated,
+                added: now(),
+                warning,
+                birth,
+                source: "keep-protected".into(),
+            });
+        }
+        for path in kept {
+            let name = printable(path.rsplit(|b| *b == b'/').next().unwrap_or(&path));
+            denied.push((path, format!("kept: protected name ({name})")));
+        }
+        self.issue(scan, items, denied, vec![])
     }
     /// Permanently delete the items of a confirmed plan. `confirmed` must be the fingerprint the
     /// user saw; every target is revalidated again here and skipped if anything changed.
@@ -624,9 +888,12 @@ impl Index {
     ) -> Result<DeleteReport> {
         let (scan, plan) = take_issued(&mut self.issued, plan, confirmed, now())?;
         let _cleanup = crate::index::lock(&self.state, "cleanup.lock")?;
-        let _scan = crate::index::lock(&self.state, "scan.lock").map_err(|_| {
-            anyhow::anyhow!("a scan is running; wait for it to finish, then delete")
-        })?;
+        // Housekeeping lets go of this lock every few hundred milliseconds, so a short wait gets in;
+        // a scan that is really running still stops the delete.
+        let _scan = crate::index::lock_wait(&self.state, "scan.lock", crate::index::LOCK_WAIT)
+            .map_err(|_| {
+                anyhow::anyhow!("a scan is running; wait for it to finish, then delete")
+            })?;
         let (current, root, _) = self.scope()?;
         if current != scan {
             bail!("the scan changed after review; review it again");
@@ -690,10 +957,13 @@ impl Index {
                             report.estimated_bytes += freed.allocated;
                             // A removed name whose data has other names leaves totals to reconcile.
                             report.needs_reconcile |= freed.survivors || shared;
-                            self.record_target(operation, item.id, "deleted", "")?;
-                            self.forget(scan, &item.path, &freed)?;
-                            self.db
-                                .execute("DELETE FROM marked WHERE id=?", [item.id])?;
+                            // The outcome, the index update and the OMG Trash entry change together,
+                            // in one commit (one flush to disk per target, not three).
+                            let tx = self.db.unchecked_transaction()?;
+                            Self::set_target(&tx, operation, item.id, "deleted", "")?;
+                            self.forget_in(&tx, scan, &item.path, &freed)?;
+                            tx.execute("DELETE FROM marked WHERE id=?", [item.id])?;
+                            tx.commit()?;
                         } else {
                             // Some entries are gone but the target is not. The published totals
                             // still include them, so the index must be reconciled by a scan.
@@ -711,11 +981,18 @@ impl Index {
                     }
                 }
             }
-            let after = platform::native::volume(&root_dir).ok().map(|v| v.1);
+            let volume = platform::native::volume(&root_dir).ok();
+            let after = volume.map(|v| v.1);
             report.observed_free_change = match (before, after) {
                 (Some(b), Some(a)) => Some(a as i64 - b as i64),
                 _ => None,
             };
+            if let Some((capacity, available)) = volume
+                && (!report.deleted.is_empty() || report.removed_entries > 0)
+            {
+                // Trend history is advisory: failing to record it never fails a finished delete.
+                let _ = self.record_delete_sample(scan, capacity, available);
+            }
         }
         #[cfg(not(any(target_os = "linux", windows)))]
         {
@@ -781,28 +1058,92 @@ impl Index {
         Ok(operation)
     }
     fn record_target(&self, operation: i64, item: i64, outcome: &str, detail: &str) -> Result<()> {
-        self.db.execute(
+        Self::set_target(&self.db, operation, item, outcome, detail)
+    }
+    fn set_target(
+        db: &rusqlite::Connection,
+        operation: i64,
+        item: i64,
+        outcome: &str,
+        detail: &str,
+    ) -> Result<()> {
+        db.execute(
             "UPDATE delete_targets SET outcome=?,detail=?,updated=? WHERE operation=? AND item=?",
             params![outcome, detail, now(), operation, item],
         )?;
         Ok(())
     }
+    /// Record the state after a delete as a trend sample, so the growth numbers follow what was
+    /// deleted without a rescan. The indexed total is the scan's own (kept current by `forget`), so
+    /// this reads one row; the volume numbers are the live ones. An unknown total records nothing.
+    #[cfg(any(target_os = "linux", windows))]
+    fn record_delete_sample(&self, scan: i64, capacity: u64, available: u64) -> Result<()> {
+        let row: Option<(Vec<u8>, String, Option<i64>)> = self
+            .db
+            .query_row(
+                "SELECT root,state,unique_allocated FROM scans WHERE id=?",
+                [scan],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((root, state, Some(indexed))) = row else {
+            return Ok(());
+        };
+        let tx = self.db.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO volume_samples(at,root,capacity,available,indexed_allocated,scan_state) VALUES(?,?,?,?,?,?)",
+            params![
+                now(),
+                root,
+                i64::try_from(capacity)?,
+                i64::try_from(available)?,
+                indexed,
+                format!("{state}+delete")
+            ],
+        )?;
+        let sample = tx.last_insert_rowid();
+        if state == "complete" {
+            for (path, bytes) in self.top_directories(scan)? {
+                tx.execute(
+                    "INSERT INTO growth_snapshots VALUES(?,?,?)",
+                    params![sample, path, i64::try_from(bytes)?],
+                )?;
+            }
+        }
+        tx.commit()?;
+        self.prune_samples(
+            crate::service::trend::DEFAULT_SAMPLE_DAYS,
+            crate::service::trend::DEFAULT_MAX_SAMPLES,
+        )
+    }
     #[cfg(any(target_os = "linux", windows))]
     /// Drop a deleted subtree from the published index and subtract what it freed from ancestor
     /// totals, so the views stay truthful without a full rescan. Hard-linked data that survives
     /// outside the subtree stays counted (see [`Freed`]).
-    fn forget(&self, scan: i64, path: &[u8], freed: &Freed) -> Result<()> {
+    fn forget_in(
+        &self,
+        tx: &rusqlite::Connection,
+        scan: i64,
+        path: &[u8],
+        freed: &Freed,
+    ) -> Result<()> {
         let (prefix, upper) = descendants(path);
         // Protection counts are per name, and every name in the subtree is removed with it.
         let protected = self.subtree(path)?.map_or(0, |t| t.protected);
-        let tx = self.db.unchecked_transaction()?;
-        let removed = tx.execute(
-            "DELETE FROM entries WHERE scan_id=?1 AND (path=?2 OR (path>?3 AND path<?4))",
-            params![scan, path, prefix, upper],
+        // The name itself and the range below it are separate statements: joined by OR, SQLite
+        // filters every row of the scan for each target (about 0.2 s each on a 1.3M-entry index).
+        let removed = tx.execute(FORGET_ENTRY, params![scan, path])?
+            + tx.execute(FORGET_ENTRIES_BELOW, params![scan, prefix, upper])?;
+        tx.execute(FORGET_TOTAL, params![scan, path])?;
+        tx.execute(FORGET_TOTALS_BELOW, params![scan, prefix, upper])?;
+        // Items saved in OMG Trash inside what was just deleted are gone with it.
+        tx.execute(
+            "DELETE FROM marked WHERE root=(SELECT root FROM scans WHERE id=?1) AND path=?2",
+            params![scan, path],
         )?;
         tx.execute(
-            "DELETE FROM dir_totals WHERE scan_id=?1 AND (path=?2 OR (path>?3 AND path<?4))",
-            params![scan, path, prefix, upper],
+            "DELETE FROM marked WHERE root=(SELECT root FROM scans WHERE id=?1) AND path>?2 AND path<?3",
+            params![scan, prefix, upper],
         )?;
         let mut ancestor = path;
         loop {
@@ -822,6 +1163,11 @@ impl Index {
                     ancestor
                 ],
             )?;
+            // A saved folder that lost only part of its contents shows its new size.
+            tx.execute(
+                "UPDATE marked SET allocated=coalesce((SELECT allocated FROM dir_totals WHERE scan_id=?1 AND path=?2),allocated) WHERE root=(SELECT root FROM scans WHERE id=?1) AND path=?2",
+                params![scan, ancestor],
+            )?;
             if ancestor.is_empty() {
                 break;
             }
@@ -830,7 +1176,6 @@ impl Index {
             "UPDATE scans SET entry_count=max(0,entry_count-?2),unique_allocated=max(0,unique_allocated-?3),unique_apparent=max(0,unique_apparent-?4) WHERE id=?1",
             params![scan, removed as i64, i64::try_from(freed.unique_allocated)?, i64::try_from(freed.unique_apparent)?],
         )?;
-        tx.commit()?;
         Ok(())
     }
 }
@@ -1439,6 +1784,7 @@ mod tests {
             denied,
             estimated: 4096,
             created,
+            keepable: vec![],
         };
         issued.insert(fingerprint, (7, plan.clone()));
         plan
@@ -1485,6 +1831,53 @@ mod tests {
         let fingerprint = plan.fingerprint.clone();
         let error = take_issued(&mut issued, &plan, &fingerprint, 1999).unwrap_err();
         assert!(error.to_string().contains("future"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn freed_space_query_walks_only_the_subtree() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let index = Index::open(directory.path()).unwrap();
+        let mut statement = index
+            .db
+            .prepare(&format!("EXPLAIN QUERY PLAN {FREED_SQL}"))
+            .unwrap();
+        let plan: Vec<String> = statement
+            .query_map(
+                params![1i64, b"a".as_slice(), b"a/".as_slice(), b"a0".as_slice()],
+                |r| r.get(3),
+            )
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let plan = plan.join(" | ");
+        assert!(plan.contains("sqlite_autoindex_entries_1"), "{plan}");
+        assert!(!plan.contains("entry_identity"), "{plan}");
+        // Forgetting a deleted subtree must use the key too, not filter the whole scan.
+        for (sql, arguments) in [
+            (FORGET_ENTRY, 2),
+            (FORGET_ENTRIES_BELOW, 3),
+            (FORGET_TOTAL, 2),
+            (FORGET_TOTALS_BELOW, 3),
+        ] {
+            let mut statement = index
+                .db
+                .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+                .unwrap();
+            let values: Vec<rusqlite::types::Value> =
+                std::iter::once(rusqlite::types::Value::Integer(1))
+                    .chain((1..arguments).map(|_| rusqlite::types::Value::Blob(b"a".to_vec())))
+                    .collect();
+            let plan: Vec<String> = statement
+                .query_map(rusqlite::params_from_iter(values), |r| r.get(3))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            let plan = plan.join(" | ");
+            assert!(plan.contains("scan_id=? AND path"), "{sql}: {plan}");
+        }
     }
 
     #[test]

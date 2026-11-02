@@ -100,6 +100,13 @@ pub enum Action {
         ids: Vec<i64>,
         fingerprint: String,
     },
+    /// Replace a plan that cannot delete these cache folders whole with one that deletes everything
+    /// in them except the protected items (shown for confirmation again).
+    PrepareKeeping {
+        ids: Vec<i64>,
+        undo: Vec<i64>,
+        discard: String,
+    },
     AcknowledgePreview,
     ToggleAutoTrash,
 }
@@ -135,6 +142,11 @@ pub struct AppState {
     pub message: String,
     pub scan: Option<ScanView>,
     pub other: Option<OtherScan>,
+    /// Since when the scan lock has been held with no scan recorded (housekeeping, not a scan).
+    pub waiting: Option<Instant>,
+    /// A scan the user asked for (`Some(full)`) while the scan lock was busy. It starts once the
+    /// lock is free, unless a scan by another process ran in the meantime.
+    pub pending_scan: Option<bool>,
     pub watching: bool,
     pub busy: Option<String>,
     pub tick: usize,
@@ -159,7 +171,11 @@ impl AppState {
             .map(str::to_owned);
         match home {
             Some(home) if path == home => "~".into(),
-            Some(home) if path.strip_prefix(&home).is_some_and(|r| r.starts_with('/')) => {
+            Some(home)
+                if path
+                    .strip_prefix(&home)
+                    .is_some_and(|r| r.starts_with(std::path::is_separator)) =>
+            {
                 format!("~{}", &path[home.len()..])
             }
             _ => path.into(),
@@ -211,8 +227,10 @@ impl App {
             return Ok(());
         }
         if omg_core::index::lock_held(&self.state_path, "scan.lock") {
+            // Whether this is a scan or housekeeping is only known from the next poll.
             self.state.message =
-                "Another omg scan is running; showing the last published results until it finishes.".into();
+                "The scan lock is busy; your scan starts when it is free (esc cancels).".into();
+            self.state.pending_scan = Some(full);
             self.state.watching = true;
             self.request(Request::PollRunning, None);
             return Ok(());
@@ -241,7 +259,21 @@ impl App {
         let (path, flag) = (self.state_path.clone(), self.cancel.clone());
         self.job = Some(std::thread::spawn(move || {
             let mut index = Index::open(&path)?;
-            let report = omg_core::scanner::scan(&mut index, &options, flag, progress)?;
+            // The lock may be held by housekeeping between two slices rather than by a scan, so a
+            // refusal is retried for a moment; a scan that really is running stays busy.
+            let waited = Instant::now();
+            let report = loop {
+                match omg_core::scanner::scan(&mut index, &options, flag.clone(), progress.clone())
+                {
+                    Err(error)
+                        if error.downcast_ref::<omg_core::index::Busy>().is_some()
+                            && waited.elapsed() < omg_core::index::LOCK_WAIT =>
+                    {
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    result => break result?,
+                }
+            };
             // Scan-time suggestions: regenerable caches go into OMG Trash (a list, not a deletion).
             let published = matches!(report.state.as_str(), "complete" | "partial");
             let suggested = if published && index.auto_trash()? {
@@ -342,16 +374,29 @@ impl App {
             tone: Tone::Normal,
         });
     }
-    fn confirm_delete(&mut self, plan: DeletePlan, added_now: bool) {
+    fn confirm_delete(&mut self, plan: DeletePlan, undo: Vec<i64>) {
         let s = &self.state;
-        let mut body = vec![(
-            format!(
-                "{} item(s) · ≈ {} · this cannot be undone",
-                plan.items.len(),
-                omg_core::bytes(plan.estimated)
-            ),
-            Tone::Danger,
-        )];
+        let (kept, skipped): (Vec<_>, Vec<_>) = plan
+            .denied
+            .iter()
+            .partition(|(_, reason)| reason.starts_with("kept:"));
+        // Folders that hold protected items cannot go whole; say that instead of "1 item".
+        let whole_refused = plan.items.is_empty() && !plan.keepable.is_empty();
+        let mut body = vec![if whole_refused {
+            (
+                "this cannot be deleted whole: protected items are inside".to_string(),
+                Tone::Warn,
+            )
+        } else {
+            (
+                format!(
+                    "{} item(s) · ≈ {} · this cannot be undone",
+                    plan.items.len(),
+                    omg_core::bytes(plan.estimated)
+                ),
+                Tone::Danger,
+            )
+        }];
         for item in plan.items.iter().take(6) {
             body.push((
                 format!(
@@ -371,26 +416,41 @@ impl App {
         if let Some(warning) = plan.items.iter().find_map(|i| i.warning.clone()) {
             body.push((format!("⚠ {warning}"), Tone::Warn));
         }
-        for (path, reason) in plan.denied.iter().take(4) {
+        for (path, reason) in skipped.iter().take(4) {
             body.push((
                 format!("skipped {}: {reason}", theme::clean(path)),
                 Tone::Warn,
             ));
         }
-        let undo: Vec<i64> = if added_now {
-            plan.items.iter().map(|i| i.id).collect()
-        } else {
-            vec![]
-        };
+        if let Some((first, _)) = kept.first() {
+            body.push((
+                format!(
+                    "keeping {} protected item(s) in place, for example {}",
+                    kept.len(),
+                    s.shorten_home(&s.absolute(first))
+                ),
+                Tone::Warn,
+            ));
+        }
         let mut choices = vec![Choice {
             label: "Cancel".into(),
             key: None,
             action: Action::CancelPlan {
-                ids: undo,
+                ids: undo.clone(),
                 fingerprint: plan.fingerprint.clone(),
             },
             tone: Tone::Normal,
         }];
+        let keep = (!plan.keepable.is_empty()).then(|| Choice {
+            label: "Delete everything except the protected items…".into(),
+            key: None,
+            action: Action::PrepareKeeping {
+                ids: plan.keepable.clone(),
+                undo,
+                discard: plan.fingerprint.clone(),
+            },
+            tone: Tone::Danger,
+        });
         if !plan.items.is_empty() {
             choices.push(Choice {
                 label: "Yes, delete permanently".into(),
@@ -399,8 +459,13 @@ impl App {
                 tone: Tone::Danger,
             });
         }
+        choices.extend(keep);
         self.state.menu = Some(Menu {
-            title: "Are you sure?".into(),
+            title: if whole_refused {
+                "Cannot delete this whole".into()
+            } else {
+                "Are you sure?".into()
+            },
             body,
             choices,
             cursor: 0,
@@ -411,7 +476,11 @@ impl App {
         self.state.menu = None;
         if matches!(
             action,
-            Action::DeleteNow | Action::DeleteSelected | Action::EmptyTrash | Action::Confirm(_)
+            Action::DeleteNow
+                | Action::DeleteSelected
+                | Action::EmptyTrash
+                | Action::Confirm(_)
+                | Action::PrepareKeeping { .. }
         ) && !delete_available()
         {
             self.state.message = if omg_core::PERMANENT_DELETE {
@@ -424,10 +493,13 @@ impl App {
         match action {
             Action::Quit => return Ok(true),
             Action::CancelPlan { ids, fingerprint } => {
-                if !ids.is_empty() {
-                    self.request(Request::Unmark(ids), None);
-                }
-                self.request(Request::DiscardPlan(fingerprint), None);
+                self.request(
+                    Request::CancelPlan {
+                        fingerprint,
+                        undo: ids,
+                    },
+                    None,
+                );
                 self.state.message = "Cancelled. Nothing was deleted.".into();
             }
             Action::Scan(full) => self.start_scan(full)?,
@@ -520,6 +592,13 @@ impl App {
             }
             // One confirmation is enough: warnings were already shown in that dialog.
             Action::Confirm(plan) => self.request(Request::Delete(plan), Some("Deleting")),
+            Action::PrepareKeeping { ids, undo, discard } => {
+                self.request(Request::DiscardPlan(discard), None);
+                self.request(
+                    Request::PrepareDeleteKeeping { ids, undo },
+                    Some("Checking"),
+                );
+            }
             Action::ToggleAutoTrash => {
                 let on = !self.state.summary.as_ref().is_some_and(|x| x.auto_trash);
                 self.request(Request::SetAutoTrash(on), None);
@@ -528,6 +607,7 @@ impl App {
         Ok(false)
     }
     fn on_response(&mut self, response: Response) {
+        let mut start = None;
         let s = &mut self.state;
         match response {
             Response::Summary(summary) => {
@@ -540,32 +620,51 @@ impl App {
                 });
                 s.cursor = s.cursor.min(row_count(s).saturating_sub(1));
             }
-            Response::Running(running) => match running {
-                Some(r) => {
-                    let now = omg_core::now();
-                    let since_phase = r.phase_at.map(|t| (now - t).max(0) as f64);
-                    s.other = Some(OtherScan {
-                        progress: r.progress,
-                        total: r.estimated_total,
-                        walking_secs: if r.finishing {
-                            ((r.phase_at.unwrap_or(now) - r.started).max(1)) as f64
-                        } else {
-                            ((now - r.started).max(1)) as f64
-                        },
-                        finishing_secs: if r.finishing { since_phase } else { None },
-                    });
+            Response::Running { scan: Some(r), .. } => {
+                let now = omg_core::now();
+                let since_phase = r.phase_at.map(|t| (now - t).max(0) as f64);
+                s.waiting = None;
+                s.other = Some(OtherScan {
+                    progress: r.progress,
+                    total: r.estimated_total,
+                    walking_secs: if r.finishing {
+                        ((r.phase_at.unwrap_or(now) - r.started).max(1)) as f64
+                    } else {
+                        ((now - r.started).max(1)) as f64
+                    },
+                    finishing_secs: if r.finishing { since_phase } else { None },
+                });
+            }
+            Response::Running {
+                scan: None,
+                locked: true,
+            } => {
+                // Held, but no scan is recorded: housekeeping, or a scan about to record itself.
+                // Say so, and keep polling until the lock is free.
+                s.waiting.get_or_insert_with(Instant::now);
+                s.other = None;
+                s.watching = true;
+            }
+            Response::Running {
+                scan: None,
+                locked: false,
+            } => {
+                let other_finished = s.other.take().is_some();
+                let waited = s.waiting.take().is_some();
+                s.watching = false;
+                if other_finished {
+                    // That scan produced fresh results, so there is nothing left for ours to do.
+                    s.pending_scan = None;
+                    s.message = "The other scan finished; showing its results.".into();
+                    s.dirs.clear();
+                    let dir = s.dir.clone();
+                    let _ = self.tx.send(Request::Summary);
+                    let _ = self.tx.send(Request::Dir(dir));
+                } else if waited {
+                    s.message = "Housekeeping finished.".into();
                 }
-                None => {
-                    if s.watching && s.other.take().is_some() {
-                        s.message = "The other scan finished; showing its results.".into();
-                        s.dirs.clear();
-                        let dir = s.dir.clone();
-                        let _ = self.tx.send(Request::Summary);
-                        let _ = self.tx.send(Request::Dir(dir));
-                    }
-                    s.watching = false;
-                }
-            },
+                start = s.pending_scan.take();
+            }
             Response::Dir {
                 path,
                 children,
@@ -587,9 +686,9 @@ impl App {
                 s.busy = None;
                 s.plan = Some(*plan);
             }
-            Response::DeletePlan { plan, added_now } => {
+            Response::DeletePlan { plan, undo } => {
                 s.busy = None;
-                self.confirm_delete(*plan, added_now);
+                self.confirm_delete(*plan, undo);
             }
             Response::Deleted(report) => {
                 s.busy = None;
@@ -615,18 +714,24 @@ impl App {
                 } else {
                     ""
                 };
+                // Protected items left in place on purpose are not failures.
+                let (kept, skipped): (Vec<_>, Vec<_>) = report
+                    .skipped
+                    .iter()
+                    .partition(|(_, reason)| reason.starts_with("kept:"));
                 s.message = format!(
-                    "Deleted {} item(s), ≈ {}{observed}{stop}{stale}{}{}",
+                    "Deleted {} item(s), ≈ {}{observed}{stop}{stale}{}{}{}",
                     report.deleted.len(),
                     omg_core::bytes(report.estimated_bytes),
-                    if report.skipped.is_empty() {
+                    if kept.is_empty() {
                         String::new()
                     } else {
-                        format!(
-                            " · {} skipped: {}",
-                            report.skipped.len(),
-                            report.skipped[0].1
-                        )
+                        format!(" · kept {} protected item(s) in place", kept.len())
+                    },
+                    if skipped.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {} skipped: {}", skipped.len(), skipped[0].1)
                     },
                     if s.wsl {
                         " · WSL: Windows regains it only after the virtual disk is compacted (see ?)"
@@ -645,6 +750,11 @@ impl App {
                 s.busy = None;
                 s.message = format!("⚠ {text}");
             }
+        }
+        if let Some(full) = start
+            && let Err(error) = self.start_scan(full)
+        {
+            self.state.message = format!("⚠ {error}");
         }
     }
     fn enter_dir(&mut self, path: Vec<u8>) {
@@ -716,6 +826,8 @@ impl App {
                     self.cancel.store(true, Ordering::Relaxed);
                     self.state.message =
                         "Stopping the scan… the previous index stays valid.".into();
+                } else if self.state.pending_scan.take().is_some() {
+                    self.state.message = "Cancelled the waiting scan.".into();
                 } else if self.state.details {
                     self.state.details = false;
                 } else if tab == Tab::Browse && !self.state.dir.is_empty() {
@@ -844,7 +956,11 @@ pub fn run(index: Index) -> Result<()> {
     };
     if omg_core::index::lock_held(&app.state_path, "scan.lock") {
         app.state.watching = true;
-        app.state.message = "Another omg scan is running; results refresh when it finishes.".into();
+        app.state.message = "The scan lock is busy; checking what holds it…".into();
+        // A first run has no results to show, so it scans as soon as the lock is free.
+        if !has_scan {
+            app.state.pending_scan = Some(false);
+        }
         app.request(Request::PollRunning, None);
     } else if !has_scan {
         app.start_scan(false)?;

@@ -62,7 +62,7 @@ The repository is public, so standard hosted runners are free. Workflow: `.githu
 | Delete capability | `omg doctor` says `permanent delete: unsupported`; APFS, HFS+ and FAT are refused by `capability::permanent_delete` |
 | Quarantined copy of the binary | On hosted runners a copy with `com.apple.quarantine` set runs from a terminal (`--version`). **This does not hold on a real Mac:** see "Real Mac" below |
 | Raw-byte file names | APFS rejects file names that are not valid UTF-8 (`EILSEQ`), so that fixture is created only where allowed |
-| Release binary | `darwin-arm64` (built on macos-15) and `darwin-x64` (macos-15-intel) with `MACOSX_DEPLOYMENT_TARGET=15.0`; the signed packages installed and ran on macos-15, macos-15-intel and macos-26 (smoke run 39196125718) |
+| Release binary | `darwin-arm64` (built on macos-15) and `darwin-x64` (macos-15-intel) with `MACOSX_DEPLOYMENT_TARGET=15.0`; the signed packages installed and ran on macos-15, macos-15-intel and macos-26 (smoke run 39196125718). **Update 2026-10-24:** the Intel build was dropped from the release; only `darwin-arm64` ships. The Intel runner still runs the Rust tests in `Checks`. |
 
 Minimum macOS is 15: the adapter checks `uname -r` for Darwin 24 or newer before opening a root.
 

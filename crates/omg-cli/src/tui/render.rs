@@ -23,9 +23,11 @@ fn path_style(base: Style, in_trash: bool, theme: &Theme) -> Style {
     }
 }
 
+/// The last component of a root-relative path. Split on the stored `/` before converting for
+/// display: on Windows the display form uses backslashes, so splitting it afterwards showed whole
+/// paths.
 fn name_of(raw: &[u8]) -> String {
-    let text = clean(raw);
-    text.rsplit('/').next().unwrap_or(&text).to_string()
+    clean(raw.rsplit(|&b| b == b'/').next().unwrap_or(raw))
 }
 
 pub fn visible_findings(state: &AppState) -> Vec<&Finding> {
@@ -311,6 +313,28 @@ fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
             other.progress as f64 / other.walking_secs.max(1.0),
         );
     }
+    if let Some(since) = state.waiting {
+        // The scan lock is held but no scan exists, so there is no progress to show: say what is
+        // known (how long) and what happens next.
+        let next = if state.pending_scan.is_some() {
+            " · your scan starts after (esc cancels)"
+        } else {
+            ""
+        };
+        return Line::from(vec![
+            Span::styled(
+                format!(" {frame} Waiting for another omg task… "),
+                theme.accent(),
+            ),
+            Span::styled(
+                format!(
+                    "{}s · no scan is running, usually cleaning up old scan data{next}",
+                    since.elapsed().as_secs()
+                ),
+                theme.dim(),
+            ),
+        ]);
+    }
     if let Some(busy) = &state.busy {
         return Line::from(vec![
             Span::styled(format!(" {frame} {busy}… "), theme.accent()),
@@ -390,21 +414,36 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
 
 fn menu_overlay(frame: &mut Frame<'_>, area: Rect, menu: &Menu, theme: &Theme) {
     let width = (area.width.saturating_sub(6)).min(76);
-    let height = (menu.body.len() + menu.choices.len() + 4)
-        .min(area.height.saturating_sub(2) as usize) as u16;
+    let inner_width = usize::from(width.saturating_sub(2)).max(1);
+    let lines: Lines = menu
+        .body
+        .iter()
+        .map(|(text, t)| Line::from(Span::styled(format!(" {text}"), tone(theme, *t))))
+        .collect();
+    // Long lines wrap. Count them with a little slack for words that move to the next line, so the
+    // box is tall enough; the choices have their own rows below and can never be pushed out.
+    let wrapped: usize = lines
+        .iter()
+        .map(|line| {
+            let w = line.width();
+            if w <= inner_width {
+                1
+            } else {
+                w.div_ceil(inner_width) + 1
+            }
+        })
+        .sum();
+    let choice_rows = menu.choices.len() + usize::from(!menu.body.is_empty());
+    let height = (wrapped + choice_rows + 2).min(area.height.saturating_sub(2) as usize) as u16;
     let rect = Rect {
         x: area.x + (area.width - width) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
         width,
         height,
     };
-    let mut lines: Lines = menu
-        .body
-        .iter()
-        .map(|(text, t)| Line::from(Span::styled(format!(" {text}"), tone(theme, *t))))
-        .collect();
+    let mut choice_lines: Lines = vec![];
     if !menu.body.is_empty() {
-        lines.push(Line::from(""));
+        choice_lines.push(Line::from(""));
     }
     for (i, choice) in menu.choices.iter().enumerate() {
         let selected = i == menu.cursor;
@@ -414,7 +453,7 @@ fn menu_overlay(frame: &mut Frame<'_>, area: Rect, menu: &Menu, theme: &Theme) {
             Style::new()
         }
         .patch(tone(theme, choice.tone));
-        lines.push(Line::from(vec![
+        choice_lines.push(Line::from(vec![
             Span::styled(if selected { " ❯ " } else { "   " }, theme.selected()),
             Span::styled(format!("{}. ", i + 1), theme.dim()),
             Span::styled(choice.label.clone(), label_style),
@@ -441,19 +480,23 @@ fn menu_overlay(frame: &mut Frame<'_>, area: Rect, menu: &Menu, theme: &Theme) {
         Tone::Warn => theme.warn(),
         Tone::Normal => theme.accent(),
     };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(border)
+        .title(Span::styled(
+            format!(" {} ", menu.title),
+            border.patch(theme.bold()),
+        ));
+    let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(border)
-                .title(Span::styled(
-                    format!(" {} ", menu.title),
-                    border.patch(theme.bold()),
-                )),
-        ),
-        rect,
-    );
+    frame.render_widget(block, rect);
+    let [body_area, choice_area] = Layout::vertical([
+        Constraint::Min(0),
+        Constraint::Length(u16::try_from(choice_lines.len()).unwrap_or(u16::MAX)),
+    ])
+    .areas(inner);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), body_area);
+    frame.render_widget(Paragraph::new(choice_lines), choice_area);
 }
 
 fn overview(state: &AppState, theme: &Theme, width: usize) -> Lines {
@@ -593,9 +636,9 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
         .map(|r| state.shorten_home(&r.display().to_string()))
         .unwrap_or_else(|| "/".into());
     crumbs.push(Span::styled(root, Style::new()));
-    for part in clean(&state.dir).split('/').filter(|p| !p.is_empty()) {
+    for part in state.dir.split(|&b| b == b'/').filter(|p| !p.is_empty()) {
         crumbs.push(Span::styled(" › ", theme.dim()));
-        crumbs.push(Span::styled(part.to_string(), Style::new()));
+        crumbs.push(Span::styled(clean(part), Style::new()));
     }
     let Some(view) = state.current_dir() else {
         return vec![

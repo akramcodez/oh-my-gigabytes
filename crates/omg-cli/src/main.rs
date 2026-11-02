@@ -11,10 +11,16 @@ use std::{
 mod tui;
 
 #[derive(Parser)]
-#[command(
-    name = "omg",
-    version,
-    about = "Local-first storage intelligence. Analysis-only development build."
+#[command(name = "omg", version)]
+#[cfg_attr(
+    feature = "permanent-delete",
+    command(
+        about = "Local-first storage intelligence. Development build: permanent delete is offered on some systems, unqualified."
+    )
+)]
+#[cfg_attr(
+    not(feature = "permanent-delete"),
+    command(about = "Local-first storage intelligence. Analysis-only development build.")
 )]
 struct Cli {
     #[arg(long, global = true)]
@@ -253,7 +259,7 @@ fn run() -> Result<()> {
         } else if cfg!(target_os = "macos") {
             "(macOS is analysis only)"
         } else {
-            "(Linux: ext-family, XFS, tmpfs, Btrfs; unknown filesystems refused)"
+            "(Linux: ext-family, tmpfs and Btrfs only; XFS is scan-only; unknown filesystems refused)"
         };
         println!(
             "permanent delete: {} {scope}; OS Trash: {}; cloud/FUSE/remote profiles excluded",

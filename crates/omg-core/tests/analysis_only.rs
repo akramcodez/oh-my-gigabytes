@@ -40,6 +40,9 @@ fn analysis_only_build_refuses_delete_and_leaves_files_alone() {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(state.path(), fs::Permissions::from_mode(0o700)).unwrap();
     }
+    // A temp folder outside the profile can inherit an access list open to other users.
+    #[cfg(windows)]
+    omg_core::platform::windows_state::protect(state.path()).unwrap();
     fs::create_dir(home.path().join("scratch")).unwrap();
     fs::write(home.path().join("scratch/a.bin"), b"keep").unwrap();
     let mut index = Index::open(state.path()).unwrap();

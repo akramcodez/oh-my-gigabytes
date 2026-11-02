@@ -9,13 +9,15 @@
 //     --public-key release-public.pem --private-key release-private.pem --out OUT \
 //     [--repo owner/name] [--skip-attestation] [--publishable]
 //
-// DIR is the output of `gh run download RUN_ID`: DIR/omg-<target>/omg (or omg.exe) + SHA256SUMS.
+// DIR is the output of `gh run download RUN_ID`: DIR/omg-<target>/omg (or omg.exe) + SHA256SUMS + CLEANUP.
+// CLEANUP is what the build's own `omg doctor` reported for permanent delete. The variant that is
+// signed comes from it, so a manifest can never claim less (or more) than the binary can do.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { parseArgs } = require('node:util');
-const { TARGETS } = require('../packages/oh-my-gigabytes/lib/verify');
+const { TARGETS, readRegular } = require('../packages/oh-my-gigabytes/lib/verify');
 const { assemble } = require('./assemble-release');
 
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -45,6 +47,16 @@ function checkDigest(directory, filename) {
   if (listed !== sha256(path.join(directory, filename))) throw new Error(`${filename} does not match its SHA256SUMS`);
 }
 
+// `unsupported` is an analysis-only build; `development-unqualified` is one that can delete.
+function builtVariant(directory) {
+  const file = path.join(directory, 'CLEANUP');
+  if (!fs.existsSync(file)) throw new Error(`${file} is missing: rebuild with the current release.yml, which records the build's capability`);
+  const reported = readRegular(file, 256).data.toString('utf8').trim();
+  if (reported === 'unsupported') return 'analysis-only';
+  if (reported === 'development-unqualified') return 'full';
+  throw new Error(`Unknown cleanup capability "${reported}" in ${file}`);
+}
+
 function pack(directory, destination, expectedName) {
   const output = JSON.parse(run('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', destination], { cwd: directory }));
   const produced = path.join(destination, output[0].filename);
@@ -61,40 +73,50 @@ function signRelease({ artifacts, version, publicKey, privateKey, out, repo, ski
   if (!targets.length) throw new Error(`No omg-<target> folders found in ${artifacts}`);
   if (fs.existsSync(out)) throw new Error('Output directory already exists; refuse to overwrite a release');
   fs.mkdirSync(out, { mode: 0o700 });
-  const work = path.join(out, 'work');
-  const tarballs = path.join(out, 'tarballs');
-  const offline = path.join(out, 'offline');
-  for (const directory of [work, tarballs, offline]) fs.mkdirSync(directory);
+  // Anything below was created by this call (it refuses an existing output), so a failure removes it
+  // rather than leaving a half-signed release that could be mistaken for a finished one.
+  try {
+    const work = path.join(out, 'work');
+    const tarballs = path.join(out, 'tarballs');
+    const offline = path.join(out, 'offline');
+    for (const directory of [work, tarballs, offline]) fs.mkdirSync(directory);
 
-  const natives = [];
-  let keyId;
-  for (const target of targets) {
-    const directory = path.join(artifacts, `omg-${target}`);
-    const filename = target.startsWith('win32-') ? 'omg.exe' : 'omg';
-    const binary = path.join(directory, filename);
-    checkDigest(directory, filename);
-    if (!skipAttestation) run('gh', ['attestation', 'verify', binary, '--repo', repo]);
-    const assembled = path.join(work, target);
-    ({ keyId } = assemble({ binary, target, version, publicKey, privateKey, out: assembled, variant: 'analysis-only', publishable, checkBinary }));
-    pack(path.join(assembled, `oh-my-gigabytes-${target}`), tarballs, `oh-my-gigabytes-${target}-${version}.tgz`);
-    pack(path.join(assembled, 'offline-oh-my-gigabytes'), offline, `oh-my-gigabytes-offline-${target}-${version}.tgz`);
-    natives.push(target);
+    const natives = [];
+    const variants = {};
+    let keyId;
+    for (const target of targets) {
+      const directory = path.join(artifacts, `omg-${target}`);
+      const filename = target.startsWith('win32-') ? 'omg.exe' : 'omg';
+      const binary = path.join(directory, filename);
+      checkDigest(directory, filename);
+      if (!skipAttestation) run('gh', ['attestation', 'verify', binary, '--repo', repo]);
+      const assembled = path.join(work, target);
+      const variant = builtVariant(directory);
+      ({ keyId } = assemble({ binary, target, version, publicKey, privateKey, out: assembled, variant, publishable, checkBinary }));
+      variants[target] = variant;
+      pack(path.join(assembled, `oh-my-gigabytes-${target}`), tarballs, `oh-my-gigabytes-${target}-${version}.tgz`);
+      pack(path.join(assembled, 'offline-oh-my-gigabytes'), offline, `oh-my-gigabytes-offline-${target}-${version}.tgz`);
+      natives.push(target);
+    }
+
+    // The published wrapper names every platform package. Each per-target wrapper only names its own.
+    const wrapper = path.join(work, natives[0], 'oh-my-gigabytes');
+    const manifest = JSON.parse(fs.readFileSync(path.join(wrapper, 'package.json'), 'utf8'));
+    manifest.optionalDependencies = Object.fromEntries(natives.map(target => [`oh-my-gigabytes-${target}`, version]));
+    fs.writeFileSync(path.join(wrapper, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
+    pack(wrapper, tarballs, `oh-my-gigabytes-${version}.tgz`);
+
+    fs.copyFileSync(publicKey, path.join(out, 'release-public.pem'));
+    fs.writeFileSync(path.join(out, 'KEY-FINGERPRINT.txt'), `${keyId}\n`);
+    const files = [...fs.readdirSync(tarballs).map(name => path.join('tarballs', name)), ...fs.readdirSync(offline).map(name => path.join('offline', name))].sort();
+    // Plain file names, so `sha256sum -c SHA256SUMS` works in a folder holding the downloaded assets.
+    fs.writeFileSync(path.join(out, 'SHA256SUMS'), files.map(file => `${sha256(path.join(out, file))}  ${path.basename(file)}`).join('\n') + '\n');
+    fs.rmSync(work, { recursive: true, force: true });
+    return { version, targets: natives, variants, keyId, files, out };
+  } catch (error) {
+    fs.rmSync(out, { recursive: true, force: true });
+    throw error;
   }
-
-  // The published wrapper names every platform package. Each per-target wrapper only names its own.
-  const wrapper = path.join(work, natives[0], 'oh-my-gigabytes');
-  const manifest = JSON.parse(fs.readFileSync(path.join(wrapper, 'package.json'), 'utf8'));
-  manifest.optionalDependencies = Object.fromEntries(natives.map(target => [`oh-my-gigabytes-${target}`, version]));
-  fs.writeFileSync(path.join(wrapper, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
-  pack(wrapper, tarballs, `oh-my-gigabytes-${version}.tgz`);
-
-  fs.copyFileSync(publicKey, path.join(out, 'release-public.pem'));
-  fs.writeFileSync(path.join(out, 'KEY-FINGERPRINT.txt'), `${keyId}\n`);
-  const files = [...fs.readdirSync(tarballs).map(name => path.join('tarballs', name)), ...fs.readdirSync(offline).map(name => path.join('offline', name))].sort();
-  // Plain file names, so `sha256sum -c SHA256SUMS` works in a folder holding the downloaded assets.
-  fs.writeFileSync(path.join(out, 'SHA256SUMS'), files.map(file => `${sha256(path.join(out, file))}  ${path.basename(file)}`).join('\n') + '\n');
-  fs.rmSync(work, { recursive: true, force: true });
-  return { version, targets: natives, keyId, files, out };
 }
 
 if (require.main === module) {

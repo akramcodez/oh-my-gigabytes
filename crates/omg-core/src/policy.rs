@@ -34,25 +34,26 @@ pub const REGENERABLE: [&str; 22] = [
     "DerivedData",
 ];
 
-/// Names that are sensitive wherever they appear, even inside caches or old repositories.
+/// Names that are sensitive wherever they appear, even inside caches or old repositories. Lower case.
+pub const ALWAYS_SENSITIVE: [&str; 14] = [
+    ".ssh",
+    ".gnupg",
+    ".aws",
+    ".azure",
+    ".kube",
+    "keychains",
+    "credentials",
+    ".git-credentials",
+    ".pgpass",
+    "cloudstorage",
+    "mobile documents",
+    "onedrive",
+    "dropbox",
+    "google drive",
+];
+
 pub fn always_sensitive(name: &str) -> bool {
-    [
-        ".ssh",
-        ".gnupg",
-        ".aws",
-        ".azure",
-        ".kube",
-        "keychains",
-        "credentials",
-        ".git-credentials",
-        ".pgpass",
-        "cloudstorage",
-        "mobile documents",
-        "onedrive",
-        "dropbox",
-        "google drive",
-    ]
-    .contains(&name.to_ascii_lowercase().as_str())
+    ALWAYS_SENSITIVE.contains(&name.to_ascii_lowercase().as_str())
 }
 
 /// Newest modification time (Unix seconds) inside a directory, when known.

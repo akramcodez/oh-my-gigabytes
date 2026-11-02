@@ -100,6 +100,10 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     )
 }
 
+/// One stretch of housekeeping under `scan.lock`, and the pause that follows it.
+const PRUNE_SLICE: Duration = Duration::from_millis(300);
+const PRUNE_REST: Duration = Duration::from_millis(150);
+
 pub fn lock(state: &Path, name: &str) -> Result<File> {
     let path = state.join(name);
     if fs::symlink_metadata(&path).is_ok_and(|m| !m.is_file() || m.file_type().is_symlink()) {
@@ -117,6 +121,27 @@ pub fn lock(state: &Path, name: &str) -> Result<File> {
     let file = options.open(path)?;
     file.try_lock().map_err(|_| anyhow::Error::new(Busy))?;
     Ok(file)
+}
+
+/// How long a scan or a delete waits for a lock holder that is about to let go. Housekeeping works in
+/// short slices (`PRUNE_SLICE`), so a wait of this length always reaches a gap between two slices.
+pub const LOCK_WAIT: Duration = Duration::from_secs(2);
+
+/// `lock`, but retries for up to `timeout` while another process holds it. Still `Busy` afterwards,
+/// so a scan that really is running is reported as before, only a moment later.
+pub fn lock_wait(state: &Path, name: &str, timeout: Duration) -> Result<File> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match lock(state, name) {
+            Err(error)
+                if error.downcast_ref::<Busy>().is_some()
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
 }
 
 /// Another process holds the kernel advisory lock for this operation.
@@ -415,12 +440,28 @@ impl Index {
     }
     /// Delete rows of scans that are neither published nor the latest record, in chunks, stopping
     /// after `budget`. Returns true when nothing stale remains. Safe to call repeatedly.
+    ///
+    /// It holds `scan.lock` only for a short slice at a time and lets go between slices, so a scan
+    /// or a delete that arrives waits for the end of a slice instead of the whole budget (clearing
+    /// the old generation of a full scan of a large disk takes tens of seconds). It stops at once
+    /// when anything else holds the lock, and picks up where it stopped the next time.
     pub fn prune_stale(&self, budget: Duration) -> Result<bool> {
-        // Never compete with a running scan for the write lock; it prunes when it finishes.
-        let Ok(_owner) = lock(&self.state, "scan.lock") else {
-            return Ok(false);
-        };
-        self.prune_stale_locked(budget)
+        let started = std::time::Instant::now();
+        loop {
+            // Never compete with a running scan for the write lock; it prunes when it finishes.
+            let Ok(owner) = lock(&self.state, "scan.lock") else {
+                return Ok(false);
+            };
+            let done = self.prune_stale_locked(PRUNE_SLICE)?;
+            drop(owner);
+            if done {
+                return Ok(true);
+            }
+            if started.elapsed() >= budget {
+                return Ok(false);
+            }
+            std::thread::sleep(PRUNE_REST);
+        }
     }
     /// `prune_stale` for a caller that already owns the scan lock (the scanner itself).
     pub(crate) fn prune_stale_locked(&self, budget: Duration) -> Result<bool> {

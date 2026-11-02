@@ -28,6 +28,10 @@ fn private_state() -> tempfile::TempDir {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
     }
+    // A temp folder outside the profile (TMP=C:\src\tmp, say) inherits an access list open to
+    // other users, which omg rightly refuses; give it the private one, as tests/windows.rs does.
+    #[cfg(windows)]
+    omg_core::platform::windows_state::protect(directory.path()).unwrap();
     directory
 }
 

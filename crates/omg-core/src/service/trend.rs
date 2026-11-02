@@ -77,7 +77,7 @@ impl Index {
     }
 
     /// Largest depth-1 and depth-2 directories under the scan root, from the published rollups.
-    fn top_directories(&self, scan_id: i64) -> Result<Vec<(Vec<u8>, u64)>> {
+    pub(crate) fn top_directories(&self, scan_id: i64) -> Result<Vec<(Vec<u8>, u64)>> {
         let mut statement = self.db.prepare(
             "SELECT path,allocated FROM dir_totals WHERE scan_id=? AND path<>x'' ORDER BY allocated DESC,path",
         )?;

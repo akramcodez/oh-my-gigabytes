@@ -108,17 +108,21 @@ function headers() {
   const macho = cpu => { const b = Buffer.alloc(64); b.writeUInt32LE(0xfeedfacf, 0); b.writeUInt32LE(cpu, 4); return b; };
   return {
     'linux-x64-gnu': ['omg', elf(62)], 'linux-arm64-gnu': ['omg', elf(183)], 'win32-x64': ['omg.exe', pe],
-    'darwin-arm64': ['omg', macho(0x0100000c)], 'darwin-x64': ['omg', macho(0x01000007)],
+    'darwin-arm64': ['omg', macho(0x0100000c)],
   };
 }
 
-function ciArtifacts(directory) {
+// What release.yml records: Linux and Windows builds include permanent delete, macOS has none.
+const builtCleanup = target => (target.startsWith('darwin-') ? 'unsupported' : 'development-unqualified');
+
+function ciArtifacts(directory, cleanup = builtCleanup) {
   const artifacts = path.join(directory, 'ci-artifacts');
   for (const [target, [file, bytes]] of Object.entries(headers())) {
     const folder = path.join(artifacts, `omg-${target}`);
     fs.mkdirSync(folder, { recursive: true });
     fs.writeFileSync(path.join(folder, file), bytes);
     fs.writeFileSync(path.join(folder, 'SHA256SUMS'), `${crypto.createHash('sha256').update(bytes).digest('hex')}  ${file}\n`);
+    if (cleanup(target) !== null) fs.writeFileSync(path.join(folder, 'CLEANUP'), `${cleanup(target)}\n`);
   }
   return artifacts;
 }
@@ -134,7 +138,14 @@ test('sign-release signs every target and names them all in the published wrappe
   const artifacts = ciArtifacts(f.directory);
   const out = path.join(f.directory, 'signed');
   const result = signRelease({ artifacts, version: '0.1.0-beta.1', publicKey: f.publicFile, privateKey: f.privateFile, out, skipAttestation: true, checkBinary: false });
-  assert.equal(result.targets.length, 5);
+  assert.equal(result.targets.length, 4);
+  // Linux and Windows are signed as able to delete; macOS has no delete and is signed as disabled.
+  const claimed = target => JSON.parse(tarText(path.join(out, 'tarballs', `oh-my-gigabytes-${target}-0.1.0-beta.1.tgz`), 'package/artifact/manifest.json')).capabilities.cleanup;
+  assert.deepEqual(Object.fromEntries(result.targets.map(target => [target, claimed(target)])), {
+    'linux-x64-gnu': 'development-unqualified', 'linux-arm64-gnu': 'development-unqualified',
+    'win32-x64': 'development-unqualified', 'darwin-arm64': 'disabled',
+  });
+  assert.deepEqual(result.variants, { 'linux-x64-gnu': 'full', 'linux-arm64-gnu': 'full', 'win32-x64': 'full', 'darwin-arm64': 'analysis-only' });
   const wrapper = JSON.parse(tarText(path.join(out, 'tarballs/oh-my-gigabytes-0.1.0-beta.1.tgz'), 'package/package.json'));
   assert.deepEqual(Object.keys(wrapper.optionalDependencies).sort(), Object.keys(headers()).map(target => `oh-my-gigabytes-${target}`).sort());
   assert.ok(Object.values(wrapper.optionalDependencies).every(version => version === '0.1.0-beta.1'));
@@ -142,13 +153,34 @@ test('sign-release signs every target and names them all in the published wrappe
   assert.equal(fs.readFileSync(path.join(out, 'KEY-FINGERPRINT.txt'), 'utf8').trim(), result.keyId);
   // Every listed digest matches its file, and every tarball is listed.
   const lines = fs.readFileSync(path.join(out, 'SHA256SUMS'), 'utf8').trim().split('\n');
-  assert.equal(lines.length, 11);
+  assert.equal(lines.length, 9);
   for (const line of lines) {
     const [digest, name] = line.split('  ');
     const file = fs.existsSync(path.join(out, 'tarballs', name)) ? path.join(out, 'tarballs', name) : path.join(out, 'offline', name);
     assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'), digest, name);
   }
   assert.ok(!fs.existsSync(path.join(out, 'work')), 'staging folders are removed');
+});
+
+test('sign-release signs an analysis-only build as disabled, whatever the target', t => {
+  const f = fixture(t);
+  const out = path.join(f.directory, 'signed-analysis');
+  const result = signRelease({ artifacts: ciArtifacts(f.directory, () => 'unsupported'), version: '0.1.0-beta.1', publicKey: f.publicFile, privateKey: f.privateFile, out, skipAttestation: true, checkBinary: false });
+  assert.ok(Object.values(result.variants).every(variant => variant === 'analysis-only'));
+  for (const target of result.targets) {
+    const manifest = JSON.parse(tarText(path.join(out, 'tarballs', `oh-my-gigabytes-${target}-0.1.0-beta.1.tgz`), 'package/artifact/manifest.json'));
+    assert.equal(manifest.capabilities.cleanup, 'disabled', target);
+  }
+});
+
+test('sign-release refuses a build whose capability was not recorded or is not understood', t => {
+  const f = fixture(t);
+  const options = { version: '0.1.0-beta.1', publicKey: f.publicFile, privateKey: f.privateFile, skipAttestation: true, checkBinary: false };
+  const unrecorded = path.join(f.directory, 'unrecorded');
+  assert.throws(() => signRelease({ ...options, artifacts: ciArtifacts(f.directory, () => null), out: unrecorded }), /CLEANUP is missing/);
+  assert.equal(fs.existsSync(unrecorded), false, 'a failed signing leaves no partial release behind');
+  const unknown = fs.mkdtempSync(path.join(f.directory, 'unknown-'));
+  assert.throws(() => signRelease({ ...options, artifacts: ciArtifacts(unknown, () => 'qualified'), out: path.join(f.directory, 'unknown-out') }), /Unknown cleanup capability "qualified"/);
 });
 
 test('sign-release accepts relative paths', t => {
@@ -260,6 +292,7 @@ test('unsupported libc/architecture and missing native dependency have useful er
   assert.throws(() => hostTarget({ platform: 'linux', arch: 'x64', report: { getReport: () => ({ header: {} }) } }), /libc/);
   assert.throws(() => hostTarget({ platform: 'linux', arch: 'riscv64', report: { getReport: () => ({ header: { glibcVersionRuntime: '2.39' } }) } }), /Unsupported platform/);
   assert.equal(hostTarget({ platform: 'darwin', arch: 'arm64' }), 'darwin-arm64');
+  assert.throws(() => hostTarget({ platform: 'darwin', arch: 'x64' }), /Unsupported platform darwin-x64/);
   assert.throws(() => resolveArtifact(__dirname, 'linux-x64-gnu', '0.1.0'), /Missing native package/);
 });
 

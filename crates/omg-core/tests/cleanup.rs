@@ -779,3 +779,233 @@ fn item_without_a_recorded_creation_time_is_never_deleted() {
     assert!(report.skipped[0].1.contains("creation time"), "{report:?}");
     assert_eq!(fs::read(h.join("scratch/a.bin")).unwrap(), b"data");
 }
+
+#[test]
+fn delete_waits_out_housekeeping_but_a_running_scan_still_stops_it() {
+    use omg_core::index::{LOCK_WAIT, lock};
+    let (home, state) = setup();
+    let h = home.path();
+    fs::write(h.join("big.iso"), vec![2u8; 200_000]).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    assert_eq!(index.mark(b"big.iso", 200_000, h).unwrap(), Gate::Allowed);
+
+    // The scan lock is held for good (a scan is running): after the wait the delete is refused, says
+    // why, and the file is untouched.
+    let scanning = lock(state.path(), "scan.lock").unwrap();
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"big.iso")], h)
+        .unwrap();
+    let started = std::time::Instant::now();
+    let error = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("a scan is running"),
+        "unexpected error: {error}"
+    );
+    assert!(started.elapsed() >= LOCK_WAIT, "it waited before giving up");
+    assert_eq!(fs::read(h.join("big.iso")).unwrap().len(), 200_000);
+    drop(scanning);
+
+    // The lock is only held for a moment (housekeeping between two slices): the delete goes through.
+    let busy = lock(state.path(), "scan.lock").unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        drop(busy);
+    });
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"big.iso")], h)
+        .unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    release.join().unwrap();
+    assert_eq!(report.deleted, vec![b"big.iso".to_vec()]);
+    assert!(!h.join("big.iso").exists());
+}
+
+/// A uv-like cache: Python packages ship library folders called `credentials`, which carry a
+/// protected name, next to ordinary packages.
+fn cache_with_credentials_folder(h: &Path) {
+    let root = h.join(".cache/uv");
+    fs::create_dir_all(root.join("archive-v0/aaa/lib")).unwrap();
+    fs::write(root.join("archive-v0/aaa/lib/mod.py"), vec![1u8; 20_000]).unwrap();
+    fs::create_dir_all(root.join("archive-v0/bbb/pkg/credentials")).unwrap();
+    fs::write(
+        root.join("archive-v0/bbb/pkg/credentials/auth.py"),
+        b"library code",
+    )
+    .unwrap();
+    fs::write(
+        root.join("archive-v0/bbb/pkg/__init__.py"),
+        vec![2u8; 20_000],
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("archive-v0/ccc")).unwrap();
+    fs::write(root.join("archive-v0/ccc/data"), vec![3u8; 20_000]).unwrap();
+    fs::create_dir_all(root.join("simple")).unwrap();
+    fs::write(root.join("simple/index"), vec![4u8; 20_000]).unwrap();
+}
+
+#[test]
+fn a_cache_with_protected_names_inside_can_be_deleted_around_them() {
+    let (home, state) = setup();
+    let h = home.path();
+    cache_with_credentials_folder(h);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b".cache/uv", 1, h).unwrap();
+    let id = id_of(&index, b".cache/uv");
+
+    // Whole: refused when planned, with the reason and the alternative, not after confirming.
+    let whole = index.prepare_delete(&[id], h).unwrap();
+    assert!(whole.items.is_empty());
+    assert_eq!(whole.keepable, vec![id]);
+    assert!(
+        whole.denied[0].1.contains("1 protected item"),
+        "{}",
+        whole.denied[0].1
+    );
+    assert!(h.join(".cache/uv").exists());
+
+    // Around the protected folder: ordinary pieces, never the protected folder or what leads to it.
+    let plan = index.prepare_delete_keeping_protected(&[id], h).unwrap();
+    let pieces: Vec<String> = plan
+        .items
+        .iter()
+        .map(|i| String::from_utf8(i.path.clone()).unwrap())
+        .collect();
+    for expected in [
+        ".cache/uv/archive-v0/aaa",
+        ".cache/uv/archive-v0/ccc",
+        ".cache/uv/simple",
+        ".cache/uv/archive-v0/bbb/pkg/__init__.py",
+    ] {
+        assert!(
+            pieces.iter().any(|p| p == expected),
+            "{expected}: {pieces:?}"
+        );
+    }
+    assert!(
+        !pieces
+            .iter()
+            .any(|p| p.contains("credentials") || p.ends_with("bbb") || p.ends_with("/pkg")),
+        "{pieces:?}"
+    );
+    assert!(plan.items.iter().all(|i| i.id < 0 && i.birth.is_some()));
+    assert!(plan.keepable.is_empty());
+    assert!(
+        plan.denied
+            .iter()
+            .any(|(p, why)| p.ends_with(b"bbb/pkg/credentials") && why.starts_with("kept"))
+    );
+
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert_eq!(
+        report.deleted.len(),
+        plan.items.len(),
+        "{:?}",
+        report.skipped
+    );
+    let root = h.join(".cache/uv");
+    assert!(!root.join("archive-v0/aaa").exists());
+    assert!(!root.join("archive-v0/ccc").exists());
+    assert!(!root.join("simple").exists());
+    assert!(!root.join("archive-v0/bbb/pkg/__init__.py").exists());
+    assert_eq!(
+        fs::read(root.join("archive-v0/bbb/pkg/credentials/auth.py")).unwrap(),
+        b"library code",
+        "the protected folder is untouched"
+    );
+    // The index follows without a rescan, and the saved folder is still listed: it still exists.
+    assert!(index.entry(b".cache/uv/archive-v0/aaa").unwrap().is_none());
+    assert!(
+        index
+            .entry(b".cache/uv/archive-v0/bbb/pkg/credentials")
+            .unwrap()
+            .is_some()
+    );
+    assert!(index.marked().unwrap().iter().any(|m| m.id == id));
+    assert!(
+        index
+            .history()
+            .unwrap()
+            .iter()
+            .any(|h| h.kind == "delete" && h.outcome == "partial")
+    );
+}
+
+#[test]
+fn only_cache_folders_can_be_deleted_around_protected_items() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir_all(h.join("Documents/project/credentials")).unwrap();
+    fs::write(h.join("Documents/project/credentials/token"), b"secret").unwrap();
+    fs::write(h.join("Documents/project/notes.txt"), b"mine").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"Documents/project", 1, h).unwrap();
+    let id = id_of(&index, b"Documents/project");
+    // An ordinary folder is refused when planned (it would be skipped when deleted), with no
+    // alternative offered.
+    let whole = index.prepare_delete(&[id], h).unwrap();
+    assert!(whole.items.is_empty() && whole.keepable.is_empty());
+    assert!(whole.denied[0].1.contains("sensitive item"));
+    let plan = index.prepare_delete_keeping_protected(&[id], h).unwrap();
+    assert!(plan.items.is_empty());
+    assert!(plan.denied[0].1.contains("only cache and build folders"));
+    assert!(h.join("Documents/project/notes.txt").exists());
+    assert!(h.join("Documents/project/credentials/token").exists());
+}
+
+#[test]
+fn a_protected_item_that_appears_after_review_still_stops_its_piece() {
+    let (home, state) = setup();
+    let h = home.path();
+    cache_with_credentials_folder(h);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b".cache/uv", 1, h).unwrap();
+    let id = id_of(&index, b".cache/uv");
+    let plan = index.prepare_delete_keeping_protected(&[id], h).unwrap();
+    // After the review, a protected folder shows up inside one of the pieces.
+    let late = h.join(".cache/uv/archive-v0/ccc/.ssh");
+    fs::create_dir_all(&late).unwrap();
+    fs::write(late.join("id"), b"private key").unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert!(late.join("id").exists(), "nothing protected is removed");
+    assert!(h.join(".cache/uv/archive-v0/ccc/data").exists());
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|(p, why)| p == b".cache/uv/archive-v0/ccc" && why.contains("sensitive item"))
+    );
+    // The other pieces were not affected by it.
+    assert!(!h.join(".cache/uv/archive-v0/aaa").exists());
+    assert!(!h.join(".cache/uv/simple").exists());
+}
+
+#[test]
+fn a_cache_without_protected_items_is_still_one_whole_item() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir_all(h.join(".cache/uv/archive-v0/aaa")).unwrap();
+    fs::write(h.join(".cache/uv/archive-v0/aaa/data"), vec![1u8; 20_000]).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b".cache/uv", 1, h).unwrap();
+    let id = id_of(&index, b".cache/uv");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    assert_eq!(plan.items.len(), 1);
+    assert!(plan.keepable.is_empty() && plan.denied.is_empty());
+    // Asking to keep protected items when there are none is the same single item.
+    let around = index.prepare_delete_keeping_protected(&[id], h).unwrap();
+    assert_eq!(around.items.len(), 1);
+    assert_eq!(around.items[0].id, id);
+}

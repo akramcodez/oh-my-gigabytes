@@ -73,9 +73,9 @@ Tests (`crates/omg-core/tests/windows.rs`, module `deletion`, run on this machin
 
 Release manifest: Windows full builds now declare `analysis: development-windows`, `cleanup: development-unqualified`, `service: disabled`; `assemble-release.js` checks the claim against a Windows binary's `doctor` when run on Windows. `verify.js` and `release.test.js` changed with it.
 
-## Repository rule (finding for the owner)
+## Repository rule (finding for the owner, resolved)
 
-The owner's home folder is a Git repository (`C:\Users\SK AKRAM\.git` exists). The existing policy walks up from each entry to find a repository, so under the current rule almost everything in the home is "inside an active repository". Only build and dependency folders stay deletable there. This is existing policy, not Windows-specific, and it is not changed here. Decide before the deletion milestone whether the home-as-repository case should be treated differently.
+The owner's home folder is a Git repository (`C:\Users\SK AKRAM\.git` exists; still true on 2026-11-02). Under the original rule almost everything in the home was "inside an active repository". Resolved in commit `70cd51c`: `RepositoryMemo::is_repository` treats a repository at or above the home folder as a dotfiles repository, so it does not make the home folder's contents repository data; repositories below the home folder keep the rule.
 
 ## Owner-only state directory (2026-10-19)
 
@@ -91,6 +91,33 @@ Verified: `tests/windows.rs` module `state_acl` (a created directory lists no Ev
 - The released `omg.exe` is built with a static C runtime (`.cargo/config.toml`). Its import table lists only `KERNEL32`, `USER32`, `advapi32`, `ntdll`, `bcryptprimitives` and `api-ms-win-core-synch`; no Visual C++ runtime DLL (`objdump -p` on the file from release run 39108897938).
 - The signed `win32-x64` package installed, ran, scanned, reinstalled and uninstalled on `windows-2022` and `windows-latest` (smoke run 39196125718). Authenticode signing is not done, so SmartScreen may warn on a manual download.
 
+## Native check after the macOS merge, and the delete flow through ConPTY (2026-11-02)
+
+Environment: the owner's PC above (Windows 11 Home 10.0.26200, x64), Rust `1.95.0-x86_64-pc-windows-gnu` with the MinGW linker in `C:\src\mingw`, Python 3.13.3 with `pywinpty` 2.0.15 in `C:\src\venv`, Node 24.13.0. Tree: `origin/main` at `74f4d8f` (the macOS work) plus the uncommitted 2026-10-24 delete-in-release work and the fixes below, copied to `C:\src\omg`. `TMP` was `C:\src\omg-tmp` (outside the profile and outside any Git repository). Built with `CARGO_INCREMENTAL=0` and `CARGO_PROFILE_{DEV,TEST}_DEBUG=0` because C: had 0 bytes free at the start (see Test artifacts). Script: `C:\src\omg-full.ps1`.
+
+| Step | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | pass |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings`, and with `--no-default-features` | pass, both |
+| `cargo test --workspace --no-default-features --locked` | 49 passed, 0 failed, 1 ignored |
+| `cargo test --workspace --locked` | 56 passed, 0 failed, 1 ignored; `tests/windows.rs` 16 of 16, including the 7 deletion tests |
+| `python -m unittest discover -s tests -p test_terminal_windows.py` with the debug and with the `--release` default-feature `omg.exe` | 3 of 3 each (start/quit, and the two delete tests below) |
+| `node --test packages/oh-my-gigabytes/test/release.test.js` | 21 of 21 |
+| release `omg.exe doctor` | `permanent delete: development-unqualified (Windows: NTFS only; ...)` |
+
+New ConPTY tests (`tests/test_terminal_windows.py`, also run by CI's Windows x64 legs), each in a throwaway folder given to `omg` as `USERPROFILE` and `LOCALAPPDATA`, driving the real interface through ConPTY and reading a reconstructed screen (`tests/terminal_screen.py`, shared with the Linux PTY tests):
+
+- `test_delete_removes_only_the_confirmed_file_and_refuses_protected_ones`: Browse, `d` on a 3 MiB file, "Are you sure?" names it and defaults to Cancel; Esc leaves the file and the message "Nothing was deleted" stays; `d`, "Yes, delete permanently" removes exactly that file and leaves its neighbour; `d` on `secret.pem` is refused ("cannot add to OMG Trash") with no delete offered.
+- `test_a_cache_holding_a_protected_folder_is_deleted_around_it`: uv's Windows cache (`%LOCALAPPDATA%\uv\cache`) holding a `credentials` package folder cannot be deleted whole; "Delete everything except the protected items" plans around it, asks again, and deletes the rest while the protected folder survives.
+
+This closes the gap "the confirmed removal through the interface was never run on Windows" for the GNU-toolchain release build on NTFS. The shipped binary is built with MSVC in CI; CI runs these tests with its debug MSVC build, not the release one.
+
+Found and fixed by this run:
+
+- **Browse showed whole paths on Windows.** Rows read `work\victim.bin` instead of `victim.bin`, and the path bar showed `AppData\Local` as one crumb, because both split the display form of the path (which uses `\` on Windows) on `/`. They now split the stored path on `/` and convert each part. Unit test `nested_folders_show_names_and_one_crumb_per_folder` (runs on every platform).
+- **Cancel's message was replaced on every platform.** Esc at "Are you sure?" set "Cancelled. Nothing was deleted." and sent two requests; the worker's reply to the first ("Removed from OMG Trash.", for the item `d` had staged) arrived afterwards and replaced it. Nothing was deleted, but the message said otherwise. Cancel is now one request (`CancelPlan`) whose only reply is the cancel message. Unit test `escape_at_the_question_cancels_in_one_request_and_keeps_its_message`; the Linux PTY and the ConPTY delete tests now wait a second after Esc and check the message is still there (the Linux one fails on the old binary, whose screen ends with "Removed from OMG Trash.").
+- **Two tests failed with `TMP` outside the profile.** `tests/migrations.rs` and `tests/analysis_only.rs` opened state folders in plain temp folders, which there inherit an access list open to other users, and omg correctly refused them. They now call `platform::windows_state::protect`, as `tests/windows.rs` does. CI did not see this because its `TMP` is inside the runner's profile.
+
 ## Known gaps (not done, not claimed)
 
 - **Hard-link counts.** Enumeration does not read link counts, so each Windows name counts once. Data reachable by two names is double-counted in folder totals until link counts are read (plan W02).
@@ -99,8 +126,8 @@ Verified: `tests/windows.rs` module `state_acl` (a created directory lists no Ev
 - **Cloud placeholders.** Placeholder detection uses attributes and reparse tags. It is not tested against a live OneDrive sync root.
 - **Drive root and system folders.** Scanning `C:\` as a whole is untested. `System Volume Information` and `$Recycle.Bin` are excluded by name.
 - **Progress estimate.** No used-inode count is available on Windows, so the ETA is unavailable.
-- **Not implemented:** drives view, Recycle Bin size, WSL/Docker virtual-disk findings (M2); background service (M4); Recycle Bin deletion; npm `win32-x64` package and Authenticode signing (W09); ConPTY smoke test (W11).
-- **Deletion through the TUI** was reached up to the confirmation dialog in Windows Terminal (plan accepted, "Are you sure? 1 item(s)"). The confirmed removal itself is verified by the integration tests, which call the same backend functions the TUI calls; an automated keypress run of the final `y` was abandoned because desktop focus moved.
+- **Not implemented:** drives view, Recycle Bin size, WSL/Docker virtual-disk findings (M2); background service (M4); Recycle Bin deletion; Authenticode signing (W09). The ConPTY tests (W11) exist since 2026-10-19 and cover delete since 2026-11-02.
+- **Deletion through the TUI** is automated through ConPTY since 2026-11-02 (see above), on the owner's PC with a GNU-toolchain release build. Not done: the same with the MSVC release binary from `release.yml`, and a delete in Windows Terminal by hand.
 - **Launcher Ctrl+C.** `bin/omg.js` no longer force-kills the child on Windows. This was not run through a packaged binary.
 - **TUI.** Checked by screenshots of Overview, Browse and Findings, and quit with `q`. Ctrl+C and window-close behaviour were not exercised.
 - **FAT32 and exFAT** are refused. The virtual-disk matrix (`scripts/win-vhd-matrix.ps1`, run on `windows-2022` and `windows-latest`, 2026-10-19) found that scanning such a volume failed with "The parameter is incorrect" (error 87), because the scanner's file identity and directory listing use information classes that only NTFS and ReFS provide. `open_root` now refuses them with "FAT32 and exFAT volumes cannot be scanned on Windows yet". Supporting them needs a separate enumeration path and is not part of the beta. (macOS scans FAT32 and exFAT.)
@@ -108,4 +135,6 @@ Verified: `tests/windows.rs` module `state_acl` (a created directory lists no Ev
 
 ## Test artifacts
 
-Removed after use: screenshots, probe scripts, the link-test crate, scan state directories and the copied index. Kept, for the owner to remove when no longer needed: `C:\src\omg` (1 MB source mirror), `C:\src\omg-target` (about 1.9 GB of build output) and `C:\src\mingw` (about 0.9 GB MinGW toolchain).
+Removed after use: screenshots, probe scripts, the link-test crate, scan state directories and the copied index. Kept, for the owner to remove when no longer needed: `C:\src\omg` (1 MB source mirror), `C:\src\omg-target` (build output), `C:\src\mingw` (about 0.9 GB MinGW toolchain), `C:\src\venv` (Python with `pywinpty`) and `C:\src\omg-state-r12` (0.7 GB index from the 2026-10-19 profile measurement).
+
+2026-11-02: C: had 0 bytes free when the native run started, and the first attempt failed with "not enough space on the disk". `C:\src\omg-target` had grown to 3.6 GB of stale debug output; it was emptied with `cargo clean` (3.6 GiB) and rebuilt without debug info. C: then had 3.4 GB free, and 11.9 GB when the run finished; that later increase came from something else on the PC.

@@ -155,6 +155,49 @@ fn unreadable_folders_show_unknown_not_zero() {
     assert!(!line(".ssh/").contains("0.00 B"), "{text}");
 }
 
+/// Inside a folder, rows show names and the path bar shows one crumb per folder. On Windows the
+/// display form of a path uses backslashes, and both used to be split on `/` after that conversion,
+/// so rows read `work\victim.bin` and the bar read `AppData\Local` (found by the ConPTY test).
+#[test]
+fn nested_folders_show_names_and_one_crumb_per_folder() {
+    let file = |path: &str| Child {
+        path: path.as_bytes().to_vec(),
+        kind: "file".into(),
+        allocated: 3 << 20,
+        apparent: 3 << 20,
+        files: 1,
+        dirs: 0,
+        protected: 0,
+        newest: 0,
+        incomplete: false,
+        excluded: false,
+    };
+    let mut state = AppState {
+        tab: Tab::Browse,
+        dir: b"AppData/Local/uv".to_vec(),
+        ..Default::default()
+    };
+    state.dirs.insert(
+        b"AppData/Local/uv".to_vec(),
+        DirView {
+            children: vec![file("AppData/Local/uv/victim.bin")],
+            marks: vec![],
+            total: None,
+        },
+    );
+    let text = draw(&state, 110, 30);
+    assert!(text.contains("› AppData › Local › uv"), "{text}");
+    let row = text
+        .lines()
+        .find(|l| l.contains("victim.bin"))
+        .unwrap_or_else(|| panic!("row missing:\n{text}"));
+    assert!(row.contains("  victim.bin"), "{row}");
+    assert!(
+        !row.contains("uv"),
+        "the row shows the name, not the path: {row}"
+    );
+}
+
 #[test]
 fn delete_confirmation_defaults_to_cancel_and_shows_warnings() {
     let menu = Menu {
@@ -364,4 +407,331 @@ fn summary_with_marked(path: &[u8]) -> worker::Summary {
         auto_trash: true,
         volume: None,
     }
+}
+
+fn test_app() -> (App, std::sync::mpsc::Receiver<Request>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let app = App {
+        state: AppState::default(),
+        tx,
+        cancel: Arc::new(AtomicBool::new(false)),
+        job: None,
+        state_path: std::path::PathBuf::new(),
+    };
+    (app, rx)
+}
+
+fn running(progress: u64) -> Response {
+    Response::Running {
+        scan: Some(omg_core::index::RunningScan {
+            started: omg_core::now() - 30,
+            progress,
+            estimated_total: 1000,
+            finishing: false,
+            phase_at: None,
+        }),
+        locked: true,
+    }
+}
+
+/// A held scan lock with no scan behind it is housekeeping (pruning old scans). It used to be
+/// reported as "Another omg scan is running" with no progress, and polling stopped.
+#[test]
+fn a_held_lock_without_a_scan_is_waiting_not_another_scan() {
+    let (mut app, _rx) = test_app();
+    app.state.watching = true;
+    app.state.pending_scan = Some(false);
+    app.on_response(Response::Running {
+        scan: None,
+        locked: true,
+    });
+    assert!(app.state.waiting.is_some());
+    assert!(app.state.other.is_none());
+    assert!(app.state.watching, "keeps polling until the lock is free");
+    let text = draw(&app.state, 140, 30);
+    assert!(text.contains("Waiting for another omg task"), "{text}");
+    assert!(text.contains("no scan is running"), "{text}");
+    assert!(text.contains("your scan starts after"), "{text}");
+    assert!(!text.contains("Another omg scan is running"), "{text}");
+}
+
+#[test]
+fn waiting_ends_when_the_lock_is_free_and_says_so() {
+    let (mut app, _rx) = test_app();
+    app.on_response(Response::Running {
+        scan: None,
+        locked: true,
+    });
+    app.on_response(Response::Running {
+        scan: None,
+        locked: false,
+    });
+    assert!(app.state.waiting.is_none());
+    assert!(!app.state.watching);
+    assert_eq!(app.state.message, "Housekeeping finished.");
+}
+
+#[test]
+fn another_real_scan_still_shows_progress_and_ends_cleanly() {
+    let (mut app, rx) = test_app();
+    app.state.watching = true;
+    // The user asked for a scan while another process was scanning: theirs makes ours redundant.
+    app.state.pending_scan = Some(true);
+    app.on_response(running(500));
+    assert!(app.state.waiting.is_none());
+    let text = draw(&app.state, 140, 30);
+    assert!(text.contains("Another omg scan is running"), "{text}");
+    assert!(text.contains("50%"), "{text}");
+    app.on_response(Response::Running {
+        scan: None,
+        locked: false,
+    });
+    assert!(app.state.other.is_none());
+    assert!(
+        app.state.pending_scan.is_none(),
+        "no second scan is started"
+    );
+    assert!(app.job.is_none() && app.state.scan.is_none());
+    assert_eq!(
+        app.state.message,
+        "The other scan finished; showing its results."
+    );
+    // It asks the worker to reload the published results.
+    assert!(rx.try_iter().any(|r| matches!(r, Request::Summary)));
+}
+
+#[test]
+fn escape_cancels_a_scan_that_is_waiting_for_the_lock() {
+    let (mut app, _rx) = test_app();
+    app.state.pending_scan = Some(false);
+    let key = event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.handle_key(key).unwrap());
+    assert!(app.state.pending_scan.is_none());
+    assert_eq!(app.state.message, "Cancelled the waiting scan.");
+}
+
+fn plan_of(
+    items: Vec<omg_core::cleanup::Marked>,
+    denied: Vec<(Vec<u8>, String)>,
+    keepable: Vec<i64>,
+) -> DeletePlan {
+    DeletePlan {
+        fingerprint: "fingerprint".into(),
+        items,
+        denied,
+        estimated: 9 << 30,
+        created: 0,
+        keepable,
+    }
+}
+
+fn piece(id: i64, path: &str) -> omg_core::cleanup::Marked {
+    omg_core::cleanup::Marked {
+        id,
+        path: path.as_bytes().to_vec(),
+        identity: "1:1".into(),
+        kind: "directory".into(),
+        allocated: 1 << 20,
+        added: 0,
+        warning: None,
+        birth: Some("1".into()),
+        source: "keep-protected".into(),
+    }
+}
+
+/// Esc at "Are you sure?" used to send Unmark and DiscardPlan separately; the worker's reply to the
+/// Unmark ("Removed from OMG Trash.") arrived after, and replaced, "Cancelled. Nothing was deleted."
+/// Now one request carries both, and the worker's only reply is the cancel message.
+#[cfg(feature = "permanent-delete")]
+#[test]
+fn escape_at_the_question_cancels_in_one_request_and_keeps_its_message() {
+    let (mut app, rx) = test_app();
+    app.confirm_delete(
+        plan_of(vec![piece(7, "work/victim.bin")], vec![], vec![]),
+        vec![7],
+    );
+    assert_eq!(
+        app.state.menu.as_ref().map(|m| m.title.as_str()),
+        Some("Are you sure?")
+    );
+    app.handle_key(event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert!(app.state.menu.is_none());
+    assert_eq!(app.state.message, "Cancelled. Nothing was deleted.");
+    let sent: Vec<Request> = rx.try_iter().collect();
+    assert_eq!(sent.len(), 1, "one request, so no second reply can follow");
+    assert!(matches!(
+        &sent[0],
+        Request::CancelPlan { fingerprint, undo } if fingerprint == "fingerprint" && undo == &[7]
+    ));
+}
+
+/// A cache folder with a protected item inside used to look like "1 item" and was then skipped
+/// after the user confirmed. Now the dialog says it cannot go whole and offers the alternative.
+#[cfg(feature = "permanent-delete")]
+#[test]
+fn a_folder_that_cannot_go_whole_offers_deleting_around_its_protected_items() {
+    let (mut app, rx) = test_app();
+    let plan = plan_of(
+        vec![],
+        vec![(
+            b".cache/uv".to_vec(),
+            "contains 2 protected item(s), for example a/credentials; it cannot be deleted whole, but everything else in it can".into(),
+        )],
+        vec![7],
+    );
+    app.confirm_delete(plan, vec![7]);
+    let menu = app.state.menu.as_ref().unwrap();
+    assert_eq!(menu.title, "Cannot delete this whole");
+    let labels: Vec<&str> = menu.choices.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["Cancel", "Delete everything except the protected items…"],
+        "no plain 'Yes' for something that cannot go whole"
+    );
+    assert!(menu.body[0].0.contains("cannot be deleted whole"));
+    // Choosing it discards the first plan and asks for the plan around the protected items.
+    app.handle_key(event::KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
+        .unwrap();
+    let sent: Vec<Request> = rx.try_iter().collect();
+    assert!(matches!(&sent[0], Request::DiscardPlan(f) if f == "fingerprint"));
+    assert!(matches!(
+        &sent[1],
+        Request::PrepareDeleteKeeping { ids, undo } if ids == &[7] && undo == &[7]
+    ));
+}
+
+#[test]
+fn the_plan_around_protected_items_says_what_stays_and_asks_again() {
+    let (mut app, _rx) = test_app();
+    let plan = plan_of(
+        vec![
+            piece(-1, ".cache/uv/archive-v0/aaa"),
+            piece(-2, ".cache/uv/archive-v0/ccc"),
+        ],
+        vec![
+            (
+                b".cache/uv/archive-v0/bbb/credentials".to_vec(),
+                "kept: protected name (credentials)".into(),
+            ),
+            (
+                b".cache/uv/archive-v0/ddd/credentials".to_vec(),
+                "kept: protected name (credentials)".into(),
+            ),
+        ],
+        vec![],
+    );
+    app.confirm_delete(plan, vec![7]);
+    let menu = app.state.menu.as_ref().unwrap();
+    assert_eq!(menu.title, "Are you sure?");
+    let body: String = menu
+        .body
+        .iter()
+        .map(|(l, _)| l.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(body.contains("2 item(s)"), "{body}");
+    assert!(
+        body.contains("keeping 2 protected item(s) in place"),
+        "{body}"
+    );
+    assert!(
+        !body.contains("skipped"),
+        "kept items are not reported as skipped: {body}"
+    );
+    let labels: Vec<&str> = menu.choices.iter().map(|c| c.label.as_str()).collect();
+    assert_eq!(labels, ["Cancel", "Yes, delete permanently"]);
+    // Cancelling takes back what the review added to OMG Trash.
+    assert!(matches!(
+        &menu.choices[0].action,
+        Action::CancelPlan { ids, .. } if ids == &[7]
+    ));
+}
+
+/// Long lines in a dialog wrap. The choices used to sit below the wrapped text inside a box sized
+/// for unwrapped lines, so the last ones (including "Yes, delete permanently") were cut off.
+#[test]
+fn long_dialog_text_never_hides_the_choices() {
+    let long = "contains 12 protected item(s), for example home/akram/.cache/uv/archive-v0/GG2Qi2KfBlMub8_qySeOD/docker/credentials; it cannot be deleted whole, but everything else in it can";
+    for (width, height) in [(80u16, 24u16), (100, 30), (140, 40), (60, 20)] {
+        let state = AppState {
+            menu: Some(Menu {
+                title: "Cannot delete this whole".into(),
+                body: vec![
+                    (
+                        "this cannot be deleted whole: protected items are inside".into(),
+                        Tone::Warn,
+                    ),
+                    (format!("skipped .cache/uv: {long}"), Tone::Warn),
+                    (
+                        format!("keeping 12 protected item(s) in place, for example {long}"),
+                        Tone::Warn,
+                    ),
+                ],
+                choices: vec![
+                    Choice {
+                        label: "Cancel".into(),
+                        key: None,
+                        action: Action::Help,
+                        tone: Tone::Normal,
+                    },
+                    Choice {
+                        label: "Yes, delete permanently".into(),
+                        key: None,
+                        action: Action::Help,
+                        tone: Tone::Danger,
+                    },
+                    Choice {
+                        label: "Delete everything except the protected items…".into(),
+                        key: None,
+                        action: Action::Help,
+                        tone: Tone::Danger,
+                    },
+                ],
+                cursor: 0,
+                tone: Tone::Danger,
+            }),
+            ..Default::default()
+        };
+        let text = draw(&state, width, height);
+        for label in [
+            "1. Cancel",
+            "2. Yes, delete permanently",
+            "3. Delete everything except",
+        ] {
+            assert!(
+                text.contains(label),
+                "{label} is hidden at {width}x{height}:\n{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_result_says_protected_items_were_kept_not_that_they_failed() {
+    let (mut app, _rx) = test_app();
+    app.on_response(Response::Deleted(Box::new(
+        omg_core::cleanup::DeleteReport {
+            deleted: vec![b"a".to_vec(), b"b".to_vec()],
+            skipped: vec![
+                (
+                    b"c/credentials".to_vec(),
+                    "kept: protected name (credentials)".into(),
+                ),
+                (b"d".to_vec(), "changed since the review".into()),
+            ],
+            ..Default::default()
+        },
+    )));
+    let message = &app.state.message;
+    assert!(message.contains("Deleted 2 item(s)"), "{message}");
+    assert!(
+        message.contains("kept 1 protected item(s) in place"),
+        "{message}"
+    );
+    assert!(
+        message.contains("1 skipped: changed since the review"),
+        "{message}"
+    );
+    assert!(!message.contains("skipped: kept"), "{message}");
 }

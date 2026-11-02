@@ -11,7 +11,6 @@ const TARGETS = Object.freeze({
   'linux-x64-gnu': 'x86_64-unknown-linux-gnu',
   'linux-arm64-gnu': 'aarch64-unknown-linux-gnu',
   'darwin-arm64': 'aarch64-apple-darwin',
-  'darwin-x64': 'x86_64-apple-darwin',
   'win32-x64': 'x86_64-pc-windows-msvc',
 });
 
@@ -52,9 +51,9 @@ function validateBinaryTarget(data, target) {
       throw new Error('Binary format/architecture mismatch (x64 PE required)');
     }
   } else {
-    const cpu = target.endsWith('arm64') ? 0x0100000c : 0x01000007;
-    if (data.length < 32 || data.readUInt32LE(0) !== 0xfeedfacf || data.readUInt32LE(4) !== cpu) {
-      throw new Error('Binary format/architecture mismatch (thin 64-bit Mach-O required)');
+    // Apple silicon is the only macOS target in this release.
+    if (data.length < 32 || data.readUInt32LE(0) !== 0xfeedfacf || data.readUInt32LE(4) !== 0x0100000c) {
+      throw new Error('Binary format/architecture mismatch (thin arm64 Mach-O required)');
     }
   }
 }
