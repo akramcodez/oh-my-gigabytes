@@ -594,6 +594,15 @@ fn a_folder_that_cannot_go_whole_offers_deleting_around_its_protected_items() {
     app.handle_key(event::KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE))
         .unwrap();
     let sent: Vec<Request> = rx.try_iter().collect();
+    if !super::delete_available() {
+        // macOS: the build has the feature but the platform cannot delete, so the choice is refused.
+        assert!(sent.is_empty(), "{} request(s) sent", sent.len());
+        assert_eq!(
+            app.state.message,
+            "Permanent delete is not available on this platform."
+        );
+        return;
+    }
     assert!(matches!(&sent[0], Request::DiscardPlan(f) if f == "fingerprint"));
     assert!(matches!(
         &sent[1],
