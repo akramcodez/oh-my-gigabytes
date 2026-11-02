@@ -59,7 +59,7 @@ Fixed on the way (details in the Windows page): Browse on Windows showed whole r
 
 CI on the pushed commit `aada802` (`Checks` run 41395760636): green on ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-latest, windows-11-arm and the supply-chain job; the two ConPTY delete tests ran and passed on both Windows x64 legs. All three macOS legs failed at clippy: four SQL constants used only by the Linux and Windows delete path were dead code on macOS. They are now compiled only where used (Linux, Windows, tests) (`d4591bb`). The next run then failed one interface test on the three macOS legs: the default macOS build has the delete feature but no platform support, so "Delete everything except the protected items" is refused there and the test now expects that (`730f96c`). `Checks` run 41397182334 on `730f96c`: green on all nine platform legs and the supply-chain job; on macOS-15 the disk-image tests (APFS, HFS+, exFAT, FAT32), the housekeeping tests and the PTY tests ran and passed, and the PTY delete tests skip because macOS has no delete. (Push events arrived late that morning, so runs 41396471686, 41397182334 and others were started by hand; the cancelled runs in the list are duplicates.)
 
-Not done here: macOS on the Mac (run `scripts/mac-check.sh`), the MSVC release binary on a real Windows 11 machine, Linux ARM64 natively, `cargo deny` (not installed locally).
+Not done here: macOS on the Mac (the owner's checklist is [mac-final-check.md](mac-final-check.md)), the MSVC release binary on a real Windows 11 machine, Linux ARM64 natively, `cargo deny` (not installed locally).
 
 ## Not passed yet (blocks calling this a release)
 
