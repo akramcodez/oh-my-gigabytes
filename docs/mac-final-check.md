@@ -17,9 +17,9 @@ git log -1 --oneline        # record: the commit you are testing
 sw_vers; uname -m           # record: macOS version and arm64
 ```
 
-- [ ] The commit is the release candidate (the latest `main` with green `Checks` on all nine legs).
-- [ ] Xcode Command Line Tools are installed (`xcode-select -p` prints a path).
-- [ ] `hdiutil info | grep omg-` prints nothing (no disk image left mounted from an earlier test run).
+- [x] The commit is the release candidate (the latest `main` with green `Checks` on all nine legs).
+- [x] Xcode Command Line Tools are installed (`xcode-select -p` prints a path).
+- [x] `hdiutil info | grep omg-` prints nothing (no disk image left mounted from an earlier test run).
 
 ## 1. Automated suite (the same steps as CI's macOS legs)
 
@@ -29,9 +29,9 @@ scripts/mac-check.sh --smoke
 
 It installs Rust and Node 22 into your home folder if they are missing (no sudo), then runs fmt, clippy and the tests in both builds, the terminal tests, the npm launcher tests and a smoke run on real paths. It mounts small disk images (APFS, HFS+, exFAT, FAT32) and detaches them at the end.
 
-- [ ] The summary at the end is all `PASS`.
-- [ ] Record: test counts from the summary, and the `omg scan --root $HOME` line from the smoke part (entries, unreadable folders, time).
-- [ ] `hdiutil info | grep omg-` prints nothing afterwards.
+- [x] The summary at the end is all `PASS`.
+- [x] Record: test counts from the summary, and the `omg scan --root $HOME` line from the smoke part (entries, unreadable folders, time).
+- [x] `hdiutil info | grep omg-` prints nothing afterwards.
 
 ## 2. Build the release binary and set up a private state folder
 
@@ -43,8 +43,8 @@ S=$(mktemp -d /private/tmp/omg-final.XXXXXX)   # private state folder (mode 700)
 "$OMG" --state-dir "$S" doctor
 ```
 
-- [ ] `--version` prints `omg 0.1.0-beta.1`.
-- [ ] `doctor` prints a line starting `permanent delete: unsupported`, and `"cleanup": "unsupported"` in its JSON.
+- [x] `--version` prints `omg 0.1.0-beta.1`.
+- [x] `doctor` prints a line starting `permanent delete: unsupported`, and `"cleanup": "unsupported"` in its JSON.
 
 ## 3. What omg must refuse
 
@@ -55,10 +55,10 @@ mkdir -m 755 /private/tmp/omg-open && "$OMG" --state-dir /private/tmp/omg-open s
 "$OMG" --state-dir "$S" start
 ```
 
-- [ ] `/` is refused.
-- [ ] `/tmp` is refused, and the message names `/private/tmp`.
-- [ ] A state folder that others can read (mode 755) is refused.
-- [ ] `start` (the background service) says it is not supported on this platform.
+- [x] `/` is refused.
+- [x] `/tmp` is refused, and the message names `/private/tmp`.
+- [x] A state folder that others can read (mode 755) is refused.
+- [x] `start` (the background service) says it is not supported on this platform.
 
 ## 4. Your home folder without Full Disk Access
 

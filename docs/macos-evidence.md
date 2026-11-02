@@ -110,6 +110,17 @@ Release binary (`cargo build --release -p omg-cli --no-default-features --locked
 | Release assembly on a Mac | **Defect found and fixed.** `scripts/assemble-release.js` made its temporary state folder under `os.tmpdir()` (`/var/folders/…`, a link), which omg refuses, so assembly failed with "Cannot run the binary". It now uses the real path. With a throwaway key: manifest `analysis: development-macos`, `cleanup: disabled`, `service: disabled` |
 | npm install cycle (as `smoke.yml`, prefix with a space) | Wrapper plus `darwin-arm64` package: install, `--version`, `doctor`, scan, status, reinstall, uninstall (state kept); offline bundle installs alone. One changed byte in either installed binary gives "Binary integrity verification failed". npm leaves no quarantine mark on the installed binary |
 
+## Final check (2026-11-02), in progress
+
+The pass in [mac-final-check.md](mac-final-check.md), on commit `527f4ef` (latest `main`; `Checks` run 41398549668 green on all nine platform legs and the supply-chain job). Environment: Mac17,9 (Apple M5 Pro), macOS 26.5.1 (25F80), arm64, Xcode Command Line Tools at `/Library/Developer/CommandLineTools`, Rust 1.95.0, Node 22.23.4, Python 3.9.6 (system). Run from Claude Code's shell in the owner's terminal, without Full Disk Access. Steps 0–3 done; steps 4–10 (Full Disk Access, iCloud, external drive, interface in several terminals, the CI-built package) still to do by hand.
+
+| Step | Result |
+| --- | --- |
+| 0. Prepare | Pass. No `omg-*` disk image mounted before the run |
+| 1. `scripts/mac-check.sh --smoke` | Pass: every summary line `PASS`. Tests 73 passed, 0 failed, 1 ignored in the default build and the same in the analysis-only build; PTY tests 7 run, OK, 5 skipped (the 2 delete flows, since macOS has no delete, and the 3 Windows ConPTY tests); `release.test.js` 21 tests, 18 passed, 0 failed, 3 skipped (two need an x86_64 Linux host, one is the offline npm install test). Smoke scan of `$HOME` (60 s cap): partial, 151,370 entries, 14,240 excluded, 131 unreadable directories, 4,548 ms; not published, with the privacy-protection hint. No `omg-*` image left mounted afterwards |
+| 2. Release binary | `cargo build --release -p omg-cli --no-default-features --locked`; `--version` prints `omg 0.1.0-beta.1`; `doctor` prints `"cleanup": "unsupported"` and `permanent delete: unsupported (not included in this analysis-only build)`. The `mktemp -d` state folder is mode 0700 |
+| 3. Refusals | `scan --root /` refused (sealed system volume); `--root /tmp` refused, naming `/private/tmp`; a mode-755 state folder refused ("must be owned by current user with private (0700) permissions"); `start` refused ("background service is not supported on this platform"). All exit 1 |
+
 ## Gates not passed
 
 No macOS older than 15, only one real Mac (Apple silicon, macOS 26), no Intel Mac, no Full Disk Access / iCloud / Time Machine behaviour, no Apple notarization or code-signing identity, and the signed packages were assembled here only with a throwaway key (no production key exists). The macOS items in `docs/checklist.md` stay unchecked.
