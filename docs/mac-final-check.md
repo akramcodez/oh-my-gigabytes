@@ -71,12 +71,12 @@ time "$OMG" --state-dir "$S" scan --root "$HOME"
 "$OMG" --state-dir "$S" findings | head -80
 ```
 
-- [ ] The first scan finishes as partial and is not published; the message explains macOS privacy protection and where to allow the terminal app.
+- [x] The first scan finishes as partial and is not published; the message explains macOS privacy protection and where to allow the terminal app.
 - [ ] If macOS asks whether your terminal may access Desktop, Documents or Downloads, answer **Don't Allow** for this step (it tests the unreadable case). Record which questions appeared.
-- [ ] With `--accept-gaps` it is published as partial.
+- [x] With `--accept-gaps` it is published as partial.
 - [ ] In `tree`, Desktop, Documents and Downloads are `unknown` with `"incomplete": true`, never `0.00 B`; `.ssh` and `.Trash` are `"excluded": true`.
-- [ ] Findings look sensible: developer caches (npm, pip, Cargo, Homebrew if you use them) and large files, each with an explanation; nothing under Mail, Messages, Safari or app containers is offered as a cleanup candidate.
-- [ ] Record: entries, unreadable folders, time.
+- [x] Findings look sensible: developer caches (npm, pip, Cargo, Homebrew if you use them) and large files, each with an explanation; nothing under Mail, Messages, Safari or app containers is offered as a cleanup candidate.
+- [x] Record: entries, unreadable folders, time.
 
 ## 5. Your home folder with Full Disk Access (never tested before)
 
@@ -162,11 +162,11 @@ xattr -l "$W/prefix with space/lib/node_modules/oh-my-gigabytes-darwin-arm64/art
 
 The throwaway key is only for this test; it is not the release key and must not be used for a release.
 
-- [ ] The `Release build` run is green for all four targets. Record: the run id.
-- [ ] `sign-release.js` verifies the attestation and signs without errors; the macOS manifest says `cleanup: disabled`.
-- [ ] The installed `omg` runs from the npm prefix (the path has a space on purpose), `doctor` says `permanent delete: unsupported`, and the scan works.
+- [x] The `Release build` run is green for all four targets. Record: the run id.
+- [x] `sign-release.js` verifies the attestation and signs without errors; the macOS manifest says `cleanup: disabled`.
+- [x] The installed `omg` runs from the npm prefix (the path has a space on purpose), `doctor` says `permanent delete: unsupported`, and the scan works.
 - [ ] `xattr -l` on the installed binary shows no `com.apple.quarantine`, and macOS showed no "cannot be verified" dialog.
-- [ ] Change one byte of the installed binary (`printf x >> ".../artifact/omg"`) and run `omg --version` again: it must refuse with "Binary integrity verification failed". Then remove the test folder: `cd ~ && rm -rf "$W"`.
+- [x] Change one byte of the installed binary (`printf x >> ".../artifact/omg"`) and run `omg --version` again: it must refuse with "Binary integrity verification failed". Then remove the test folder: `cd ~ && rm -rf "$W"`.
 
 Known and expected: a binary downloaded **in a browser** is quarantined and, because the beta is not notarized, macOS blocks it with "Apple could not verify…" until it is allowed in System Settings. The npm install path above is not affected.
 
