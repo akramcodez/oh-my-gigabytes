@@ -71,7 +71,7 @@ assign
         $expected = $made | Measure-Object -Property Length -Sum
 
         $state = Join-Path $work "state-$FileSystem"
-        $scan = (& $Omg --state-dir $state scan --root $root 2>&1 | Out-String)
+        $scan = (& $Omg --state-dir $state scan --root $root --no-suggest 2>&1 | Out-String)
         if ($FileSystem -in 'FAT32', 'exFAT') {
             # Not supported on Windows yet: the scan must be refused with a clear reason, not crash.
             if ($LASTEXITCODE -eq 0 -or $scan -notmatch 'FAT32 and exFAT volumes cannot be scanned') {
