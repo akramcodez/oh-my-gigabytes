@@ -625,9 +625,9 @@ impl Index {
                 |r| r.get(0),
             )
             .optional()?;
-        // Off unless the user turned it on: suggestions must never be the only thing between a
-        // scan and a deletion list the user did not review.
-        Ok(value.as_deref() == Some(b"on".as_slice()))
+        // On unless the user turned it off (owner decision 2026-11-07). The list authorizes nothing:
+        // every deletion still needs its own reviewed, confirmed plan.
+        Ok(value.as_deref() != Some(b"off".as_slice()))
     }
     pub fn set_auto_trash(&self, on: bool) -> Result<()> {
         self.db.execute(

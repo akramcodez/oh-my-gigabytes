@@ -262,11 +262,11 @@ fn scans_suggest_regenerable_caches_but_never_large_files_and_respect_dismissal(
     // The user can still add it explicitly.
     assert_eq!(index.mark(b".cache/uv", 1, h).unwrap(), Gate::Allowed);
     assert_eq!(index.marked().unwrap()[0].source, "user");
-    assert!(!index.auto_trash().unwrap(), "auto-fill is off by default");
-    index.set_auto_trash(true).unwrap();
-    assert!(index.auto_trash().unwrap());
+    assert!(index.auto_trash().unwrap(), "auto-fill is on by default");
     index.set_auto_trash(false).unwrap();
     assert!(!index.auto_trash().unwrap());
+    index.set_auto_trash(true).unwrap();
+    assert!(index.auto_trash().unwrap());
 }
 
 #[test]
