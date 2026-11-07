@@ -15,6 +15,6 @@ Include the OMG version (`omg --version`), your OS and filesystem, and the steps
 
 In scope: anything that deletes, moves or reads data outside what the user confirmed; path, link or race escapes; authorization bypass for permanent delete; service code that can change user files; notification or diagnostic output that leaks paths.
 
-In scope on every supported platform (Linux, Windows and macOS): the scanner following a link or crossing a mount it should not, reading file contents, and the npm launcher running a binary that does not match its signed manifest.
+In scope on every supported platform (Linux, Windows and macOS): the scanner following a link or crossing a mount it should not, reading file contents (other than Git's config and references of a repository being checked as an unused clone), and the npm launcher running a binary that does not match its signed manifest.
 
 Out of scope for now: a hostile process running as the same user (OMG does not defend against that) and unsupported filesystems.

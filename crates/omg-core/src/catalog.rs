@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
 /// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
-pub const DISCOVERIES: [&str; 17] = [
+pub const DISCOVERIES: [&str; 18] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -25,12 +25,28 @@ pub const DISCOVERIES: [&str; 17] = [
     "ai_tool_sessions",
     "colima_vm",
     "docker_desktop_vm",
+    "unused_clone",
 ];
 
 /// A `~/Library/Caches` folder the system manages, including one without Apple's usual prefix.
 pub(crate) fn apple_cache(name: &str) -> bool {
     name.starts_with("com.apple.") || name == "GeoServices"
 }
+
+/// What tools write into a clone without it being anyone's work. `build`, `dist` and `coverage` are
+/// left out on purpose: those names can also be tracked folders that someone edited.
+const CLONE_NOISE: [&str; 8] = [
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".git",
+    ".DS_Store",
+    "Thumbs.db",
+];
+/// Timestamps of a checkout and its index can differ by this much without anyone having edited.
+const CLONE_SLACK_NS: i128 = 2_000_000_000;
 
 /// Smallest build output or application cache worth suggesting.
 const SUGGEST_MIN_BYTES: i64 = 50 << 20;
@@ -274,6 +290,7 @@ pub fn parse(payload: &str) -> Result<Catalog> {
             "old_tool_versions",
             "session_history",
             "container_storage",
+            "unused_clones",
         ]
         .contains(&rule.category.as_str())
         {
@@ -514,6 +531,30 @@ impl Index {
             let subtree = self.subtree(&entry.path)?;
             output.extend(assemble(rule, entry, subtree)?);
         }
+        // First, so that folders inside a clone are counted once, in the clone's own estimate.
+        if let Some(rule) = catalog
+            .rules
+            .iter()
+            .filter(applicable)
+            .find(|r| r.discovery == "unused_clone")
+        {
+            for path in self.unused_clones(scan, &root)? {
+                let Some(entry) = self
+                    .db
+                    .query_row(
+                        "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
+                        params![scan, crate::index::split_path(&path).0, crate::index::split_path(&path).1],
+                        crate::index::row_entry,
+                    )
+                    .optional()?
+                else {
+                    continue;
+                };
+                directory_roots.push(entry.path.clone());
+                let subtree = self.subtree(&entry.path)?;
+                output.extend(assemble(rule, entry, subtree)?);
+            }
+        }
         if let Some(rule) = catalog
             .rules
             .iter()
@@ -626,6 +667,66 @@ impl Index {
             .skip(offset)
             .take(limit.min(1000))
             .collect())
+    }
+    /// Git clones untouched for `policy::STALE_DAYS` with nothing local to lose: see
+    /// `policy::pristine_clone`, plus nothing in the working tree changed after the checkout. The
+    /// change time is used because moving or copying a file in keeps its old modification time.
+    fn unused_clones(&self, scan: i64, root: &std::path::Path) -> Result<Vec<Vec<u8>>> {
+        let mut statement = self.db.prepare(
+            "SELECT parent FROM entries WHERE scan_id=? AND kind='directory' AND name=CAST('/.git' AS BLOB) UNION SELECT parent FROM entries WHERE scan_id=? AND kind='directory' AND parent=x'' AND name=CAST('.git' AS BLOB)",
+        )?;
+        let mut repositories: Vec<Vec<u8>> = statement
+            .query_map(params![scan, scan], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        repositories.sort_by_key(|p| p.len());
+        let gaps = self.gaps(scan)?;
+        let cutoff = crate::now() - policy::STALE_DAYS * 86_400;
+        let mut changed = self.db.prepare(
+            "SELECT CAST(parent||name AS BLOB) FROM entries WHERE scan_id=?1 AND parent>=?2 AND parent<?3 AND (parent=?2 OR parent>?4) AND changed_ns>?5",
+        )?;
+        let mut chosen: Vec<Vec<u8>> = Vec::new();
+        for repository in repositories {
+            let hidden = repository
+                .split(|b| *b == b'/')
+                .any(|part| part.first() == Some(&b'.'));
+            if repository.is_empty()
+                || hidden
+                || gaps.covers(&repository)
+                || chosen.iter().any(|c| policy::inside(&repository, c, true))
+            {
+                continue;
+            }
+            let newest = self.subtree(&repository)?.map_or(0, |t| t.newest);
+            if newest <= 0 || newest >= cutoff {
+                continue;
+            }
+            let Some(written) = policy::pristine_clone(&root.join(platform::path(&repository)?))
+            else {
+                continue;
+            };
+            let limit = i64::try_from(written.saturating_add(CLONE_SLACK_NS)).unwrap_or(i64::MAX);
+            let mut upper = repository.clone();
+            upper.push(b'0');
+            let mut prefix = repository.clone();
+            prefix.push(b'/');
+            let mut rows = changed.query(params![scan, repository, upper, prefix, limit])?;
+            let mut edited = false;
+            while let Some(row) = rows.next()? {
+                let path: Vec<u8> = row.get(0)?;
+                let below = &path[repository.len()..];
+                let noise = below
+                    .split(|b| *b == b'/')
+                    .any(|part| CLONE_NOISE.iter().any(|name| name.as_bytes() == part));
+                if !noise {
+                    edited = true;
+                    break;
+                }
+            }
+            if !edited {
+                chosen.push(repository);
+            }
+        }
+        Ok(chosen)
     }
     /// Applications' folders directly in `~/Library/Caches`, which apps must be able to recreate.
     /// Apple's own are left out: the system manages them and they come straight back.
@@ -871,7 +972,7 @@ mod tests {
     #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 17);
+        assert_eq!(parse(payload).unwrap().rules.len(), 18);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());

@@ -392,3 +392,26 @@ compatibility = "inventory-only"
 deprecated = false
 fixtures = ["docker-desktop-positive", "protected"]
 source = "https://docs.docker.com/engine/manage-resources/pruning/"
+
+[[rules]]
+id = "dev.git.unused-clone"
+name = "Git clone unused for 30+ days with nothing local"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "unused_clones"
+tier = "review"
+action = "info"
+discovery = "unused_clone"
+explanation = "A project cloned from a remote and untouched for at least 30 days. Every branch matches the remote, and there are no local commits, staged changes, stashes or files changed since the checkout."
+side_effects = "The whole folder goes, including .git. Clone it again to get it back."
+regeneration = "git clone from its remote, as long as the remote still exists."
+warnings = ["OMG checks file times and Git's references, and does not run Git. Check the remote still exists if the project matters to you."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["pristine-clone-positive", "local-commit-near-miss", "unpushed-branch-near-miss", "edited-file-near-miss", "no-remote-near-miss", "recent-clone-near-miss"]
+source = "https://git-scm.com/docs/git-clone"

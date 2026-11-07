@@ -584,6 +584,7 @@ impl Index {
                 "app_caches",
                 "old_tool_versions",
                 "session_history",
+                "unused_clones",
             ]
             .contains(&finding.rule.category.as_str())
                 || finding.effective_tier == "protected"

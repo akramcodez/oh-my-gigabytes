@@ -1310,3 +1310,159 @@ fn big_app_caches_are_suggested_and_apple_ones_are_not() {
     assert!(caches.join("SomeBrowser/data.bin").exists());
     assert!(caches.join("com.apple.something/data.bin").exists());
 }
+
+fn git(directory: &Path, arguments: &[&str]) {
+    let done = std::process::Command::new("git")
+        .args(["-c", "user.email=t@example.invalid", "-c", "user.name=t"])
+        .args(arguments)
+        .current_dir(directory)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "{arguments:?}: {done:?}");
+}
+
+fn age(path: &Path, past: std::time::SystemTime) {
+    let metadata = path.symlink_metadata().unwrap();
+    if metadata.is_dir() && path.file_name().is_some_and(|n| n == ".git") {
+        fs::File::open(path).unwrap().set_modified(past).unwrap();
+        return;
+    }
+    if metadata.is_dir() {
+        for item in fs::read_dir(path).unwrap() {
+            age(&item.unwrap().path(), past);
+        }
+    }
+    if !metadata.is_symlink() {
+        fs::File::open(path).unwrap().set_modified(past).unwrap();
+    }
+}
+
+/// A real clone of a throwaway repository, its files 60 days old (Git's own index stays newer than
+/// the change times that ageing itself causes, as it is after a real checkout).
+fn old_clone(home: &Path, source: &Path, name: &str) -> std::path::PathBuf {
+    let url = format!("file://{}", source.display());
+    git(home, &["clone", "--quiet", &url, name]);
+    let clone = home.join(name);
+    age(
+        &clone,
+        std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400),
+    );
+    clone
+}
+
+fn clone_source() -> tempfile::TempDir {
+    let source = tempfile::tempdir().unwrap();
+    git(source.path(), &["init", "--quiet", "-b", "main"]);
+    write_bytes(&source.path().join("src/main.rs"), 2000);
+    git(source.path(), &["add", "."]);
+    git(source.path(), &["commit", "--quiet", "-m", "one"]);
+    source
+}
+
+#[test]
+fn only_a_clone_with_nothing_local_to_lose_is_suggested_and_it_deletes_whole() {
+    let (home, state) = setup();
+    let h = home.path();
+    let source = clone_source();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+
+    old_clone(h, source.path(), "untouched");
+    write_bytes(&h.join("untouched/node_modules/pkg/index.js"), 100);
+    age(&h.join("untouched"), old);
+
+    // Every near miss below is a real Git state, and each must stay out of the list.
+    let committed = old_clone(h, source.path(), "committed");
+    write_bytes(&committed.join("new.txt"), 10);
+    git(&committed, &["add", "."]);
+    git(&committed, &["commit", "--quiet", "-m", "local"]);
+    age(&committed, old);
+
+    let staged = old_clone(h, source.path(), "staged");
+    write_bytes(&staged.join("new.txt"), 10);
+    git(&staged, &["add", "."]);
+    age(&staged, old);
+
+    let branch = old_clone(h, source.path(), "branch");
+    git(&branch, &["branch", "local-only"]);
+    age(&branch, old);
+
+    let tagged = old_clone(h, source.path(), "tagged");
+    git(&tagged, &["tag", "local-tag"]);
+    age(&tagged, old);
+
+    let orphan = old_clone(h, source.path(), "orphan");
+    git(&orphan, &["remote", "remove", "origin"]);
+    age(&orphan, old);
+
+    git(
+        h,
+        &[
+            "clone",
+            "--quiet",
+            &format!("file://{}", source.path().display()),
+            "recent",
+        ],
+    );
+
+    fs::create_dir_all(h.join("plain/.git")).unwrap();
+    write_bytes(&h.join("plain/notes.md"), 10);
+    age(&h.join("plain"), old);
+
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert_eq!(suggested(&index), vec![b"untouched".to_vec()]);
+
+    let finding = index
+        .findings_in(100, 0, false, h)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.rule.discovery == "unused_clone")
+        .unwrap();
+    assert_eq!(finding.effective_tier, "review");
+    assert!(
+        finding.reason.contains("uncommitted or unpushed"),
+        "{}",
+        finding.reason
+    );
+
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"untouched")], h)
+        .unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 1, "{report:?}");
+    assert!(!h.join("untouched").exists());
+    for kept in [
+        "committed",
+        "staged",
+        "branch",
+        "tagged",
+        "orphan",
+        "recent",
+        "plain",
+    ] {
+        assert!(h.join(kept).exists(), "{kept}");
+    }
+}
+
+#[test]
+fn a_file_changed_after_the_checkout_keeps_a_clone_out_even_with_an_old_modified_time() {
+    let (home, state) = setup();
+    let h = home.path();
+    let source = clone_source();
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    let clone = old_clone(h, source.path(), "edited");
+    std::thread::sleep(std::time::Duration::from_millis(2300));
+    // As after `cp -p` or `mv`: a new file that claims to be old. Only its change time gives it away.
+    write_bytes(&clone.join(".env.backup"), 10);
+    age(&clone.join(".env.backup"), old);
+    fs::File::open(&clone).unwrap().set_modified(old).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert!(suggested(&index).is_empty(), "{:?}", suggested(&index));
+}

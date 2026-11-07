@@ -1,6 +1,6 @@
 # oh-my-gigabytes
 
-OMG (Oh My Gigabytes) is a local-first storage analyzer for developers, with a thin npm launcher. This is a development-preview beta (`0.1.0-beta.1`). Scanning reads metadata only and never uploads anything. The binaries can also permanently delete files you pick, only after you confirm an exact list, and that feature is unqualified (see the repository README, "Deleting files").
+OMG (Oh My Gigabytes) is a local-first storage analyzer for developers, with a thin npm launcher. This is a development-preview beta (`0.1.0-beta.1`). Scanning reads metadata (plus Git's own config and branch references, to judge old clones) and never uploads anything. The binaries can also permanently delete files you pick, only after you confirm an exact list, and that feature is unqualified (see the repository README, "Deleting files").
 
 The launcher verifies the signed target/version/capability manifest and native SHA-256 digest **on every launch**, then passes arguments/stdin/stdout/stderr to the packaged `omg` binary without a shell. It does not search PATH for a replacement executable. There is no postinstall script, network downloader, telemetry, automatic service registration or end-user Rust compilation. Missing optional dependencies produce a useful error and signed offline-bundle guidance.
 

@@ -136,6 +136,136 @@ pub fn repository_status(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) 
     }
 }
 
+/// When the repository at `repo` is an untouched clone, the time its index was written (nanoseconds
+/// since the epoch); `None` when that cannot be shown. Reads only Git's own config and references,
+/// bounded and without following links, and never runs Git. Fetched objects stay in packs, so any
+/// loose object means something was committed, staged or pulled here. The caller still has to
+/// compare the working tree with the returned time.
+pub fn pristine_clone(repo: &Path) -> Option<i128> {
+    let git = repo.join(".git");
+    if !git.symlink_metadata().ok()?.is_dir() {
+        return None;
+    }
+    // In-progress work, or local state these checks cannot see into.
+    for name in [
+        "MERGE_HEAD",
+        "CHERRY_PICK_HEAD",
+        "REVERT_HEAD",
+        "BISECT_LOG",
+        "rebase-merge",
+        "rebase-apply",
+        "modules",
+        "worktrees",
+        "lfs",
+        "reftable",
+        "logs/refs/stash",
+    ] {
+        if git.join(name).symlink_metadata().is_ok() {
+            return None;
+        }
+    }
+    for object in std::fs::read_dir(git.join("objects")).ok()? {
+        let name = object.ok()?.file_name();
+        if name != "info" && name != "pack" {
+            return None;
+        }
+    }
+    let config = read_small(&git.join("config"))?;
+    let mut in_remote = false;
+    let mut has_remote = false;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_remote = line.starts_with("[remote ");
+        } else if in_remote && line.starts_with("url") && line.contains('=') {
+            has_remote = true;
+        }
+    }
+    if !has_remote {
+        return None;
+    }
+    let mut refs: HashMap<String, String> = HashMap::new();
+    if git.join("packed-refs").symlink_metadata().is_ok() {
+        for line in read_small(&git.join("packed-refs"))?.lines() {
+            if line.starts_with('#') || line.starts_with('^') {
+                continue;
+            }
+            let (hash, name) = line.trim().split_once(' ')?;
+            refs.insert(name.to_string(), hash.to_string());
+        }
+    }
+    let mut loose = vec![(git.join("refs"), "refs".to_string())];
+    let mut visited = 0;
+    while let Some((directory, prefix)) = loose.pop() {
+        for item in std::fs::read_dir(directory).ok()? {
+            let item = item.ok()?;
+            visited += 1;
+            if visited > 10_000 {
+                return None;
+            }
+            let name = format!("{prefix}/{}", item.file_name().into_string().ok()?);
+            let kind = item.file_type().ok()?;
+            if kind.is_dir() {
+                loose.push((item.path(), name));
+            } else if kind.is_file() {
+                let value = read_small(&item.path())?;
+                let value = value.trim();
+                // A loose tag was made here: a clone keeps fetched tags in packed-refs.
+                if name.starts_with("refs/tags/") {
+                    return None;
+                }
+                if !value.starts_with("ref:") {
+                    refs.insert(name, value.to_string());
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+    let on_remote = |branch: &str, hash: &str| {
+        refs.iter().any(|(name, value)| {
+            value == hash
+                && name
+                    .strip_prefix("refs/remotes/")
+                    .and_then(|rest| rest.split_once('/'))
+                    .is_some_and(|(_, remote_branch)| remote_branch == branch)
+        })
+    };
+    for (name, hash) in &refs {
+        if !(hash.len() == 40 || hash.len() == 64) || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        if let Some(branch) = name.strip_prefix("refs/heads/") {
+            if !on_remote(branch, hash) {
+                return None;
+            }
+        } else if !name.starts_with("refs/remotes/") && !name.starts_with("refs/tags/") {
+            return None;
+        }
+    }
+    let head = read_small(&git.join("HEAD"))?;
+    let head = head.trim();
+    match head.strip_prefix("ref:") {
+        Some(target) => {
+            refs.get(target.trim())?;
+        }
+        None => {
+            refs.iter()
+                .find(|(name, hash)| name.starts_with("refs/remotes/") && *hash == head)?;
+        }
+    }
+    let written = git.join("index").symlink_metadata().ok()?.modified().ok()?;
+    let since = written.duration_since(std::time::UNIX_EPOCH).ok()?;
+    i128::try_from(since.as_nanos()).ok()
+}
+
+fn read_small(path: &Path) -> Option<String> {
+    let metadata = path.symlink_metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > 4 << 20 {
+        return None;
+    }
+    std::fs::read_to_string(path).ok()
+}
+
 /// Independent policy: catalog tier/action is never cleanup authority.
 pub fn protection(root: &Path, entry: &Entry) -> Option<String> {
     protection_with(root, entry, &mut RepositoryMemo::default())

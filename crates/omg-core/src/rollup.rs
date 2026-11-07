@@ -433,7 +433,7 @@ impl Index {
         Ok(Some(totals))
     }
     /// Paths the scan could not read (stored up to `MAX_ISSUES`).
-    fn gaps(&self, id: i64) -> Result<Gaps> {
+    pub(crate) fn gaps(&self, id: i64) -> Result<Gaps> {
         let paths: Vec<Vec<u8>> = self
             .db
             .prepare_cached("SELECT path FROM issues WHERE scan_id=?")?
@@ -486,13 +486,13 @@ impl Index {
     }
 }
 
-struct Gaps {
+pub(crate) struct Gaps {
     paths: Vec<Vec<u8>>,
     overflow: bool,
 }
 impl Gaps {
     /// Whether a gap lies at or below `dir` (`""` is the scan root, which holds every gap).
-    fn covers(&self, dir: &[u8]) -> bool {
+    pub(crate) fn covers(&self, dir: &[u8]) -> bool {
         self.overflow
             || self.paths.iter().any(|gap| {
                 dir.is_empty()
