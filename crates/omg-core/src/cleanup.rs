@@ -198,6 +198,15 @@ pub struct Verdict {
 }
 
 fn is_cache_root(absolute: &Path, home: &Path) -> bool {
+    if cfg!(target_os = "macos")
+        && let Ok(below) = absolute.strip_prefix(home.join("Library/Caches"))
+        && below
+            .components()
+            .next()
+            .is_some_and(|first| !crate::catalog::apple_cache(&first.as_os_str().to_string_lossy()))
+    {
+        return true;
+    }
     crate::catalog::DISCOVERIES
         .iter()
         .filter_map(|kind| crate::catalog::discovery_root(kind, home))
@@ -267,6 +276,16 @@ fn remove_target(
     kind: Kind,
 ) -> std::result::Result<(u64, u64, bool), String> {
     windows::delete_one(root, root_path, home, item, kind)
+}
+
+/// A folder whose name alone proves nothing, next to the file that shows a tool owns it.
+fn proven_build_output(absolute: &Path) -> bool {
+    let beside = |file: &str| absolute.parent().is_some_and(|p| p.join(file).is_file());
+    match absolute.file_name().map(|n| n.to_string_lossy()).as_deref() {
+        Some("target") => beside("Cargo.toml"),
+        Some(".venv" | "venv") => absolute.join("pyvenv.cfg").is_file(),
+        _ => false,
+    }
 }
 
 /// Folders macOS and its apps expect to exist. What is inside them is judged on its own.
@@ -346,7 +365,7 @@ pub fn verdict(
             };
         }
     };
-    let cache = is_cache_root(&absolute, home);
+    let cache = is_cache_root(&absolute, home) || proven_build_output(&absolute);
     let verdict = match policy::repository_status(root, entry, memo) {
         policy::RepoStatus::Outside => {
             let regenerable = absolute.file_name().is_some_and(|n| {
@@ -557,8 +576,16 @@ impl Index {
         let mut listed = 0;
         let mut suggested: Vec<Vec<u8>> = Vec::new();
         for finding in self.findings_in(1000, 0, false, home)? {
-            // Regenerable things only: tool caches and dependency folders of stale projects.
-            if !["package_caches", "build_artifacts"].contains(&finding.rule.category.as_str())
+            // What its owner can recreate or does not need; never large files. Listing is not
+            // deleting: every item still goes through a confirmed plan.
+            if ![
+                "package_caches",
+                "build_artifacts",
+                "app_caches",
+                "old_tool_versions",
+                "session_history",
+            ]
+            .contains(&finding.rule.category.as_str())
                 || finding.effective_tier == "protected"
             {
                 continue;

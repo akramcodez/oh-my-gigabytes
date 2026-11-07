@@ -1111,3 +1111,202 @@ fn macos_standard_folders_and_app_bundles_are_refused_and_icloud_folders_warn() 
     assert!(matches!(gate_of(b"projects/notes.txt"), Gate::Allowed));
     assert!(matches!(gate_of(b"Library/Caches/tool"), Gate::Allowed));
 }
+
+fn write_bytes(path: &Path, bytes: usize) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, vec![7u8; bytes]).unwrap();
+}
+
+fn suggested(index: &Index) -> Vec<Vec<u8>> {
+    index
+        .marked()
+        .unwrap()
+        .into_iter()
+        .map(|m| m.path)
+        .collect()
+}
+
+#[test]
+fn big_project_output_is_suggested_with_proof_of_its_owner_and_a_size_floor() {
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(&h.join("rusty/Cargo.toml"), 10);
+    write_bytes(&h.join("rusty/target/debug/app"), 60 << 20);
+    // Inside build output, names that would stop an ordinary folder do not stop this one.
+    write_bytes(&h.join("rusty/target/debug/incremental/cache.sqlite"), 10);
+    write_bytes(&h.join("small/Cargo.toml"), 10);
+    write_bytes(&h.join("small/target/debug/app"), 1 << 20);
+    write_bytes(&h.join("photos/target/holiday.jpg"), 60 << 20);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert_eq!(suggested(&index), vec![b"rusty/target".to_vec()]);
+
+    let id = id_of(&index, b"rusty/target");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 1, "{report:?}");
+    assert!(!h.join("rusty/target").exists());
+    assert!(h.join("rusty/Cargo.toml").exists());
+    assert!(h.join("photos/target/holiday.jpg").exists());
+}
+
+#[test]
+fn container_disks_are_shown_never_suggested_and_cannot_be_deleted() {
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(&h.join(".colima/_lima/_disks/colima/datadisk"), 120 << 20);
+    write_bytes(&h.join(".colima/default/colima.yaml"), 10);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert!(suggested(&index).is_empty());
+    let findings = index.findings_in(100, 0, false, h).unwrap();
+    let vm: Vec<_> = findings
+        .iter()
+        .filter(|f| f.rule.discovery == "colima_vm")
+        .collect();
+    let [vm] = vm.as_slice() else {
+        panic!("{findings:?}");
+    };
+    assert_eq!(vm.effective_tier, "protected");
+    assert!(vm.rule.explanation.contains("docker system prune"));
+    assert!(
+        findings.iter().all(|f| f.rule.discovery != "large_file"),
+        "the disk is explained by the folder's finding"
+    );
+    for path in [
+        b".colima".as_slice(),
+        b".colima/_lima/_disks/colima/datadisk",
+    ] {
+        assert!(index.mark(path, 1, h).is_err());
+    }
+    assert!(h.join(".colima/_lima/_disks/colima/datadisk").exists());
+}
+
+#[test]
+fn old_tool_versions_are_suggested_but_never_the_newest_or_the_one_in_use() {
+    let (home, state) = setup();
+    let h = home.path();
+    let versions = h.join(".local/share/claude/versions");
+    for version in ["1.2.3", "1.2.4", "1.2.10", "1.10.0", "notes"] {
+        write_bytes(&versions.join(version), 100);
+    }
+    fs::create_dir_all(h.join(".local/bin")).unwrap();
+    symlink(versions.join("1.2.3"), h.join(".local/bin/claude")).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut listed = suggested(&index);
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![
+            b".local/share/claude/versions/1.2.10".to_vec(),
+            b".local/share/claude/versions/1.2.4".to_vec(),
+        ],
+        "numbers compare as numbers, so 1.10.0 is the newest"
+    );
+}
+
+#[test]
+fn when_the_newest_tool_version_is_the_one_in_use_only_it_is_kept() {
+    let (home, state) = setup();
+    let h = home.path();
+    let versions = h.join(".local/share/claude/versions");
+    for version in ["2.0.1", "2.0.2", "2.0.3"] {
+        write_bytes(&versions.join(version), 100);
+    }
+    fs::create_dir_all(h.join(".local/bin")).unwrap();
+    symlink(versions.join("2.0.3"), h.join(".local/bin/claude")).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut listed = suggested(&index);
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![
+            b".local/share/claude/versions/2.0.1".to_vec(),
+            b".local/share/claude/versions/2.0.2".to_vec(),
+        ]
+    );
+}
+
+#[test]
+fn only_old_session_transcripts_are_suggested_and_memory_never() {
+    let (home, state) = setup();
+    let h = home.path();
+    let project = h.join(".claude/projects/some-project");
+    for file in [
+        "old.jsonl",
+        "new.jsonl",
+        "memory/MEMORY.md",
+        "memory/old.jsonl",
+        "notes.md",
+    ] {
+        write_bytes(&project.join(file), 2 << 20);
+    }
+    write_bytes(&project.join("tiny.jsonl"), 100);
+    let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 86_400);
+    for file in [
+        "old.jsonl",
+        "memory/MEMORY.md",
+        "memory/old.jsonl",
+        "notes.md",
+        "tiny.jsonl",
+    ] {
+        fs::File::options()
+            .write(true)
+            .open(project.join(file))
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert_eq!(
+        suggested(&index),
+        vec![b".claude/projects/some-project/old.jsonl".to_vec()]
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn big_app_caches_are_suggested_and_apple_ones_are_not() {
+    let (home, state) = setup();
+    let h = home.path();
+    let caches = h.join("Library/Caches");
+    write_bytes(&caches.join("SomeBrowser/data.bin"), 60 << 20);
+    write_bytes(&caches.join("com.apple.something/data.bin"), 60 << 20);
+    write_bytes(&caches.join("GeoServices/data.bin"), 60 << 20);
+    write_bytes(&caches.join("TinyApp/data.bin"), 1 << 20);
+    write_bytes(&caches.join("Updater/New.app/Contents/x"), 60 << 20);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut listed = suggested(&index);
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![
+            b"Library/Caches/SomeBrowser".to_vec(),
+            b"Library/Caches/Updater".to_vec(),
+        ]
+    );
+    let id = id_of(&index, b"Library/Caches/Updater");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(
+        report.deleted.len(),
+        1,
+        "an update waiting in a cache: {report:?}"
+    );
+    assert!(caches.join("SomeBrowser/data.bin").exists());
+    assert!(caches.join("com.apple.something/data.bin").exists());
+}

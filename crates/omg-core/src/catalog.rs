@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
 /// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
-pub const DISCOVERIES: [&str; 11] = [
+pub const DISCOVERIES: [&str; 17] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -19,7 +19,25 @@ pub const DISCOVERIES: [&str; 11] = [
     "homebrew_cache",
     "stale_dependencies",
     "large_file",
+    "project_build_output",
+    "app_caches",
+    "ai_tool_old_versions",
+    "ai_tool_sessions",
+    "colima_vm",
+    "docker_desktop_vm",
 ];
+
+/// A `~/Library/Caches` folder the system manages, including one without Apple's usual prefix.
+pub(crate) fn apple_cache(name: &str) -> bool {
+    name.starts_with("com.apple.") || name == "GeoServices"
+}
+
+/// Smallest build output or application cache worth suggesting.
+const SUGGEST_MIN_BYTES: i64 = 50 << 20;
+/// A session transcript this recent may still be open or about to be resumed.
+const SESSION_MIN_AGE_DAYS: i64 = 7;
+/// Smallest transcript worth suggesting: they cannot be recreated, so tiny ones are not worth it.
+const SESSION_MIN_BYTES: i64 = 1 << 20;
 
 /// Fixed default location of a directory-root discovery, honouring the tool's own absolute
 /// environment override where it has one.
@@ -59,6 +77,8 @@ fn macos_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path:
             .unwrap_or_else(|| home.join(".gradle"))
             .join("caches"),
         "homebrew_cache" => env("HOMEBREW_CACHE").unwrap_or_else(|| caches.join("Homebrew")),
+        "colima_vm" => home.join(".colima"),
+        "docker_desktop_vm" => home.join("Library/Containers/com.docker.docker"),
         _ => return None,
     })
 }
@@ -111,6 +131,7 @@ fn unix_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::
         "gradle_caches" => env("GRADLE_USER_HOME")
             .unwrap_or_else(|| home.join(".gradle"))
             .join("caches"),
+        "colima_vm" => home.join(".colima"),
         _ => return None,
     })
 }
@@ -245,7 +266,17 @@ pub fn parse(payload: &str) -> Result<Catalog> {
         {
             bail!("unsupported evidence/policy predicate");
         }
-        if !["package_caches", "build_artifacts", "large_files"].contains(&rule.category.as_str()) {
+        if ![
+            "package_caches",
+            "build_artifacts",
+            "large_files",
+            "app_caches",
+            "old_tool_versions",
+            "session_history",
+            "container_storage",
+        ]
+        .contains(&rule.category.as_str())
+        {
             bail!("unsupported category");
         }
         for text in [
@@ -512,6 +543,57 @@ impl Index {
                 output.extend(assemble(rule, entry, subtree)?);
             }
         }
+        let mut found: Vec<(&str, Vec<Vec<u8>>)> = vec![
+            (
+                "project_build_output",
+                self.project_outputs(scan, SUGGEST_MIN_BYTES, None)?,
+            ),
+            ("ai_tool_old_versions", {
+                self.ai_tool_old_versions(scan, &root, &home)?
+            }),
+            ("ai_tool_sessions", {
+                self.ai_tool_sessions(scan, &root, &home)?
+            }),
+        ];
+        if cfg!(target_os = "macos") {
+            found.push(("app_caches", self.app_caches(scan, &root, &home)?));
+        }
+        for (discovery, paths) in found {
+            let Some(rule) = catalog
+                .rules
+                .iter()
+                .filter(applicable)
+                .find(|r| r.discovery == discovery)
+            else {
+                continue;
+            };
+            for path in paths {
+                if directory_roots
+                    .iter()
+                    .any(|d| policy::inside(&path, d, true))
+                {
+                    continue;
+                }
+                let Some(entry) = self
+                    .db
+                    .query_row(
+                        "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
+                        params![scan, crate::index::split_path(&path).0, crate::index::split_path(&path).1],
+                        crate::index::row_entry,
+                    )
+                    .optional()?
+                else {
+                    continue;
+                };
+                directory_roots.push(entry.path.clone());
+                let subtree = if entry.kind == "directory" {
+                    self.subtree(&entry.path)?
+                } else {
+                    None
+                };
+                output.extend(assemble(rule, entry, subtree)?);
+            }
+        }
         if let Some(rule) = catalog
             .rules
             .iter()
@@ -545,15 +627,130 @@ impl Index {
             .take(limit.min(1000))
             .collect())
     }
-    /// Top-level dependency folders (`node_modules` next to `package.json`, `target` next to
-    /// `Cargo.toml`, Python virtual environments) of projects untouched for `policy::STALE_DAYS`,
-    /// outside hidden (tool/application) folders.
-    fn stale_dependencies(&self, scan: i64) -> Result<Vec<Vec<u8>>> {
+    /// Applications' folders directly in `~/Library/Caches`, which apps must be able to recreate.
+    /// Apple's own are left out: the system manages them and they come straight back.
+    fn app_caches(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let Some(caches) = crate::rollup::relative_raw(root, &home.join("Library/Caches")) else {
+            return Ok(vec![]);
+        };
         let mut statement = self.db.prepare(
-            "SELECT path FROM dir_totals WHERE scan_id=? AND allocated>=1048576 AND path<>x''",
+            "SELECT path FROM dir_totals WHERE scan_id=? AND parent=? AND allocated>=? AND path<>x''",
+        )?;
+        let rows = statement.query_map(params![scan, caches, SUGGEST_MIN_BYTES], |r| {
+            r.get::<_, Vec<u8>>(0)
+        })?;
+        let mut out = Vec::new();
+        for path in rows {
+            let path = path?;
+            let name = crate::index::split_path(&path).1;
+            if !apple_cache(&String::from_utf8_lossy(
+                name.strip_prefix(b"/").unwrap_or(name),
+            )) {
+                out.push(path);
+            }
+        }
+        Ok(out)
+    }
+    /// Installed versions of the AI coding tool other than the newest and the one its launcher
+    /// points at. An unreadable launcher only means the newest is the one kept.
+    fn ai_tool_old_versions(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let directory = home.join(".local/share/claude/versions");
+        let Some(parent) = crate::rollup::relative_raw(root, &directory) else {
+            return Ok(vec![]);
+        };
+        let in_use = std::fs::read_link(home.join(".local/bin/claude")).ok();
+        let mut statement = self.db.prepare(
+            "SELECT CAST(parent||name AS BLOB) FROM entries WHERE scan_id=? AND parent=?",
+        )?;
+        let rows = statement.query_map(params![scan, parent], |r| r.get::<_, Vec<u8>>(0))?;
+        let mut versions: Vec<(Vec<u64>, bool, Vec<u8>)> = Vec::new();
+        for path in rows {
+            let path = path?;
+            let name = crate::index::split_path(&path).1;
+            let name =
+                String::from_utf8_lossy(name.strip_prefix(b"/").unwrap_or(name)).into_owned();
+            // Only names that are plainly a version: anything else is not ours to judge.
+            let parts: Option<Vec<u64>> = name.split('.').map(|p| p.parse().ok()).collect();
+            let Some(parts) = parts else { continue };
+            let used = in_use.as_ref().is_some_and(|target| {
+                target
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy() == name)
+            });
+            versions.push((parts, used, path));
+        }
+        versions.sort();
+        versions.pop();
+        Ok(versions
+            .into_iter()
+            .filter(|(_, used, _)| !used)
+            .map(|(_, _, path)| path)
+            .collect())
+    }
+    /// Old session transcripts of the AI coding tool: `projects/<project>/<session>.jsonl`, exactly
+    /// that depth, so memory and settings beside or below them are never included.
+    fn ai_tool_sessions(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let Some(projects) = crate::rollup::relative_raw(root, &home.join(".claude/projects"))
+        else {
+            return Ok(vec![]);
+        };
+        let mut low = projects.clone();
+        low.push(b'/');
+        let mut high = projects.clone();
+        high.push(b'0');
+        let cutoff = (crate::now() - SESSION_MIN_AGE_DAYS * 86_400).saturating_mul(1_000_000_000);
+        let mut statement = self.db.prepare(
+            "SELECT parent,name FROM entries WHERE scan_id=? AND parent>? AND parent<? AND kind='file' AND excluded IS NULL AND allocated>=? AND modified_ns<?",
+        )?;
+        let rows = statement
+            .query_map(params![scan, low, high, SESSION_MIN_BYTES, cutoff], |r| {
+                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+            })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (parent, name) = row?;
+            let direct = !parent[projects.len() + 1..].contains(&b'/');
+            if direct && name.ends_with(b".jsonl") {
+                let mut path = parent;
+                path.extend_from_slice(&name);
+                out.push(path);
+            }
+        }
+        Ok(out)
+    }
+    /// Top-level dependency folders (`node_modules` next to `package.json`, `target` next to
+    /// `Cargo.toml`, Python virtual environments) outside hidden (tool/application) folders.
+    fn stale_dependencies(&self, scan: i64) -> Result<Vec<Vec<u8>>> {
+        let cutoff = crate::now() - policy::STALE_DAYS * 86_400;
+        self.project_outputs(scan, 1 << 20, Some(cutoff))
+    }
+    /// The same folders at least `min_bytes` large, and untouched since `untouched_since` if given.
+    fn project_outputs(
+        &self,
+        scan: i64,
+        min_bytes: i64,
+        untouched_since: Option<i64>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let mut statement = self.db.prepare(
+            "SELECT path FROM dir_totals WHERE scan_id=? AND allocated>=? AND path<>x''",
         )?;
         let mut candidates: Vec<Vec<u8>> = statement
-            .query_map([scan], |r| r.get(0))?
+            .query_map(params![scan, min_bytes], |r| r.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         candidates.sort_by_key(|p| p.len());
         let exists = |path: Vec<u8>| -> Result<bool> {
@@ -571,7 +768,6 @@ impl Index {
                 .optional()?
                 .is_some())
         };
-        let cutoff = crate::now() - policy::STALE_DAYS * 86_400;
         let mut chosen: Vec<Vec<u8>> = Vec::new();
         for path in candidates {
             let (parent, name) = match path.iter().rposition(|b| *b == b'/') {
@@ -601,6 +797,10 @@ impl Index {
             if !evidence || hidden || chosen.iter().any(|c| policy::inside(&path, c, true)) {
                 continue;
             }
+            let Some(cutoff) = untouched_since else {
+                chosen.push(path);
+                continue;
+            };
             let newest = self.subtree(&parent)?.map_or(0, |t| t.newest);
             if newest > 0 && newest < cutoff {
                 chosen.push(path);
@@ -671,7 +871,7 @@ mod tests {
     #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 11);
+        assert_eq!(parse(payload).unwrap().rules.len(), 17);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());

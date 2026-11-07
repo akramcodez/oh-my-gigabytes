@@ -334,7 +334,7 @@ fn run() -> Result<()> {
             if !no_suggest && index.auto_trash()? {
                 let listed = index.suggest(&platform::home()?)?;
                 eprintln!(
-                    "omg: {listed} cache folder(s) are listed in OMG Trash (nothing deleted; review with `omg trash`)"
+                    "omg: {listed} item(s) are suggested in OMG Trash (nothing deleted; review with `omg trash`)"
                 );
             }
         }

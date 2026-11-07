@@ -29,3 +29,18 @@ This milestone can support read-only review work. It does not satisfy the full t
 ## Directory-scoped findings (added after Phase 5)
 
 Directory-root rules (`npm_content_cache`, `pip_cache`, `uv_cache`) now yield **one finding per cache root directory**, resolved directly rather than by paging the largest entries. The estimate is the deduplicated subtree total; a directory whose subtree contains any protected, excluded or uncertain entry (or that policy itself denies, including anything inside a Git repository) is `protected`. `large_file` findings come from an indexed query and skip files inside a directory finding, so estimates are not double counted; the dry-run planner also drops targets nested inside another selected target. Catalog tiers and actions are unchanged (inventory only, no cleanup). This closes the "deduplicate candidate targets/estimates" checklist item for the current rule set; real tool/version qualification of the rules is still pending.
+
+## More suggestions from a scan (2026-11-07)
+
+Requested by the owner after reviewing what took space on the development Mac. New discoveries, each a fixed kind in `catalog::DISCOVERIES`: `project_build_output`, `app_caches`, `ai_tool_old_versions`, `ai_tool_sessions`, `colima_vm`, `docker_desktop_vm`. The first four feed `Index::suggest`; listing in OMG Trash authorizes nothing, and every item still goes through a confirmed plan. Tier and action remain `review` or `info`, `action = "info"`.
+
+Decisions:
+
+- Build output needs proof: `target` beside `Cargo.toml`, `node_modules` beside `package.json`, a virtualenv with `pyvenv.cfg`. A folder merely called `target` is not suggested and stays an ordinary folder at deletion.
+- Session transcripts cannot be recreated, so they carry a warning, need 7 days of age and 1 MB, and only `projects/<project>/*.jsonl` matches, never anything deeper such as memory.
+- Container and virtual machine disks are refused by `policy::hard_protection` (docs/safety.md, "VM/container storage"). Before this change a `.colima` disk could be selected and deleted. The owner asked for these in the suggestions; they are shown as findings with the `docker system prune` route instead, because one disk holds every image, container and volume.
+- `.dmg` files stay protected as disk images, so downloaded installers are not suggested.
+
+Verification on the development Mac (macOS 27.2, Rust 1.95.0): `cargo test --workspace --locked` in both builds, clippy `-D warnings`, the PTY tests and `release.test.js`. New tests in `tests/cleanup.rs` cover proof and size floors, container disks, tool versions and transcripts; these run on Linux and macOS, and the application cache test on macOS only. Read-only on the real index of that Mac: `omg findings` lists the new rows.
+
+Not passed yet: no measured use on Linux or Windows beyond the test suites; session transcripts on a real index (none on that Mac were old enough); Docker Desktop's folder, which was not present on that Mac.
