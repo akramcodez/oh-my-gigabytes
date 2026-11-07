@@ -61,3 +61,29 @@ Measured on one WSL2 machine (release build, 16 cores): synthetic 101 100 entrie
 Folder totals, hard-link attribution, protected-entry counts and the scan-wide unique bytes are now accumulated **while the scan walks** (`rollup::Aggregator`, fed by the writer; the per-entry `policy::hard_protection` verdict is computed by the walking workers in parallel). The two post-scan passes over every stored row are gone; `rollup::compute` remains as the reference implementation and a test asserts both produce identical `dir_totals` on a tree with hard links, a symlink, `.git` and database names. The changed-entries comparison is skipped (reported as `None`, "not compared") when the previous index exceeds 300 000 entries, and the unused `entry_size` index was dropped (schema 10). `OMG_TIMINGS=1` prints cumulative phase times for diagnostics.
 
 Measured on one WSL2 machine, release build, full WSL root (about 1.56 M entries, 8 walkers): walk 24 s, folder totals 1.5 s, pruning 4 s (bounded), **31 s end to end** (previously about 120-160 s; the first run after the migration took 47 s because it dropped the index). 16 walkers gave no improvement (33 s), so the default cap stays at 8. Peak RSS about 164 MB. Single-machine numbers; not a representative-machine benchmark.
+
+## Index size (2026-11-07)
+
+The index stored every path twice and a parent copy twice, and its file never shrank: deleted scans left free pages, so after one rescan it stayed about twice the size of its data. Changes:
+
+- Schema 12 keys `entries` by `(scan_id, parent, name)` in a `WITHOUT ROWID` table, with `path = parent||name`. The `entry_identity` and `entry_parent` indexes and the separate primary-key index are gone. Migration 012 copies only the published scan and then runs one `VACUUM`.
+- New databases use `auto_vacuum=INCREMENTAL`; `Index::prune_stale_locked` hands free pages back in the same bounded slices as pruning, so it runs after every scan, at interface launch and in `omg prune`. `journal_size_limit` caps a kept write-ahead log at 32 MiB.
+- The latest unpublished scan keeps its record and issues but no longer its entries and folder totals, which nothing read.
+- `omg status` reports `index_bytes`. The release profile uses fat LTO, one codegen unit and strip.
+
+Environment: Apple M5 Pro Mac, macOS 27.2, Rust 1.95.0, analysis-only release build. Old code is `e6d9d1b`, built from a clean export.
+
+| Measurement | Before | After |
+| --- | --- | --- |
+| `/Applications`, 147,874 entries, after three scans | 150.0 MB | 30.4 MB |
+| Synthetic tree, about 612,000 entries, first scan | 208 MB | 87 MB |
+| Same tree, after three scans | 421 MB | 88 MB |
+| Same tree, scan time (first, then rescans) | 2.77 s, about 3.45 s | 2.31 s, about 3.25 s |
+| Existing 157.3 MB index, migrated on first open | n/a | 27.4 MB in 0.82 s |
+| Release binary, macOS arm64 (gzip) | 4.85 MB (2.20 MB) | 3.76 MB (1.88 MB) |
+
+Entry count and unique totals in `omg status` were identical between the old and new builds on the synthetic tree; `tree` output was identical between a fresh and a migrated index on `/Applications`.
+
+Verification on that Mac: `cargo fmt --check`; clippy `-D warnings` in both builds; `cargo test --workspace --locked` and `--no-default-features` (analysis-only 77 passed, 0 failed, 1 ignored), with `OMG_REQUIRE_DISK_IMAGES=1`; PTY tests 7 run, OK, 5 skipped; `release.test.js` 18 passed, 3 skipped. New tests: exact non-UTF-8 path bytes through the migration, siblings such as `a.b` staying outside a subtree, the file shrinking after pruning, and the latest unpublished scan keeping only its record.
+
+Not passed yet: these query changes in the delete path have run on macOS only (`crates/omg-core/tests/cleanup.rs`, see [macos-evidence.md](macos-evidence.md), "Permanent delete"), not on Linux or Windows; `tests/service.rs` and `tests/windows.rs` do not run on a Mac. A rescan still holds two generations until it publishes, so the peak during a rescan is about twice the final size (keeping the previous valid index requires this; the peak was not measured). Hard-link checks on Windows now sort instead of reading an index, and that cost has not been measured on a Windows profile. No scan above about 612,000 entries was measured, so the pruning budget at larger sizes is unverified.

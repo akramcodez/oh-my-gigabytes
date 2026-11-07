@@ -36,7 +36,7 @@ pub enum Filesystem {
     Btrfs,
     /// XFS (the default on RHEL-family systems). Scanning only; permanent deletion is not offered.
     Xfs,
-    /// macOS APFS. Scanning only.
+    /// macOS APFS. Clones and snapshots mean freed space may be less than shown.
     Apfs,
     /// macOS HFS+ (also called Mac OS Extended). Scanning only.
     Hfs,
@@ -83,17 +83,19 @@ impl Filesystem {
 /// as `DevelopmentUnqualified`, because the owner's home is Btrfs. Btrfs shared extents and
 /// snapshots mean freed space may be less than shown. Unknown filesystems are refused. On Windows
 /// only NTFS is offered: it has stable 128-bit file ids and delete-by-handle. ReFS is untested and
-/// FAT32/exFAT have no stable file ids, so both are refused.
+/// FAT32/exFAT have no stable file ids, so both are refused. On macOS only APFS is offered: it is
+/// the home volume on every supported macOS, and HFS+ and FAT volumes are untested for deletion.
 pub fn permanent_delete(filesystem: Filesystem) -> Support {
     if !crate::PERMANENT_DELETE {
         return Support::Unsupported;
     }
     match filesystem {
-        Filesystem::Ext | Filesystem::Tmpfs | Filesystem::Btrfs | Filesystem::Ntfs => {
-            Support::DevelopmentUnqualified
-        }
+        Filesystem::Ext
+        | Filesystem::Tmpfs
+        | Filesystem::Btrfs
+        | Filesystem::Ntfs
+        | Filesystem::Apfs => Support::DevelopmentUnqualified,
         Filesystem::Xfs
-        | Filesystem::Apfs
         | Filesystem::Hfs
         | Filesystem::Refs
         | Filesystem::Fat
@@ -107,9 +109,9 @@ pub fn os_trash() -> Support {
 }
 
 /// Permanent-delete support of this platform as reported by `omg doctor`, the status JSON and the
-/// release manifest. Cleanup code exists on Linux and Windows; other platforms are unsupported.
+/// release manifest. Cleanup code exists on Linux, macOS and Windows; others are unsupported.
 pub fn platform_permanent_delete() -> Support {
-    if crate::PERMANENT_DELETE && cfg!(any(target_os = "linux", windows)) {
+    if crate::PERMANENT_DELETE && cfg!(any(target_os = "linux", target_os = "macos", windows)) {
         Support::DevelopmentUnqualified
     } else {
         Support::Unsupported

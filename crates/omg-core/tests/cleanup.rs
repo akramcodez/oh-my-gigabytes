@@ -1,4 +1,7 @@
-#![cfg(all(target_os = "linux", feature = "permanent-delete"))]
+#![cfg(all(
+    any(target_os = "linux", target_os = "macos"),
+    feature = "permanent-delete"
+))]
 use omg_core::{Index, ScanOptions, cleanup::Gate, scanner};
 use std::{
     fs,
@@ -340,6 +343,7 @@ fn stale_project_dependencies_are_suggested_but_tool_installs_are_not() {
 /// Capability refusal is enforced in the backend: a scan root whose filesystem is not an accepted
 /// profile (here procfs) refuses both plan creation and permanent deletion, and neither writes an
 /// operation record. The plan is built first, so only the backend check can stop the deletion.
+#[cfg(target_os = "linux")]
 #[test]
 fn unsupported_root_refuses_plan_and_delete_with_zero_mutations() {
     let (home, state) = setup();
@@ -1008,4 +1012,102 @@ fn a_cache_without_protected_items_is_still_one_whole_item() {
     let around = index.prepare_delete_keeping_protected(&[id], h).unwrap();
     assert_eq!(around.items.len(), 1);
     assert_eq!(around.items[0].id, id);
+}
+
+#[cfg(target_os = "macos")]
+fn set_flags(path: &Path, flags: &str) {
+    let done = std::process::Command::new("chflags")
+        .arg(flags)
+        .arg(path)
+        .status()
+        .unwrap();
+    assert!(done.success());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_locked_item_stops_the_whole_folder_before_anything_is_removed() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("stuff")).unwrap();
+    fs::write(h.join("stuff/first.txt"), b"keep").unwrap();
+    fs::write(h.join("stuff/locked.txt"), b"keep").unwrap();
+    fs::write(h.join("alone.txt"), b"keep").unwrap();
+    set_flags(&h.join("stuff/locked.txt"), "uchg");
+    set_flags(&h.join("alone.txt"), "uchg");
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"stuff", 7, h).unwrap();
+    index.mark(b"alone.txt", 7, h).unwrap();
+    let ids = [id_of(&index, b"stuff"), id_of(&index, b"alone.txt")];
+    let plan = index.prepare_delete(&ids, h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    set_flags(&h.join("stuff/locked.txt"), "nouchg");
+    set_flags(&h.join("alone.txt"), "nouchg");
+    assert!(report.deleted.is_empty(), "{report:?}");
+    assert_eq!(report.removed_entries, 0, "{report:?}");
+    assert_eq!(report.skipped.len(), 2, "{report:?}");
+    assert!(report.skipped.iter().all(|(_, why)| why.contains("locked")));
+    assert!(h.join("stuff/first.txt").exists());
+    assert!(h.join("stuff/locked.txt").exists());
+    assert!(h.join("alone.txt").exists());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_standard_folders_and_app_bundles_are_refused_and_icloud_folders_warn() {
+    let (home, state) = setup();
+    let h = home.path();
+    for folder in [
+        "Desktop",
+        "Documents",
+        "Library/Caches/tool",
+        "Library/Preferences",
+        "Library/Application Support/Tool",
+        "Tools/Thing.app/Contents",
+        "projects",
+    ] {
+        fs::create_dir_all(h.join(folder)).unwrap();
+    }
+    for file in [
+        "Desktop/notes.txt",
+        "Documents/report.txt",
+        "Tools/Thing.app/Contents/Info.plist",
+        "projects/notes.txt",
+    ] {
+        fs::write(h.join(file), b"x").unwrap();
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    let entries = index.entries(1000, 0).unwrap();
+    let gate_of = |path: &[u8]| {
+        let entry = entries.iter().find(|e| e.path == path).unwrap();
+        omg_core::cleanup::gate(h, h, entry)
+    };
+    for path in [
+        b"Desktop".as_slice(),
+        b"Documents",
+        b"Library",
+        b"Library/Caches",
+        b"Library/Preferences",
+        b"Library/Application Support",
+        b"Tools/Thing.app",
+        b"Tools/Thing.app/Contents/Info.plist",
+    ] {
+        assert!(
+            matches!(gate_of(path), Gate::Denied(_)),
+            "{}",
+            String::from_utf8_lossy(path)
+        );
+    }
+    for path in [b"Desktop/notes.txt".as_slice(), b"Documents/report.txt"] {
+        let Gate::Warn(text) = gate_of(path) else {
+            panic!("{}", String::from_utf8_lossy(path));
+        };
+        assert!(text.contains("iCloud"), "{text}");
+    }
+    assert!(matches!(gate_of(b"projects/notes.txt"), Gate::Allowed));
+    assert!(matches!(gate_of(b"Library/Caches/tool"), Gate::Allowed));
 }

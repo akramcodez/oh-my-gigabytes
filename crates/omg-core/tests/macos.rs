@@ -44,16 +44,18 @@ fn scan(root: &Path, state: &Path) -> (Index, omg_core::ScanReport) {
 }
 
 #[test]
-fn macos_offers_analysis_but_never_deletion() {
-    assert_eq!(
-        capability::platform_permanent_delete(),
+fn macos_offers_deletion_on_apfs_only() {
+    let offered = if omg_core::PERMANENT_DELETE {
+        capability::Support::DevelopmentUnqualified
+    } else {
         capability::Support::Unsupported
+    };
+    assert_eq!(capability::platform_permanent_delete(), offered);
+    assert_eq!(
+        capability::permanent_delete(capability::Filesystem::Apfs),
+        offered
     );
-    for family in [
-        capability::Filesystem::Apfs,
-        capability::Filesystem::Hfs,
-        capability::Filesystem::Fat,
-    ] {
+    for family in [capability::Filesystem::Hfs, capability::Filesystem::Fat] {
         assert_eq!(
             capability::permanent_delete(family),
             capability::Support::Unsupported
@@ -206,6 +208,35 @@ fn attach(filesystem: &str, tag: &str, mount: &Path, scratch: &Path) -> Option<I
 
 fn images_required() -> bool {
     std::env::var("OMG_REQUIRE_DISK_IMAGES").is_ok_and(|v| v == "1")
+}
+
+#[cfg(feature = "permanent-delete")]
+#[test]
+fn a_home_on_a_volume_other_than_apfs_refuses_delete_and_keeps_the_file() {
+    let scratch = canonical_temp();
+    let state = canonical_temp();
+    let mount = scratch.path().join("mount");
+    let Some(image) = attach("HFS+", "delhfs", &mount, scratch.path()) else {
+        assert!(!images_required(), "hdiutil could not attach an HFS+ image");
+        eprintln!("skipping: hdiutil could not attach an image here");
+        return;
+    };
+    let file = image.mount.join("cache.bin");
+    fs::write(&file, b"keep me").unwrap();
+    let (mut index, report) = scan(&image.mount, state.path());
+    assert_eq!(report.state, "complete", "{report:?}");
+    if index.mark(b"cache.bin", 7, &image.mount).is_ok() {
+        let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+        let id: i64 = db
+            .query_row("SELECT id FROM marked", [], |r| r.get(0))
+            .unwrap();
+        let error = index
+            .prepare_delete(&[id], &image.mount)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("not available"), "{error}");
+    }
+    assert_eq!(fs::read(&file).unwrap(), b"keep me");
 }
 
 #[test]

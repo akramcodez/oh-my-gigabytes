@@ -380,6 +380,7 @@ fn summary_with_marked(path: &[u8]) -> worker::Summary {
             last_successful: Some(1),
             last_report: None,
             entries: 1,
+            index_bytes: 0,
             unique_apparent: 0,
             unique_allocated: 0,
             capacity: None,
@@ -595,7 +596,7 @@ fn a_folder_that_cannot_go_whole_offers_deleting_around_its_protected_items() {
         .unwrap();
     let sent: Vec<Request> = rx.try_iter().collect();
     if !super::delete_available() {
-        // macOS: the build has the feature but the platform cannot delete, so the choice is refused.
+        // The analysis-only build refuses the choice.
         assert!(sent.is_empty(), "{} request(s) sent", sent.len());
         assert_eq!(
             app.state.message,

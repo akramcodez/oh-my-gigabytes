@@ -25,4 +25,6 @@ sha2 = "0.11"
 ed25519-dalek = "3"
 
 [profile.release]
-lto = "thin"
+lto = "fat"
+codegen-units = 1
+strip = true

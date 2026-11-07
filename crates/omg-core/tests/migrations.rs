@@ -6,8 +6,8 @@ use omg_core::Index;
 use rusqlite::Connection;
 use std::fs;
 
-const CURRENT: i64 = 11;
-const MIGRATIONS: [&str; 11] = [
+const CURRENT: i64 = 12;
+const MIGRATIONS: [&str; 12] = [
     include_str!("../../../migrations/001.sql"),
     include_str!("../../../migrations/002.sql"),
     include_str!("../../../migrations/003.sql"),
@@ -19,6 +19,7 @@ const MIGRATIONS: [&str; 11] = [
     include_str!("../../../migrations/009.sql"),
     include_str!("../../../migrations/010.sql"),
     include_str!("../../../migrations/011.sql"),
+    include_str!("../../../migrations/012.sql"),
 ];
 
 fn private_state() -> tempfile::TempDir {
@@ -45,10 +46,15 @@ fn index_at(state: &std::path::Path, version: usize) {
         "INSERT INTO scans(id,root,started,ended,state,mode,capacity,available,sampled)
            VALUES(1,x'2f',1,2,'complete','full',1000000,500000,2);
          INSERT INTO active(singleton,scan_id) VALUES(1,1);
-         INSERT INTO entries(scan_id,path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded)
-           VALUES(1,x'61',x'','file','1:1',100,4096,1,1,1,NULL);
          INSERT INTO settings VALUES('root',x'2f');",
     )
+    .unwrap();
+    // Schema 12 keys entries by (parent, name) instead of the whole path.
+    let path_column = if version < 12 { "path" } else { "name" };
+    db.execute_batch(&format!(
+        "INSERT INTO entries(scan_id,{path_column},parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded)
+           VALUES(1,x'61',x'','file','1:1',100,4096,1,1,1,NULL);"
+    ))
     .unwrap();
     let stored: i64 = db
         .pragma_query_value(None, "user_version", |r| r.get(0))
@@ -92,6 +98,53 @@ fn every_earlier_schema_upgrades_and_keeps_its_data() {
             .unwrap();
         assert_eq!(active, 1, "schema {version} keeps the published scan");
     }
+}
+
+#[test]
+fn compacting_keeps_exact_path_bytes_and_drops_unpublished_rows() {
+    let state = private_state();
+    index_at(state.path(), 11);
+    let db = Connection::open(state.path().join("index.sqlite")).unwrap();
+    // Names that are not valid UTF-8 must survive byte for byte: 2f is the separator, ff is not text.
+    db.execute_batch(
+        "INSERT INTO entries(scan_id,path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded)
+           VALUES(1,x'612f62ff',x'61','file','1:2',1,1,1,1,1,NULL),
+                 (1,x'612fff2f63',x'612fff','file','1:3',1,1,1,1,1,NULL);
+         INSERT INTO scans(id,root,started,state,mode) VALUES(2,x'2f',3,'partial','full');
+         INSERT INTO entries(scan_id,path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded)
+           VALUES(2,x'64',x'','file','1:4',1,1,1,1,1,NULL);",
+    )
+    .unwrap();
+    drop(db);
+    drop(Index::open(state.path()).unwrap());
+
+    let db = Connection::open(state.path().join("index.sqlite")).unwrap();
+    let mut statement = db
+        .prepare("SELECT CAST(parent||name AS BLOB),parent FROM entries WHERE scan_id=1 ORDER BY 1")
+        .unwrap();
+    let rows: Vec<(Vec<u8>, Vec<u8>)> = statement
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (b"a".to_vec(), b"".to_vec()),
+            (b"a/b\xff".to_vec(), b"a".to_vec()),
+            (b"a/\xff/c".to_vec(), b"a/\xff".to_vec()),
+        ]
+    );
+    let unpublished: i64 = db
+        .query_row("SELECT count(*) FROM entries WHERE scan_id=2", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(unpublished, 0);
+    let vacuum: i64 = db
+        .pragma_query_value(None, "auto_vacuum", |r| r.get(0))
+        .unwrap();
+    assert_eq!(vacuum, 2, "an upgraded index can shrink too");
 }
 
 #[test]

@@ -78,7 +78,7 @@ test('a binary for another architecture is not executed during assembly', t => {
   assert.ok(fs.existsSync(path.join(out, 'oh-my-gigabytes-linux-arm64-gnu', 'artifact', 'manifest.json')));
 });
 
-test('a macOS release is analysis only and its analysis claim is checked', t => {
+test('a macOS release declares its own capabilities and they are checked', t => {
   const f = fixture(t);
   const macho = Buffer.alloc(64);
   macho.writeUInt32LE(0xfeedfacf, 0);
@@ -93,7 +93,7 @@ test('a macOS release is analysis only and its analysis claim is checked', t => 
   const { manifest } = verifyArtifact(artifact, trust, expected);
   assert.deepEqual(manifest.capabilities, { analysis: 'development-macos', cleanup: 'disabled', service: 'disabled' });
   // A signed manifest that claims more than macOS offers is rejected.
-  for (const change of [m => { m.capabilities.cleanup = 'development-unqualified'; },
+  for (const change of [m => { m.capabilities.cleanup = 'qualified'; },
     m => { m.capabilities.service = 'development-linux'; }, m => { m.capabilities.analysis = 'development-linux'; }]) {
     resign({ artifact, privateKey: f.privateKey }, change);
     assert.throws(() => verifyArtifact(artifact, trust, expected), /Unsupported advertised capabilities/);
@@ -112,8 +112,8 @@ function headers() {
   };
 }
 
-// What release.yml records: Linux and Windows builds include permanent delete, macOS has none.
-const builtCleanup = target => (target.startsWith('darwin-') ? 'unsupported' : 'development-unqualified');
+// What release.yml records: every release build includes permanent delete.
+const builtCleanup = () => 'development-unqualified';
 
 function ciArtifacts(directory, cleanup = builtCleanup) {
   const artifacts = path.join(directory, 'ci-artifacts');
@@ -139,13 +139,13 @@ test('sign-release signs every target and names them all in the published wrappe
   const out = path.join(f.directory, 'signed');
   const result = signRelease({ artifacts, version: '0.1.0-beta.1', publicKey: f.publicFile, privateKey: f.privateFile, out, skipAttestation: true, checkBinary: false });
   assert.equal(result.targets.length, 4);
-  // Linux and Windows are signed as able to delete; macOS has no delete and is signed as disabled.
+  // Every target is signed as able to delete.
   const claimed = target => JSON.parse(tarText(path.join(out, 'tarballs', `oh-my-gigabytes-${target}-0.1.0-beta.1.tgz`), 'package/artifact/manifest.json')).capabilities.cleanup;
   assert.deepEqual(Object.fromEntries(result.targets.map(target => [target, claimed(target)])), {
     'linux-x64-gnu': 'development-unqualified', 'linux-arm64-gnu': 'development-unqualified',
-    'win32-x64': 'development-unqualified', 'darwin-arm64': 'disabled',
+    'win32-x64': 'development-unqualified', 'darwin-arm64': 'development-unqualified',
   });
-  assert.deepEqual(result.variants, { 'linux-x64-gnu': 'full', 'linux-arm64-gnu': 'full', 'win32-x64': 'full', 'darwin-arm64': 'analysis-only' });
+  assert.deepEqual(result.variants, { 'linux-x64-gnu': 'full', 'linux-arm64-gnu': 'full', 'win32-x64': 'full', 'darwin-arm64': 'full' });
   const wrapper = JSON.parse(tarText(path.join(out, 'tarballs/oh-my-gigabytes-0.1.0-beta.1.tgz'), 'package/package.json'));
   assert.deepEqual(Object.keys(wrapper.optionalDependencies).sort(), Object.keys(headers()).map(target => `oh-my-gigabytes-${target}`).sort());
   assert.ok(Object.values(wrapper.optionalDependencies).every(version => version === '0.1.0-beta.1'));

@@ -49,7 +49,7 @@ fn stale_generation(state: &std::path::Path, rows: u32) -> rusqlite::Connection 
     db.execute_batch(&format!(
         "INSERT INTO scans(id,root,started,ended,state,mode) VALUES (1,x'2f',0,0,'complete','full'),(2,x'2f',1,1,'complete','full');
          INSERT INTO active(singleton,scan_id) VALUES (1,2);
-         INSERT INTO entries(scan_id,path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded)
+         INSERT INTO entries(scan_id,name,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded)
            WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<{rows})
            SELECT 1,CAST('p'||i AS BLOB),x'',  'file','1:'||i,1,1,1,0,0,NULL FROM n;"
     ))
@@ -76,7 +76,8 @@ fn a_waiting_scan_or_delete_gets_in_long_before_housekeeping_is_finished() {
         index.prune_stale(Duration::from_secs(120)).unwrap()
     });
     // Wait until housekeeping has really started: the first rows it removes are the first inserted.
-    let first: &str = "SELECT count(*) FROM entries WHERE scan_id=1 AND path=CAST('p1' AS BLOB)";
+    let first: &str =
+        "SELECT count(*) FROM entries WHERE scan_id=1 AND parent=x'' AND name=CAST('p1' AS BLOB)";
     let begun = Instant::now();
     while db.query_row(first, [], |r| r.get::<_, i64>(0)).unwrap() == 1 {
         assert!(
@@ -119,4 +120,52 @@ fn a_waiting_scan_or_delete_gets_in_long_before_housekeeping_is_finished() {
         .query_row("SELECT count(*) FROM scans", [], |r| r.get(0))
         .unwrap();
     assert_eq!(scans, 1, "only the published scan is left");
+}
+
+#[test]
+fn the_file_shrinks_once_an_old_generation_is_cleared() {
+    let state = private_state();
+    let db = stale_generation(state.path(), 200_000);
+    db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
+    let size = || {
+        fs::metadata(state.path().join("index.sqlite"))
+            .unwrap()
+            .len()
+    };
+    let before = size();
+    assert!(before > 4 << 20, "the fixture is big enough: {before}");
+    drop(db);
+
+    let index = Index::open(state.path()).unwrap();
+    assert!(index.prune_stale(Duration::from_secs(120)).unwrap());
+    assert!(index.index_bytes() > 0);
+    drop(index);
+    assert!(
+        size() < before / 10,
+        "the space went back to the disk: {before} -> {}",
+        size()
+    );
+}
+
+#[test]
+fn the_latest_unpublished_scan_keeps_its_record_and_issues_but_not_its_rows() {
+    let state = private_state();
+    let db = stale_generation(state.path(), 10);
+    db.execute_batch(
+        "INSERT INTO scans(id,root,started,ended,state,mode) VALUES (3,x'2f',2,2,'partial','full');
+         INSERT INTO issues(scan_id,path,reason) VALUES (3,x'64','unreadable');
+         INSERT INTO entries(scan_id,name,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded)
+           VALUES (3,x'65',x'','file','1:99',1,1,1,0,0,NULL);
+         INSERT INTO dir_totals(scan_id,path,parent,allocated,apparent,files,dirs,protected) VALUES (3,x'',x'',1,1,1,0,0);",
+    )
+    .unwrap();
+    let index = Index::open(state.path()).unwrap();
+    assert!(index.prune_stale(Duration::from_secs(120)).unwrap());
+    let count = |sql: &str| db.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(count("SELECT count(*) FROM entries WHERE scan_id=3"), 0);
+    assert_eq!(count("SELECT count(*) FROM dir_totals WHERE scan_id=3"), 0);
+    assert_eq!(count("SELECT count(*) FROM scans WHERE id=3"), 1);
+    assert_eq!(index.issues().unwrap().len(), 1);
+    assert_eq!(count("SELECT count(*) FROM scans WHERE id=1"), 0);
+    assert_eq!(count("SELECT scan_id FROM active"), 2);
 }

@@ -96,7 +96,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=11,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
+        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=12,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
     )
 }
 
@@ -258,7 +258,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 11 {
+        if version > 12 {
             bail!("index schema is newer than this omg build");
         }
         // quick_check reads the whole file (seconds on a multi-GB index), so very large indexes
@@ -276,12 +276,16 @@ impl Index {
         if check != "ok" {
             bail!("index corruption detected; preserve state and rebuild inventory explicitly");
         }
+        // Only a database without tables can take this; older ones convert after migration 012.
+        if version == 0 {
+            db.execute_batch("PRAGMA auto_vacuum=INCREMENTAL")?;
+        }
         let mode: String = db.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))?;
         if mode != "wal" {
             bail!("WAL unavailable on state filesystem");
         }
         db.execute_batch(
-            "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA cache_size=-4096;",
+            "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA cache_size=-4096; PRAGMA journal_size_limit=33554432;",
         )?;
         if version < 1 {
             db.execute_batch(include_str!("../../../migrations/001.sql"))?;
@@ -315,6 +319,13 @@ impl Index {
         }
         if version < 11 {
             db.execute_batch(include_str!("../../../migrations/011.sql"))?;
+        }
+        if version < 12 {
+            db.execute_batch(include_str!("../../../migrations/012.sql"))?;
+            // Best effort: without it the file works as before and just does not shrink.
+            if version > 0 {
+                let _ = db.execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM;");
+            }
         }
         #[cfg(unix)]
         {
@@ -393,12 +404,12 @@ impl Index {
             })
             .transpose()?;
         let volume: Option<(u64,u64,i64)> = self.db.query_row("SELECT capacity,available,sampled FROM scans WHERE capacity IS NOT NULL ORDER BY id DESC LIMIT 1", [], |r| Ok((unsigned(r,0)?,unsigned(r,1)?,r.get(2)?))).optional()?;
-        Ok(Status { root, last_successful, last_report, entries,
+        Ok(Status { root, last_successful, last_report, entries, index_bytes: self.index_bytes(),
             unique_apparent: apparent, unique_allocated: allocated, capacity: volume.map(|v|v.0), available: volume.map(|v|v.1), volume_sample_at: volume.map(|v|v.2),
             scope_note: "Scoped metadata inventory, not whole-volume usage. Exclusions omitted; shared clones/snapshots unknown, so indexed bytes are not reclaimable-space estimates. Background service state is reported separately.".into() })
     }
     pub fn entries(&self, limit: usize, offset: usize) -> Result<Vec<Entry>> {
-        let mut statement = self.db.prepare("SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=(SELECT scan_id FROM active WHERE singleton=1) ORDER BY allocated DESC,path LIMIT ? OFFSET ?")?;
+        let mut statement = self.db.prepare("SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=(SELECT scan_id FROM active WHERE singleton=1) ORDER BY allocated DESC,path LIMIT ? OFFSET ?")?;
         Ok(statement
             .query_map(
                 params![limit.min(1000) as i64, i64::try_from(offset)?],
@@ -438,8 +449,9 @@ impl Index {
             )
             .optional()?)
     }
-    /// Delete rows of scans that are neither published nor the latest record, in chunks, stopping
-    /// after `budget`. Returns true when nothing stale remains. Safe to call repeatedly.
+    /// Delete rows of every scan that is not published, in chunks, give the freed pages back to the
+    /// disk, and stop after `budget`. The latest scan keeps its record and issues, not its rows.
+    /// Returns true when nothing stale remains. Safe to call repeatedly.
     ///
     /// It holds `scan.lock` only for a short slice at a time and lets go between slices, so a scan
     /// or a delete that arrives waits for the end of a slice instead of the whole budget (clearing
@@ -466,9 +478,12 @@ impl Index {
     /// `prune_stale` for a caller that already owns the scan lock (the scanner itself).
     pub(crate) fn prune_stale_locked(&self, budget: Duration) -> Result<bool> {
         let started = std::time::Instant::now();
+        let latest: Option<i64> = self
+            .db
+            .query_row("SELECT max(id) FROM scans", [], |r| r.get(0))?;
         let stale: Vec<i64> = {
             let mut statement = self.db.prepare(
-                "SELECT id FROM scans WHERE state<>'running' AND id<>coalesce((SELECT scan_id FROM active WHERE singleton=1),-1) AND id<>(SELECT max(id) FROM scans) ORDER BY id",
+                "SELECT id FROM scans WHERE state<>'running' AND id<>coalesce((SELECT scan_id FROM active WHERE singleton=1),-1) ORDER BY id",
             )?;
             statement
                 .query_map([], |r| r.get(0))?
@@ -477,7 +492,7 @@ impl Index {
         for id in stale {
             loop {
                 let removed = self.db.execute(
-                    "DELETE FROM entries WHERE rowid IN (SELECT rowid FROM entries WHERE scan_id=? LIMIT 4000)",
+                    "DELETE FROM entries WHERE scan_id=?1 AND (parent,name) IN (SELECT parent,name FROM entries WHERE scan_id=?1 LIMIT 4000)",
                     [id],
                 )?;
                 if removed == 0 {
@@ -487,9 +502,47 @@ impl Index {
                     return Ok(false);
                 }
             }
-            self.db.execute("DELETE FROM scans WHERE id=?", [id])?;
+            if latest == Some(id) {
+                self.db
+                    .execute("DELETE FROM dir_totals WHERE scan_id=?", [id])?;
+            } else {
+                self.db.execute("DELETE FROM scans WHERE id=?", [id])?;
+            }
         }
+        self.reclaim_free_pages(started, budget)
+    }
+    /// Shrink the file by moving free pages out of it. The space leaves the disk at the next
+    /// checkpoint, so a slice that runs out of time resumes without losing anything.
+    fn reclaim_free_pages(&self, started: std::time::Instant, budget: Duration) -> Result<bool> {
+        let mode: i64 = self
+            .db
+            .pragma_query_value(None, "auto_vacuum", |r| r.get(0))?;
+        if mode != 2 {
+            return Ok(true);
+        }
+        loop {
+            let free: i64 = self
+                .db
+                .pragma_query_value(None, "freelist_count", |r| r.get(0))?;
+            if free == 0 {
+                break;
+            }
+            self.db.execute_batch("PRAGMA incremental_vacuum(2048)")?;
+            if started.elapsed() >= budget {
+                self.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
+                return Ok(false);
+            }
+        }
+        self.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
         Ok(true)
+    }
+    /// Bytes omg's own index takes on disk, including its write-ahead log.
+    pub fn index_bytes(&self) -> u64 {
+        ["index.sqlite", "index.sqlite-wal"]
+            .iter()
+            .filter_map(|name| fs::metadata(self.state.join(name)).ok())
+            .map(|metadata| metadata.len())
+            .sum()
     }
     pub fn issues(&self) -> Result<Vec<(Vec<u8>, String)>> {
         let mut stmt = self.db.prepare(
@@ -531,6 +584,15 @@ impl Index {
         }))
     }
 }
+/// The `(parent, name)` key of a stored relative path. A nested `name` keeps its leading separator,
+/// so `parent||name` gives back the exact bytes.
+pub(crate) fn split_path(path: &[u8]) -> (&[u8], &[u8]) {
+    match path.iter().rposition(|b| *b == b'/') {
+        Some(end) => path.split_at(end),
+        None => (&[], path),
+    }
+}
+
 pub(crate) fn row_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
     Ok(Entry {
         path: row.get(0)?,

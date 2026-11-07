@@ -276,7 +276,7 @@ fn sizes_by_identity(index: &Index, scan_id: i64) -> Result<HashMap<Vec<u8>, Tot
     let mut totals: HashMap<Vec<u8>, Totals> = HashMap::new();
     bucket(&mut totals, b"");
     let mut statement = index.db.prepare(
-        "SELECT min(path),max(apparent),max(allocated),kind,max(modified_ns) FROM entries WHERE scan_id=? AND path<>x'' GROUP BY identity",
+        "SELECT min(CAST(parent||name AS BLOB)),max(apparent),max(allocated),kind,max(modified_ns) FROM entries WHERE scan_id=? AND name<>x'' GROUP BY identity",
     )?;
     let mut rows = statement.query([scan_id])?;
     while let Some(row) = rows.next()? {
@@ -312,7 +312,7 @@ pub fn compute(index: &Index, scan_id: i64, root: &Path) -> Result<()> {
     {
         // Every path (not deduplicated by identity): any protected link name protects its ancestors.
         let mut statement = index.db.prepare(
-            "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND path<>x''",
+            "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND name<>x''",
         )?;
         let mut rows = statement.query([scan_id])?;
         // Hard protections only: repository age and build folders are judged at decision time.
@@ -452,7 +452,7 @@ impl Index {
         let mut statement = self.db.prepare(
             "SELECT path,'directory',allocated,apparent,files,dirs,protected,coalesce(newest,0) FROM dir_totals WHERE scan_id=?1 AND parent=?2 AND path<>x''
              UNION ALL
-             SELECT path,kind,allocated,apparent,0,0,CASE WHEN excluded IS NULL THEN 0 ELSE 1 END,modified_ns/1000000000 FROM entries INDEXED BY entry_parent WHERE scan_id=?1 AND parent=?2 AND kind<>'directory'
+             SELECT CAST(parent||name AS BLOB),kind,allocated,apparent,0,0,CASE WHEN excluded IS NULL THEN 0 ELSE 1 END,modified_ns/1000000000 FROM entries WHERE scan_id=?1 AND parent=?2 AND kind<>'directory'
              ORDER BY 3 DESC,1 LIMIT ?3 OFFSET ?4",
         )?;
         let rows = statement.query_map(
@@ -475,10 +475,11 @@ impl Index {
         let mut children: Vec<Child> = rows.collect::<rusqlite::Result<_>>()?;
         let gaps = self.gaps(id)?;
         let mut excluded = self.db.prepare_cached(
-            "SELECT 1 FROM entries WHERE scan_id=? AND path=? AND excluded IS NOT NULL",
+            "SELECT 1 FROM entries WHERE scan_id=? AND parent=? AND name=? AND excluded IS NOT NULL",
         )?;
         for child in children.iter_mut().filter(|c| c.kind == "directory") {
-            child.excluded = excluded.exists(params![id, child.path])?;
+            let (parent, name) = crate::index::split_path(&child.path);
+            child.excluded = excluded.exists(params![id, parent, name])?;
             child.incomplete = !child.excluded && gaps.covers(&child.path);
         }
         Ok(children)

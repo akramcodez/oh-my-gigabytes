@@ -221,6 +221,10 @@ pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
     }) {
         return Some("media library or disk image package".into());
     }
+    // Removing part of a bundle breaks the app, and App Management can stop the removal halfway.
+    if cfg!(target_os = "macos") && parts.iter().any(|part| part.ends_with(".app")) {
+        return Some("application bundle; uninstall it from Finder".into());
+    }
     for value in &parts {
         if [
             ".git",

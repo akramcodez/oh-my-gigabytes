@@ -2,9 +2,9 @@
 
 A hands-on pass for the owner's Apple silicon Mac, to run on the commit that will become `0.1.0-beta.1`. The automated suite and a first real-Mac pass already ran on 2026-11-01 ([macos-evidence.md](macos-evidence.md), "Real Mac"). This pass repeats them on the merged tree (macOS work plus the Linux and Windows delete release, 2026-11-02), and adds what has never been tested on real hardware: Full Disk Access, iCloud placeholder files, a real external drive, other terminal apps, and the binary that CI actually builds for release.
 
-The macOS build cannot delete anything: it is built with `--no-default-features`, and the platform has no delete code. Scanning reads names, sizes and times, never file contents. Even so, use a private state folder for every experiment (`--state-dir`, below) so your normal omg data is not touched.
+Since 2026-11-07 the macOS build can permanently delete, on APFS and only after you confirm. Step 8b is the only step that deletes, and only inside a throwaway `HOME`. Never press `d` in the other steps. Scanning reads names, sizes and times, never file contents. Use a private state folder for every experiment (`--state-dir`, below) so your normal omg data is not touched.
 
-**Stop and report** (see [SECURITY.md](../SECURITY.md)) if any step changes, moves or downloads a file, follows a link out of the scan, or shows a delete option on the Mac.
+**Stop and report** (see [SECURITY.md](../SECURITY.md)) if any step changes, moves or downloads a file, or follows a link out of the scan, or if a delete removes anything other than what you confirmed.
 
 Tick each box as you go. Write down anything marked *record*; the last section says where it goes.
 
@@ -36,15 +36,15 @@ It installs Rust and Node 22 into your home folder if they are missing (no sudo)
 ## 2. Build the release binary and set up a private state folder
 
 ```sh
-cargo build --release -p omg-cli --no-default-features --locked
+cargo build --release -p omg-cli --locked
 OMG="$PWD/target/release/omg"
 S=$(mktemp -d /private/tmp/omg-final.XXXXXX)   # private state folder (mode 700)
 "$OMG" --version
 "$OMG" --state-dir "$S" doctor
 ```
 
-- [x] `--version` prints `omg 0.1.0-beta.1`.
-- [x] `doctor` prints a line starting `permanent delete: unsupported`, and `"cleanup": "unsupported"` in its JSON.
+- [ ] `--version` prints `omg 0.1.0-beta.1`.
+- [ ] `doctor` prints a line starting `permanent delete: development-unqualified`, and `"cleanup": "development-unqualified"` in its JSON.
 
 ## 3. What omg must refuse
 
@@ -127,12 +127,30 @@ Run it in Terminal.app, and again in any other terminal you use (iTerm2, Ghostty
 - [ ] `1`–`4` switch between Overview, Browse, Findings and OMG Trash.
 - [ ] In Browse, `⏎` opens a folder and `⌫` goes back. Inside a nested folder the rows show plain names (`victim.bin`, not `work/victim.bin`) and the path bar shows one piece per folder (`~ › Library › Caches`).
 - [ ] Unreadable folders (step 4 index) say `unknown · unreadable`, not `0.00 B`.
-- [ ] The footer, the `m` options menu and the `?` help show **no** delete entry, and pressing `d` deletes nothing.
+- [ ] The footer, the `m` options menu and the `?` help list delete. Do not press `d` here; step 8b tests it.
 - [ ] `␣` (space) adds the row to OMG Trash, and pressing it again takes it out; `"$OMG" --state-dir "$S" trash` agrees, and nothing changed on disk.
 - [ ] `r` rescans and shows progress; the result line mentions privacy protection if folders were unreadable.
 - [ ] Making the window very small shows "Terminal too small"; making it large again redraws correctly.
 - [ ] `q` quits and the terminal is normal afterwards (prompt, cursor and typing all fine). Same for Ctrl-C.
 - [ ] Record: which terminal apps you tried, and anything that looked wrong (a screenshot helps).
+
+## 8b. Delete, in a throwaway home
+
+```sh
+T=$(mktemp -d /private/tmp/omg-home.XXXXXX)
+mkdir -p "$T/stuff" "$T/Desktop" "$T/Tools/Thing.app/Contents"
+echo a > "$T/stuff/remove-me.txt"; echo b > "$T/stuff/keep-me.txt"; echo c > "$T/Desktop/note.txt"
+echo d > "$T/locked.txt"; chflags uchg "$T/locked.txt"; echo e > "$T/Tools/Thing.app/Contents/x"
+HOME="$T" "$OMG" --state-dir "$S" scan --root "$T"
+HOME="$T" "$OMG" --state-dir "$S"
+```
+
+- [ ] `d` on `stuff/remove-me.txt`, then Esc or Cancel: the file is still there.
+- [ ] `d` again, "Yes, delete permanently": that file is gone and `keep-me.txt` is still there.
+- [ ] `d` on `Desktop/note.txt` warns about iCloud before you confirm.
+- [ ] `d` on `locked.txt`, on `Tools/Thing.app` and on `Desktop` itself removes nothing and says why.
+- [ ] If you use iCloud with "Optimise Mac Storage": a cloud-only file in Desktop or Documents is refused and keeps its cloud icon. Use your real `HOME` and a real scan for this one, press `d` only on that file, and answer the question only if it offers no "Yes".
+- [ ] Clean up: `chflags nouchg "$T/locked.txt"; rm -rf "$T"`
 
 ## 9. The binary CI builds for the release, installed like a user would
 
@@ -143,7 +161,7 @@ gh workflow run release.yml --ref main
 gh run list --workflow release.yml --limit 1          # wait until it shows "completed success"; note RUN_ID
 W=$(mktemp -d /private/tmp/omg-pkg.XXXXXX) && cd "$W"
 gh run download RUN_ID --repo akramcodez/oh-my-gigabytes --dir ci-artifacts
-cat ci-artifacts/omg-darwin-arm64/CLEANUP             # must say: unsupported
+cat ci-artifacts/omg-darwin-arm64/CLEANUP             # must say: development-unqualified
 node -e "
   const c = require('node:crypto'), fs = require('node:fs');
   const { publicKey, privateKey } = c.generateKeyPairSync('ed25519');
@@ -163,8 +181,8 @@ xattr -l "$W/prefix with space/lib/node_modules/oh-my-gigabytes-darwin-arm64/art
 The throwaway key is only for this test; it is not the release key and must not be used for a release.
 
 - [x] The `Release build` run is green for all four targets. Record: the run id.
-- [x] `sign-release.js` verifies the attestation and signs without errors; the macOS manifest says `cleanup: disabled`.
-- [x] The installed `omg` runs from the npm prefix (the path has a space on purpose), `doctor` says `permanent delete: unsupported`, and the scan works.
+- [ ] `sign-release.js` verifies the attestation and signs without errors; the macOS manifest says `cleanup: development-unqualified`.
+- [ ] The installed `omg` runs from the npm prefix (the path has a space on purpose), `doctor` says `permanent delete: development-unqualified`, and the scan works.
 - [ ] `xattr -l` on the installed binary shows no `com.apple.quarantine`, and macOS showed no "cannot be verified" dialog.
 - [x] Change one byte of the installed binary (`printf x >> ".../artifact/omg"`) and run `omg --version` again: it must refuse with "Binary integrity verification failed". Then remove the test folder: `cd ~ && rm -rf "$W"`.
 

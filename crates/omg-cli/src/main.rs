@@ -257,7 +257,7 @@ fn run() -> Result<()> {
         } else if cfg!(windows) {
             "(Windows: NTFS only; ReFS and FAT32 refused; cloud placeholders never deleted)"
         } else if cfg!(target_os = "macos") {
-            "(macOS is analysis only)"
+            "(macOS: APFS only; cloud placeholders, locked items and app bundles never deleted)"
         } else {
             "(Linux: ext-family, tmpfs and Btrfs only; XFS is scan-only; unknown filesystems refused)"
         };

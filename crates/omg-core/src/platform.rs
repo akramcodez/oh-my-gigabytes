@@ -566,6 +566,9 @@ pub mod macos {
     const MNT_ROOTFS: u32 = 0x4000;
     /// `st_flags`: contents live in the cloud (iCloud "dataless"); reading would download them.
     const SF_DATALESS: u32 = 0x4000_0000;
+    /// `st_flags`: locked or append-only (user or system), or protected by the system. Removing one
+    /// fails, and inside a folder that would stop the removal halfway.
+    const UNREMOVABLE: u32 = 0x2 | 0x4 | 0x0002_0000 | 0x0004_0000 | 0x0008_0000;
     /// Oldest Darwin kernel that enforces the two open flags above (macOS 15). An older kernel
     /// could ignore an unknown flag without error and silently lose the protection.
     const MIN_DARWIN: u32 = 24;
@@ -628,7 +631,24 @@ pub mod macos {
         }
         Ok(fd)
     }
-    fn acquire(root: &OwnedFd, relative: &Path) -> Result<OwnedFd> {
+    /// Why an object must not be removed, from its `st_flags`. Removing a cloud placeholder could
+    /// remove the only copy from the cloud, so it counts even though the unlink itself would work.
+    pub fn removal_hazard(flags: u32) -> Option<&'static str> {
+        if flags & SF_DATALESS != 0 {
+            Some("a cloud placeholder whose data is only in the cloud")
+        } else if flags & UNREMOVABLE != 0 {
+            Some("a locked or system-protected item")
+        } else {
+            None
+        }
+    }
+    pub fn entry(relative: &Path, metadata: &fs::Stat) -> crate::model::Entry {
+        entry_from_meta(relative, &meta(metadata))
+    }
+    pub fn name(value: &std::ffi::CStr) -> PathBuf {
+        PathBuf::from(OsString::from_vec(value.to_bytes().to_vec()))
+    }
+    pub fn acquire(root: &OwnedFd, relative: &Path) -> Result<OwnedFd> {
         Ok(fs::openat(
             root,
             if relative.as_os_str().is_empty() {
@@ -728,6 +748,22 @@ pub mod macos {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn placeholders_and_locked_items_are_removal_hazards_and_ordinary_flags_are_not() {
+            assert!(removal_hazard(SF_DATALESS).unwrap().contains("cloud"));
+            // uchg, uappnd, schg, sappnd, restricted, also combined with others.
+            for flags in [0x2, 0x4, 0x0002_0000, 0x0004_0000, 0x0008_0000, 0x8002] {
+                assert!(
+                    removal_hazard(flags).unwrap().contains("locked"),
+                    "{flags:#x}"
+                );
+            }
+            // None, hidden (UF_HIDDEN), and the compressed flag (UF_COMPRESSED).
+            for flags in [0, 0x8000, 0x20] {
+                assert_eq!(removal_hazard(flags), None, "{flags:#x}");
+            }
+        }
 
         #[test]
         fn open_flags_match_the_sdk_values_seen_on_the_probe() {

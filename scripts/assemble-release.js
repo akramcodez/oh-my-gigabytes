@@ -44,7 +44,7 @@ function assemble({ binary, target, version, publicKey, privateKey, out, variant
   const linux = target.startsWith('linux-');
   const windows = target.startsWith('win32-');
   const macos = target.startsWith('darwin-');
-  const cleanup = linux || windows ? (variant === 'analysis-only' ? 'disabled' : 'development-unqualified') : 'disabled';
+  const cleanup = (linux || windows || macos) && variant !== 'analysis-only' ? 'development-unqualified' : 'disabled';
   // A real build must report the same cleanup capability as the manifest it is signed with. Only a
   // binary this machine can run is asked; a foreign-architecture binary is checked at build time.
   const runnable = target.split('-')[1] === process.arch &&

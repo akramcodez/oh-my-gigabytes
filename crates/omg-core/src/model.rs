@@ -51,6 +51,8 @@ pub struct Status {
     pub last_successful: Option<i64>,
     pub last_report: Option<ScanReport>,
     pub entries: u64,
+    #[serde(default)]
+    pub index_bytes: u64,
     pub unique_apparent: u64,
     pub unique_allocated: u64,
     pub capacity: Option<u64>,

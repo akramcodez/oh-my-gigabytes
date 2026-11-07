@@ -390,10 +390,11 @@ mod walk {
                             if entry.excluded.is_some() {
                                 report.excluded += 1;
                             }
+                            let (parent, name) = crate::index::split_path(&entry.path);
                             insert.execute(params![
                                 id,
-                                entry.path,
-                                entry.parent,
+                                parent,
+                                name,
                                 entry.kind,
                                 entry.identity,
                                 i64::try_from(entry.apparent)?,
@@ -480,7 +481,7 @@ mod walk {
                         && report.entries as i64 <= COMPARE_LIMIT * 2
                     {
                         Some(index.db.query_row(
-                            "SELECT count(*) FROM entries e LEFT JOIN entries p ON p.scan_id=?2 AND p.path=e.path WHERE e.scan_id=?1 AND (p.path IS NULL OR p.identity<>e.identity OR p.apparent<>e.apparent OR p.allocated<>e.allocated OR p.modified_ns<>e.modified_ns OR p.changed_ns<>e.changed_ns OR p.excluded IS NOT e.excluded)",
+                            "SELECT count(*) FROM entries e LEFT JOIN entries p ON p.scan_id=?2 AND p.parent=e.parent AND p.name=e.name WHERE e.scan_id=?1 AND (p.name IS NULL OR p.identity<>e.identity OR p.apparent<>e.apparent OR p.allocated<>e.allocated OR p.modified_ns<>e.modified_ns OR p.changed_ns<>e.changed_ns OR p.excluded IS NOT e.excluded)",
                             params![id, old],
                             |r| crate::index::unsigned(r, 0),
                         )?)

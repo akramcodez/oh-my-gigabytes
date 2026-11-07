@@ -12,7 +12,7 @@ use crate::{Entry, Index, index::unsigned, now, platform, policy};
 use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
-#[cfg(any(target_os = "linux", windows))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use std::sync::atomic::Ordering;
 use std::{
     collections::HashMap,
@@ -26,22 +26,22 @@ pub(crate) type IssuedPlans = HashMap<String, (i64, DeletePlan)>;
 /// Seconds a reviewed plan may wait for confirmation before it must be reviewed again.
 const PLAN_TTL: i64 = 900;
 
-/// What removing a subtree frees, grouped by file identity. The primary-key index is named on
-/// purpose: left alone, SQLite may walk the whole scan through `entry_identity` to get the grouping
-/// for free, which costs about a second per call on a large index. A plan of many small pieces
-/// calls this once per piece.
-const FREED_SQL: &str = "SELECT kind,count(*),max(links),max(apparent),max(allocated),coalesce(max(CASE WHEN excluded IS NULL THEN apparent END),0),coalesce(max(CASE WHEN excluded IS NULL THEN allocated END),0) FROM entries INDEXED BY sqlite_autoindex_entries_1 WHERE scan_id=?1 AND (path=?2 OR (path>?3 AND path<?4)) GROUP BY identity";
+/// What removing a subtree frees, grouped by file identity: the name itself, then every row whose
+/// parent is the subtree's folder or lies below it. The key range also holds siblings such as
+/// `a.b` next to `a`, which the last test removes. A plan of many small pieces calls this once per
+/// piece, so both halves must stay key lookups.
+const FREED_SQL: &str = "SELECT kind,count(*),max(links),max(apparent),max(allocated),coalesce(max(CASE WHEN excluded IS NULL THEN apparent END),0),coalesce(max(CASE WHEN excluded IS NULL THEN allocated END),0) FROM (SELECT * FROM entries WHERE scan_id=?1 AND parent=?2 AND name=?3 UNION ALL SELECT * FROM entries WHERE scan_id=?1 AND parent>=?4 AND parent<?5 AND (parent=?4 OR parent>?6)) GROUP BY identity";
 
 /// Removing a subtree from the index: the name, then the range below it, in each table. Never one
-/// statement with `path=? OR (path>? AND path<?)`: SQLite cannot use an index for that in a DELETE.
+/// statement joined by OR: SQLite cannot use an index for that in a DELETE.
 /// Used by the Linux and Windows delete path (macOS has none) and by the query-plan test.
-#[cfg(any(target_os = "linux", windows, test))]
-const FORGET_ENTRY: &str = "DELETE FROM entries WHERE scan_id=?1 AND path=?2";
-#[cfg(any(target_os = "linux", windows, test))]
-const FORGET_ENTRIES_BELOW: &str = "DELETE FROM entries WHERE scan_id=?1 AND path>?2 AND path<?3";
-#[cfg(any(target_os = "linux", windows, test))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
+const FORGET_ENTRY: &str = "DELETE FROM entries WHERE scan_id=?1 AND parent=?2 AND name=?3";
+#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
+const FORGET_ENTRIES_BELOW: &str = "DELETE FROM entries WHERE scan_id=?1 AND parent>=?2 AND parent<?3 AND (parent=?2 OR parent>?4)";
+#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
 const FORGET_TOTAL: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path=?2";
-#[cfg(any(target_os = "linux", windows, test))]
+#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
 const FORGET_TOTALS_BELOW: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path>?2 AND path<?3";
 
 /// A path or name for a message: lossy, with control characters (terminal escapes) replaced.
@@ -205,9 +205,9 @@ fn is_cache_root(absolute: &Path, home: &Path) -> bool {
 }
 
 /// Live (identity, creation time) of a root-relative path, read without following links.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn live_identity(root: &Path, path: &[u8]) -> Result<(String, Option<String>)> {
-    linux::live_identity(root, path)
+    unix::live_identity(root, path)
 }
 #[cfg(windows)]
 fn live_identity(root: &Path, path: &[u8]) -> Result<(String, Option<String>)> {
@@ -224,6 +224,13 @@ fn delete_support(root: &Path) -> Result<crate::capability::Support> {
             platform::linux::filesystem(&fd)?,
         ))
     }
+    #[cfg(target_os = "macos")]
+    {
+        let fd = platform::macos::root(root)?;
+        Ok(crate::capability::permanent_delete(
+            platform::macos::filesystem(&fd)?.0,
+        ))
+    }
     #[cfg(windows)]
     {
         let dir = platform::windows::open_root(root)?;
@@ -231,7 +238,7 @@ fn delete_support(root: &Path) -> Result<crate::capability::Support> {
             platform::windows::filesystem_of(&dir)?,
         ))
     }
-    #[cfg(not(any(target_os = "linux", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
         let _ = root;
         Ok(crate::capability::Support::Unsupported)
@@ -240,7 +247,7 @@ fn delete_support(root: &Path) -> Result<crate::capability::Support> {
 
 /// Revalidate and remove one item: (entries removed, entries that could not be removed, whether a
 /// removed file had other names). Windows reads link counts here because its scan does not.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn remove_target(
     root: &platform::native::Dir,
     root_path: &Path,
@@ -248,7 +255,7 @@ fn remove_target(
     item: &Marked,
     kind: Kind,
 ) -> std::result::Result<(u64, u64, bool), String> {
-    linux::delete_one(root, root_path, home, item, kind)
+    unix::delete_one(root, root_path, home, item, kind)
         .map(|(removed, failed)| (removed, failed, false))
 }
 #[cfg(windows)]
@@ -260,6 +267,43 @@ fn remove_target(
     kind: Kind,
 ) -> std::result::Result<(u64, u64, bool), String> {
     windows::delete_one(root, root_path, home, item, kind)
+}
+
+/// Folders macOS and its apps expect to exist. What is inside them is judged on its own.
+fn standard_mac_folder(home: &Path, absolute: &Path) -> bool {
+    let Ok(below) = absolute.strip_prefix(home) else {
+        return false;
+    };
+    let below = below.to_string_lossy().to_ascii_lowercase();
+    [
+        "applications",
+        "desktop",
+        "documents",
+        "downloads",
+        "library",
+        "movies",
+        "music",
+        "pictures",
+        "public",
+        "library/application support",
+        "library/caches",
+        "library/preferences",
+    ]
+    .contains(&below.as_str())
+}
+
+/// Whether macOS may keep this path in iCloud. A synced Desktop or Documents folder looks like any
+/// other local folder from here, and removing a file from one removes it from iCloud too.
+fn may_sync_with_icloud(home: &Path, absolute: &Path) -> bool {
+    cfg!(target_os = "macos")
+        && absolute
+            .strip_prefix(home)
+            .ok()
+            .and_then(|below| below.components().next())
+            .is_some_and(|first| {
+                let first = first.as_os_str().to_string_lossy().to_ascii_lowercase();
+                first == "desktop" || first == "documents"
+            })
 }
 
 /// Path-level checks shared by the gate and the final revalidation.
@@ -275,6 +319,9 @@ fn target_checks(root: &Path, home: &Path, entry: &Entry) -> std::result::Result
     }
     if !matches!(entry.kind.as_str(), "file" | "directory") {
         return Err("links and special files are not deletable here".into());
+    }
+    if cfg!(target_os = "macos") && standard_mac_folder(home, &absolute) {
+        return Err("a standard macOS folder; choose what is inside it instead".into());
     }
     if let Some(reason) = policy::hard_protection(root, entry) {
         return Err(reason);
@@ -300,7 +347,7 @@ pub fn verdict(
         }
     };
     let cache = is_cache_root(&absolute, home);
-    match policy::repository_status(root, entry, memo) {
+    let verdict = match policy::repository_status(root, entry, memo) {
         policy::RepoStatus::Outside => {
             let regenerable = absolute.file_name().is_some_and(|n| {
                 [
@@ -352,7 +399,17 @@ pub fn verdict(
             )),
             kind: Kind::Plain,
         },
+    };
+    if !may_sync_with_icloud(home, &absolute) {
+        return verdict;
     }
+    const ICLOUD: &str = "if Desktop and Documents sync with iCloud, this also removes it from iCloud and your other devices";
+    let gate = match verdict.gate {
+        Gate::Allowed => Gate::Warn(ICLOUD.into()),
+        Gate::Warn(text) => Gate::Warn(format!("{text}; {ICLOUD}")),
+        denied => denied,
+    };
+    Verdict { gate, ..verdict }
 }
 
 /// `verdict` without repository age information (unknown age counts as active).
@@ -386,8 +443,8 @@ impl Index {
         Ok(self
             .db
             .query_row(
-                "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND path=?",
-                params![scan, path],
+                "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
+                params![scan, crate::index::split_path(path).0, crate::index::split_path(path).1],
                 crate::index::row_entry,
             )
             .optional()?)
@@ -398,7 +455,8 @@ impl Index {
         let (prefix, upper) = descendants(path);
         let mut statement = self.db.prepare(FREED_SQL)?;
         let mut freed = Freed::default();
-        let mut rows = statement.query(params![scan, path, prefix, upper])?;
+        let (parent, name) = crate::index::split_path(path);
+        let mut rows = statement.query(params![scan, parent, name, path, upper, prefix])?;
         while let Some(row) = rows.next()? {
             let directory = row.get::<_, String>(0)? == "directory";
             let (names, links): (i64, i64) = (row.get(1)?, row.get(2)?);
@@ -439,7 +497,7 @@ impl Index {
             Gate::Warn(text) => Some(text.clone()),
             Gate::Allowed => None,
         };
-        #[cfg(any(target_os = "linux", windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         let birth = {
             let (_, created) = live_identity(&root, &entry.path)
                 .ok()
@@ -454,7 +512,7 @@ impl Index {
                 )
             })?
         };
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         let birth: Option<String> = {
             let _ = &root;
             None
@@ -479,10 +537,23 @@ impl Index {
     pub fn suggest(&self, home: &Path) -> Result<usize> {
         let (scan, _, root_raw) = self.scope()?;
         // Suggestions whose folder vanished from the index are stale.
-        self.db.execute(
-            "DELETE FROM marked WHERE source='auto' AND dismissed=0 AND root=?1 AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.scan_id=?2 AND e.path=marked.path)",
-            params![root_raw, scan],
-        )?;
+        let saved: Vec<(i64, Vec<u8>)> = {
+            let mut statement = self.db.prepare(
+                "SELECT id,path FROM marked WHERE source='auto' AND dismissed=0 AND root=?",
+            )?;
+            let rows = statement.query_map([&root_raw], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        for (id, path) in saved {
+            let (parent, name) = crate::index::split_path(&path);
+            let listed = self
+                .db
+                .prepare_cached("SELECT 1 FROM entries WHERE scan_id=? AND parent=? AND name=?")?
+                .exists(params![scan, parent, name])?;
+            if !listed {
+                self.db.execute("DELETE FROM marked WHERE id=?", [id])?;
+            }
+        }
         let mut listed = 0;
         let mut suggested: Vec<Vec<u8>> = Vec::new();
         for finding in self.findings_in(1000, 0, false, home)? {
@@ -690,14 +761,15 @@ impl Index {
         use rusqlite::types::Value;
         let (prefix, upper) = descendants(path);
         let tests = (0..policy::ALWAYS_SENSITIVE.len())
-            .map(|n| format!("CAST(path AS TEXT) LIKE ?{}", n + 5))
+            .map(|n| format!("CAST(parent||name AS TEXT) LIKE ?{}", n + 6))
             .collect::<Vec<_>>()
             .join(" OR ");
         let mut values = vec![
             Value::Integer(scan),
-            Value::Blob(prefix),
+            Value::Blob(path.to_vec()),
             Value::Blob(upper),
             Value::Integer(i64::try_from(limit)?),
+            Value::Blob(prefix),
         ];
         values.extend(
             policy::ALWAYS_SENSITIVE
@@ -705,7 +777,7 @@ impl Index {
                 .map(|name| Value::Text(format!("%/{name}"))),
         );
         let mut statement = self.db.prepare(&format!(
-            "SELECT path FROM entries WHERE scan_id=?1 AND path>?2 AND path<?3 AND ({tests}) LIMIT ?4"
+            "SELECT CAST(parent||name AS BLOB) FROM entries WHERE scan_id=?1 AND parent>=?2 AND parent<?3 AND (parent=?2 OR parent>?5) AND ({tests}) LIMIT ?4"
         ))?;
         let rows = statement.query_map(rusqlite::params_from_iter(values), |r| r.get(0))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -713,7 +785,7 @@ impl Index {
     /// What the index lists directly inside the directory `parent`.
     fn children_entries(&self, scan: i64, parent: &[u8]) -> Result<Vec<Entry>> {
         let mut statement = self.db.prepare(
-            "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries INDEXED BY entry_parent WHERE scan_id=? AND parent=?",
+            "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=?",
         )?;
         let rows = statement.query_map(params![scan, parent], crate::index::row_entry)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -825,7 +897,7 @@ impl Index {
                 Gate::Warn(text) => Some(text),
                 Gate::Allowed => None,
             };
-            #[cfg(any(target_os = "linux", windows))]
+            #[cfg(any(target_os = "linux", target_os = "macos", windows))]
             let birth = match live_identity(&root, &piece.path) {
                 Ok((identity, Some(created))) if identity == piece.identity => Some(created),
                 Ok((identity, _)) if identity != piece.identity => {
@@ -840,7 +912,7 @@ impl Index {
                     continue;
                 }
             };
-            #[cfg(not(any(target_os = "linux", windows)))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
             let birth: Option<String> = {
                 let _ = &root;
                 None
@@ -914,7 +986,7 @@ impl Index {
             skipped: plan.denied.clone(),
             ..Default::default()
         };
-        #[cfg(any(target_os = "linux", windows))]
+        #[cfg(any(target_os = "linux", target_os = "macos", windows))]
         {
             let root_dir = platform::native::open_root(&root)?;
             let before = platform::native::volume(&root_dir).ok().map(|v| v.1);
@@ -999,7 +1071,7 @@ impl Index {
                 let _ = self.record_delete_sample(scan, capacity, available);
             }
         }
-        #[cfg(not(any(target_os = "linux", windows)))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
             let _ = (home, &root, &mut before_mutate, cancel);
             for item in &plan.items {
@@ -1081,7 +1153,7 @@ impl Index {
     /// Record the state after a delete as a trend sample, so the growth numbers follow what was
     /// deleted without a rescan. The indexed total is the scan's own (kept current by `forget`), so
     /// this reads one row; the volume numbers are the live ones. An unknown total records nothing.
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     fn record_delete_sample(&self, scan: i64, capacity: u64, available: u64) -> Result<()> {
         let row: Option<(Vec<u8>, String, Option<i64>)> = self
             .db
@@ -1121,7 +1193,7 @@ impl Index {
             crate::service::trend::DEFAULT_MAX_SAMPLES,
         )
     }
-    #[cfg(any(target_os = "linux", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     /// Drop a deleted subtree from the published index and subtract what it freed from ancestor
     /// totals, so the views stay truthful without a full rescan. Hard-linked data that survives
     /// outside the subtree stays counted (see [`Freed`]).
@@ -1137,8 +1209,9 @@ impl Index {
         let protected = self.subtree(path)?.map_or(0, |t| t.protected);
         // The name itself and the range below it are separate statements: joined by OR, SQLite
         // filters every row of the scan for each target (about 0.2 s each on a 1.3M-entry index).
-        let removed = tx.execute(FORGET_ENTRY, params![scan, path])?
-            + tx.execute(FORGET_ENTRIES_BELOW, params![scan, prefix, upper])?;
+        let (parent, name) = crate::index::split_path(path);
+        let removed = tx.execute(FORGET_ENTRY, params![scan, parent, name])?
+            + tx.execute(FORGET_ENTRIES_BELOW, params![scan, path, upper, prefix])?;
         tx.execute(FORGET_TOTAL, params![scan, path])?;
         tx.execute(FORGET_TOTALS_BELOW, params![scan, prefix, upper])?;
         // Items saved in OMG Trash inside what was just deleted are gone with it.
@@ -1185,19 +1258,48 @@ impl Index {
     }
 }
 
-#[cfg(target_os = "linux")]
-mod linux {
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod unix {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use crate::platform::linux as os;
+    #[cfg(target_os = "macos")]
+    use crate::platform::macos as os;
     use rustix::fd::OwnedFd;
     use rustix::fs::{self, AtFlags, Dir, Mode, OFlags};
     use std::ffi::CString;
 
     const MAX_ENTRIES: u64 = 5_000_000;
 
-    fn identity(stat: &fs::Stat) -> String {
-        format!("{}:{}", stat.st_dev, stat.st_ino)
+    /// The device number as the scanner records it (`st_dev` is signed on macOS).
+    #[cfg(target_os = "linux")]
+    fn device(stat: &fs::Stat) -> u64 {
+        stat.st_dev
+    }
+    #[cfg(target_os = "macos")]
+    fn device(stat: &fs::Stat) -> u64 {
+        u64::from(stat.st_dev as u32)
     }
 
+    fn identity(stat: &fs::Stat) -> String {
+        format!("{}:{}", device(stat), stat.st_ino)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn hazard(_: &fs::Stat) -> Option<&'static str> {
+        None
+    }
+    #[cfg(target_os = "macos")]
+    fn hazard(stat: &fs::Stat) -> Option<&'static str> {
+        os::removal_hazard(stat.st_flags)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn birth_of(dir: &OwnedFd, name: &CString) -> Option<String> {
+        let stat = fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW).ok()?;
+        Some(format!("{}.{}", stat.st_birthtime, stat.st_birthtime_nsec))
+    }
+    #[cfg(target_os = "linux")]
     fn birth_of(dir: &OwnedFd, name: &CString) -> Option<String> {
         let x = fs::statx(dir, name, AtFlags::SYMLINK_NOFOLLOW, fs::StatxFlags::BTIME).ok()?;
         (x.stx_mask & fs::StatxFlags::BTIME.bits() != 0)
@@ -1209,11 +1311,13 @@ mod linux {
         relative: &Path,
     ) -> std::result::Result<(OwnedFd, CString), String> {
         let name = relative.file_name().ok_or("no file name")?.to_os_string();
-        let parent =
-            platform::linux::acquire(root_fd, relative.parent().unwrap_or(Path::new("")), true)
-                .map_err(|_| {
-                    "parent folder moved, redirected or became inaccessible".to_string()
-                })?;
+        let above = relative.parent().unwrap_or(Path::new(""));
+        #[cfg(target_os = "linux")]
+        let parent = os::acquire(root_fd, above, true);
+        #[cfg(target_os = "macos")]
+        let parent = os::acquire(root_fd, above);
+        let parent = parent
+            .map_err(|_| "parent folder moved, redirected or became inaccessible".to_string())?;
         let cname = CString::new(platform::raw(Path::new(&name)).map_err(|e| e.to_string())?)
             .map_err(|_| "invalid name".to_string())?;
         Ok((parent, cname))
@@ -1221,7 +1325,7 @@ mod linux {
 
     /// Live (identity, birth time) of a root-relative path, without following links.
     pub fn live_identity(root: &Path, path: &[u8]) -> Result<(String, Option<String>)> {
-        let root_fd = platform::linux::root(root)?;
+        let root_fd = os::root(root)?;
         let relative = platform::path(path)?;
         let (parent, name) = open_parent(&root_fd, &relative).map_err(anyhow::Error::msg)?;
         let stat = fs::statat(&parent, &name, AtFlags::SYMLINK_NOFOLLOW)?;
@@ -1250,7 +1354,10 @@ mod linux {
         if stat.st_uid != rustix::process::geteuid().as_raw() {
             return Err("not owned by you".into());
         }
-        let fresh = platform::linux::entry(&relative, &stat);
+        if let Some(reason) = hazard(&stat) {
+            return Err(format!("this is {reason}"));
+        }
+        let fresh = os::entry(&relative, &stat);
         if fresh.kind != item.kind {
             return Err("type changed since it was added; skipped".into());
         }
@@ -1272,8 +1379,8 @@ mod linux {
         }
         // Fresh descendant check right before deletion: no protected names, no mounts.
         let mut seen = 0u64;
-        check_tree(&dir, root, &relative, opened.st_dev, kind, &mut seen)?;
-        let (removed, failed) = remove_tree(&dir, opened.st_dev);
+        check_tree(&dir, root, &relative, device(&opened), kind, &mut seen)?;
+        let (removed, failed) = remove_tree(&dir, device(&opened));
         if failed == 0 {
             // rmdir only removes an empty directory, so a late swap cannot take anything with it.
             fs::unlinkat(&parent, &cname, AtFlags::REMOVEDIR).map_err(|e| e.to_string())?;
@@ -1313,13 +1420,16 @@ mod linux {
             if *seen > MAX_ENTRIES {
                 return Err("too many entries to verify safely".into());
             }
-            let child = relative.join(platform::linux::name(&name));
-            let mut entry = platform::linux::entry(&child, &stat);
+            let child = relative.join(os::name(&name));
+            if let Some(reason) = hazard(&stat) {
+                return Err(format!("contains {reason} ({})", child.display()));
+            }
+            let mut entry = os::entry(&child, &stat);
             // Links and special files are unlinked, never followed; check their names like files.
             if entry.kind == "symlink" || entry.kind == "special" {
                 entry.kind = "file".into();
             }
-            let name_text = platform::linux::name(&name).to_string_lossy().into_owned();
+            let name_text = os::name(&name).to_string_lossy().into_owned();
             if policy::always_sensitive(&name_text) {
                 return Err(format!("contains a sensitive item ({})", child.display()));
             }
@@ -1334,7 +1444,7 @@ mod linux {
                 ));
             }
             if entry.kind == "directory" {
-                if stat.st_dev != dev {
+                if device(&stat) != dev {
                     return Err("contains a mount point; skipped".into());
                 }
                 let sub = fs::openat(
@@ -1357,8 +1467,13 @@ mod linux {
         };
         let (mut removed, mut failed) = (0, 0);
         for (name, stat) in list {
+            // Checked above, but something may have changed since; never remove one regardless.
+            if hazard(&stat).is_some() {
+                failed += 1;
+                continue;
+            }
             if fs::FileType::from_raw_mode(stat.st_mode) == fs::FileType::Directory {
-                if stat.st_dev != dev {
+                if device(&stat) != dev {
                     failed += 1;
                     continue;
                 }
@@ -1370,7 +1485,7 @@ mod linux {
                 ) {
                     Ok(sub)
                         if fs::fstat(&sub)
-                            .is_ok_and(|s| s.st_ino == stat.st_ino && s.st_dev == dev) =>
+                            .is_ok_and(|s| s.st_ino == stat.st_ino && device(&s) == dev) =>
                     {
                         let (r, f) = remove_tree(&sub, dev);
                         removed += r;
@@ -1851,19 +1966,30 @@ mod tests {
             .unwrap();
         let plan: Vec<String> = statement
             .query_map(
-                params![1i64, b"a".as_slice(), b"a/".as_slice(), b"a0".as_slice()],
+                params![
+                    1i64,
+                    b"".as_slice(),
+                    b"a".as_slice(),
+                    b"a".as_slice(),
+                    b"a0".as_slice(),
+                    b"a/".as_slice()
+                ],
                 |r| r.get(3),
             )
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         let plan = plan.join(" | ");
-        assert!(plan.contains("sqlite_autoindex_entries_1"), "{plan}");
-        assert!(!plan.contains("entry_identity"), "{plan}");
+        assert!(plan.contains("scan_id=? AND parent=? AND name=?"), "{plan}");
+        assert!(
+            plan.contains("scan_id=? AND parent>? AND parent<?"),
+            "{plan}"
+        );
+        assert!(!plan.contains("SCAN entries"), "{plan}");
         // Forgetting a deleted subtree must use the key too, not filter the whole scan.
         for (sql, arguments) in [
-            (FORGET_ENTRY, 2),
-            (FORGET_ENTRIES_BELOW, 3),
+            (FORGET_ENTRY, 3),
+            (FORGET_ENTRIES_BELOW, 4),
             (FORGET_TOTAL, 2),
             (FORGET_TOTALS_BELOW, 3),
         ] {
@@ -1881,7 +2007,10 @@ mod tests {
                 .collect::<rusqlite::Result<_>>()
                 .unwrap();
             let plan = plan.join(" | ");
-            assert!(plan.contains("scan_id=? AND path"), "{sql}: {plan}");
+            assert!(
+                plan.contains("scan_id=? AND path") || plan.contains("scan_id=? AND parent"),
+                "{sql}: {plan}"
+            );
         }
     }
 
@@ -1890,5 +2019,57 @@ mod tests {
         let mut issued = IssuedPlans::new();
         let plan = issue(&mut issued, 1000, vec![item(None)]);
         assert!(take_issued(&mut issued, &plan, "not-a-real-fingerprint", 1001).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_subtree_means_its_name_and_what_is_below_it_never_a_sibling() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        let index = Index::open(directory.path()).unwrap();
+        index
+            .db
+            .execute_batch(
+                "INSERT INTO scans(id,root,started,state,mode) VALUES(1,x'2f',0,'complete','full')",
+            )
+            .unwrap();
+        // `a b`, `a-b` and `a.b` sort between `a` and `a/`, so they sit inside the key range.
+        let rows: [(&[u8], &str, i64); 8] = [
+            (b"a", "directory", 1),
+            (b"a/file", "file", 10),
+            (b"a/deep", "directory", 100),
+            (b"a/deep/credentials", "file", 1000),
+            (b"a b", "directory", 10_000),
+            (b"a b/credentials", "file", 100_000),
+            (b"a.b/credentials", "file", 1_000_000),
+            (b"a0", "file", 10_000_000),
+        ];
+        for (n, (path, kind, size)) in rows.iter().enumerate() {
+            let (parent, name) = crate::index::split_path(path);
+            index
+                .db
+                .execute(
+                    "INSERT INTO entries VALUES(1,?,?,?,?,?,?,1,0,0,NULL)",
+                    params![parent, name, kind, format!("1:{n}"), size, size],
+                )
+                .unwrap();
+        }
+        let freed = index.freed(1, b"a").unwrap();
+        assert_eq!(freed.allocated, 1111);
+        assert_eq!(freed.files, 2);
+        assert_eq!(freed.dirs, 2);
+        assert_eq!(
+            index.sensitive_inside(1, b"a", 10).unwrap(),
+            vec![b"a/deep/credentials".to_vec()]
+        );
+        // Children of a folder come back as complete paths.
+        let children: Vec<Vec<u8>> = index
+            .children_entries(1, b"a")
+            .unwrap()
+            .into_iter()
+            .map(|entry| entry.path)
+            .collect();
+        assert_eq!(children, vec![b"a/deep".to_vec(), b"a/file".to_vec()]);
     }
 }

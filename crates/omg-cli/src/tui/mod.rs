@@ -24,7 +24,7 @@ use std::{
 };
 use worker::{Request, Response, Summary};
 
-/// Whether this build on this platform can delete at all (macOS and the analysis-only build cannot).
+/// Whether this build on this platform can delete at all (the analysis-only build cannot).
 /// Delete keys and menu entries are hidden when it cannot; `cleanup.rs` refuses regardless.
 pub fn delete_available() -> bool {
     omg_core::capability::platform_permanent_delete() != omg_core::capability::Support::Unsupported

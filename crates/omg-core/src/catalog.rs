@@ -471,8 +471,8 @@ impl Index {
             let entry = self
                 .db
                 .query_row(
-                    "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND path=?",
-                    params![scan, relative],
+                    "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
+                    params![scan, crate::index::split_path(&relative).0, crate::index::split_path(&relative).1],
                     crate::index::row_entry,
                 )
                 .optional()?;
@@ -499,8 +499,8 @@ impl Index {
                 let Some(entry) = self
                     .db
                     .query_row(
-                        "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND path=?",
-                        params![scan, path],
+                        "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
+                        params![scan, crate::index::split_path(&path).0, crate::index::split_path(&path).1],
                         crate::index::row_entry,
                     )
                     .optional()?
@@ -520,7 +520,7 @@ impl Index {
         {
             let mut statement = self.db.prepare(
                 // Literal threshold so SQLite can use the partial `entry_large` index (migration 007).
-                "SELECT path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND kind='file' AND apparent>=104857600 ORDER BY allocated DESC,path LIMIT 10000",
+                "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND kind='file' AND apparent>=104857600 ORDER BY allocated DESC,path LIMIT 10000",
             )?;
             let rows = statement.query_map(params![scan], crate::index::row_entry)?;
             for entry in rows {
@@ -560,8 +560,12 @@ impl Index {
             Ok(self
                 .db
                 .query_row(
-                    "SELECT 1 FROM entries WHERE scan_id=? AND path=?",
-                    params![scan, path],
+                    "SELECT 1 FROM entries WHERE scan_id=? AND parent=? AND name=?",
+                    params![
+                        scan,
+                        crate::index::split_path(&path).0,
+                        crate::index::split_path(&path).1
+                    ],
                     |r| r.get::<_, i64>(0),
                 )
                 .optional()?
@@ -720,10 +724,8 @@ mod tests {
                 .execute(
                     "INSERT INTO entries VALUES(1,?,?,?,?,?,?,1,0,0,NULL)",
                     params![
-                        path.as_bytes(),
-                        path.rsplit_once('/')
-                            .map_or("", |(parent, _)| parent)
-                            .as_bytes(),
+                        crate::index::split_path(path.as_bytes()).0,
+                        crate::index::split_path(path.as_bytes()).1,
                         kind,
                         format!("fixture:{i}"),
                         size,
@@ -786,7 +788,7 @@ mod tests {
         index
             .db
             .execute(
-                "UPDATE entries SET identity='replacement' WHERE path=?",
+                "UPDATE entries SET identity='replacement' WHERE parent=x'' AND name=?",
                 [b"ordinary".as_slice()],
             )
             .unwrap();

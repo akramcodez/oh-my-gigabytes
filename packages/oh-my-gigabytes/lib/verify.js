@@ -119,9 +119,9 @@ function verifyArtifact(directory, trust, expected) {
   const linux = expected.target.startsWith('linux-');
   const windows = expected.target.startsWith('win32-');
   const macos = expected.target.startsWith('darwin-');
-  // Linux and Windows: permanent delete is `development-unqualified` (full build) or `disabled`
-  // (analysis-only build). macOS is analysis only. Only Linux has a background service.
-  const cleanupValues = linux || windows ? ['development-unqualified', 'disabled'] : ['disabled'];
+  // Permanent delete is `development-unqualified` (full build) or `disabled` (analysis-only build).
+  // Only Linux has a background service.
+  const cleanupValues = linux || windows || macos ? ['development-unqualified', 'disabled'] : ['disabled'];
   const analysis = linux ? 'development-linux' : windows ? 'development-windows' : macos ? 'development-macos' : 'disabled';
   if (manifest.capabilities.analysis !== analysis ||
       !cleanupValues.includes(manifest.capabilities.cleanup) ||
