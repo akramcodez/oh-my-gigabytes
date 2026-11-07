@@ -205,6 +205,40 @@ class TerminalSmokeTests(unittest.TestCase):
             finally:
                 ui.close()
 
+    def test_the_disk_gauge_follows_the_disk_without_a_keypress(self):
+        # The gauge used to be read once after a delete, so space that changed later never showed.
+        binary = Path(__file__).resolve().parents[1] / "target/debug/omg"
+        if not binary.exists():
+            self.skipTest("cargo build -p omg-cli required")
+        with tempfile.TemporaryDirectory(prefix="omg-disk-") as directory:
+            home = Path(directory) / "home"
+            home.mkdir()
+            (home / "a.txt").write_text("a")
+            state = Path(directory) / "state"
+            env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(Path(directory) / "config"), TERM="xterm-256color")
+            subprocess.run([str(binary), "--state-dir", str(state), "scan", "--root", str(home)], check=True, capture_output=True, env=env)
+            ui = Interface(binary, state, env)
+
+            def gauge():
+                return next((line for line in ui.screen.text().splitlines() if " used of " in line), "")
+
+            try:
+                self.assertTrue(ui.until(" used of "), ui.screen.text())
+                before = gauge()
+                with open(home / "grown.bin", "wb") as grown:
+                    for _ in range(64):
+                        grown.write(os.urandom(4 << 20))
+                    grown.flush()
+                    os.fsync(grown.fileno())
+                deadline = time.monotonic() + 12
+                while gauge() == before and time.monotonic() < deadline:
+                    ui.settle(.25)
+                self.assertNotEqual(gauge(), before, ui.screen.text())
+                ui.send(b"q")
+                self.assertEqual(ui.process.wait(timeout=10), 0)
+            finally:
+                ui.close()
+
     def test_a_cache_holding_a_protected_folder_is_deleted_around_it(self):
         # Python packages ship library folders called `credentials`; the whole cache used to be refused
         # only after the user confirmed. Now the dialog says so up front and offers to delete the rest.

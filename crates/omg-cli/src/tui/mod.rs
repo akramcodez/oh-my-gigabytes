@@ -30,6 +30,29 @@ pub fn delete_available() -> bool {
     omg_core::capability::platform_permanent_delete() != omg_core::capability::Support::Unsupported
 }
 
+/// How often the disk gauge is read again. APFS can give space back after a delete has returned,
+/// and other programs change the disk too.
+const DISK_REFRESH: Duration = Duration::from_secs(2);
+
+/// Why a delete freed less than the index expected, when that is what happened.
+fn space_note(estimated: u64, observed: Option<i64>) -> &'static str {
+    match observed {
+        Some(change)
+            if estimated >= 1 << 20
+                && change < i64::try_from(estimated / 2).unwrap_or(i64::MAX) =>
+        {
+            " · less space came back than shown: clones, hard links or snapshots can keep it in use"
+        }
+        _ => "",
+    }
+}
+
+/// Whether two disk readings look the same on screen, so a tiny change does not cause a redraw.
+fn same_disk(a: Option<(u64, u64)>, b: Option<(u64, u64)>) -> bool {
+    let shown = |v: Option<(u64, u64)>| v.map(|(c, u)| (omg_core::bytes(c), omg_core::bytes(u)));
+    shown(a) == shown(b)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum Tab {
     #[default]
@@ -620,6 +643,12 @@ impl App {
                 });
                 s.cursor = s.cursor.min(row_count(s).saturating_sub(1));
             }
+            // A failed reading keeps the last good one instead of hiding the gauge.
+            Response::Volume(volume) => {
+                if let (Some(reading), Some(summary)) = (volume, s.summary.as_mut()) {
+                    summary.volume = Some(reading);
+                }
+            }
             Response::Running { scan: Some(r), .. } => {
                 let now = omg_core::now();
                 let since_phase = r.phase_at.map(|t| (now - t).max(0) as f64);
@@ -719,8 +748,9 @@ impl App {
                     .skipped
                     .iter()
                     .partition(|(_, reason)| reason.starts_with("kept:"));
+                let note = space_note(report.estimated_bytes, report.observed_free_change);
                 s.message = format!(
-                    "Deleted {} item(s), ≈ {}{observed}{stop}{stale}{}{}{}",
+                    "Deleted {} item(s), ≈ {}{observed}{note}{stop}{stale}{}{}{}",
                     report.deleted.len(),
                     omg_core::bytes(report.estimated_bytes),
                     if kept.is_empty() {
@@ -969,11 +999,28 @@ pub fn run(index: Index) -> Result<()> {
         let mut dirty = true;
         let started = Instant::now();
         let mut last_poll = Instant::now();
+        let mut last_disk = Instant::now();
         let result = (|| -> Result<()> {
             loop {
                 while let Ok(response) = rx.try_recv() {
+                    let unchanged = match &response {
+                        Response::Volume(volume) => {
+                            volume.is_none()
+                                || same_disk(
+                                    *volume,
+                                    app.state.summary.as_ref().and_then(|s| s.volume),
+                                )
+                        }
+                        _ => false,
+                    };
                     app.on_response(response);
-                    dirty = true;
+                    dirty |= !unchanged;
+                }
+                if last_disk.elapsed() >= DISK_REFRESH && app.state.busy.is_none() {
+                    last_disk = Instant::now();
+                    if let Some(root) = app.state.summary.as_ref().and_then(|s| s.root.clone()) {
+                        app.request(Request::Volume(root), None);
+                    }
                 }
                 if app.job.as_ref().is_some_and(|j| j.is_finished()) {
                     app.state.message = match app.job.take().map(|j| j.join()) {

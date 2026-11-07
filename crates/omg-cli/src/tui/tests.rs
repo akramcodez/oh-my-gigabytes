@@ -745,3 +745,43 @@ fn the_result_says_protected_items_were_kept_not_that_they_failed() {
     );
     assert!(!message.contains("skipped: kept"), "{message}");
 }
+
+#[test]
+fn a_new_disk_reading_replaces_the_gauge_and_a_failed_one_keeps_it() {
+    let (mut app, _rx) = test_app();
+    let mut summary = summary_with_marked(b"a");
+    summary.volume = Some((1000 << 30, 100 << 30));
+    app.state.summary = Some(Box::new(summary));
+    let volume = |app: &App| app.state.summary.as_ref().and_then(|s| s.volume);
+
+    app.on_response(Response::Volume(Some((1000 << 30, 90 << 30))));
+    assert_eq!(volume(&app), Some((1000 << 30, 90 << 30)));
+    app.on_response(Response::Volume(None));
+    assert_eq!(volume(&app), Some((1000 << 30, 90 << 30)));
+}
+
+#[test]
+fn a_disk_reading_that_looks_the_same_does_not_count_as_a_change() {
+    let gib = 1u64 << 30;
+    assert!(same_disk(
+        Some((gib * 900, gib * 90)),
+        Some((gib * 900, gib * 90 + 1))
+    ));
+    assert!(!same_disk(
+        Some((gib * 900, gib * 90)),
+        Some((gib * 900, gib * 89))
+    ));
+    assert!(!same_disk(None, Some((gib * 900, gib * 90))));
+}
+
+#[test]
+fn the_result_explains_when_less_space_came_back_than_shown() {
+    let mib = 1u64 << 20;
+    let held = space_note(1000 * mib, Some(0));
+    assert!(held.contains("clones"), "{held}");
+    assert!(space_note(1000 * mib, Some(-5)).contains("clones"));
+    assert_eq!(space_note(1000 * mib, Some(900 * (1 << 20))), "");
+    // Unknown is not zero, and a small delete is lost in the disk's normal changes.
+    assert_eq!(space_note(1000 * mib, None), "");
+    assert_eq!(space_note(mib / 2, Some(0)), "");
+}

@@ -16,6 +16,7 @@ use std::{
 
 pub enum Request {
     Summary,
+    Volume(PathBuf),
     Dir(Vec<u8>),
     Preview(String),
     RecordPreview(Box<Plan>),
@@ -76,6 +77,7 @@ pub struct Summary {
 
 pub enum Response {
     Summary(Box<Summary>),
+    Volume(Option<(u64, u64)>),
     Dir {
         path: Vec<u8>,
         children: Vec<Child>,
@@ -149,6 +151,9 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                 let outcome: anyhow::Result<()> = (|| {
                     match request {
                         Request::Summary => refresh = true,
+                        Request::Volume(root) => {
+                            send(Response::Volume(platform::volume_sample(&root)));
+                        }
                         Request::Dir(path) => {
                             let children = index.children(&path, 500, 0)?;
                             let total = index.subtree(&path)?;
