@@ -1,4 +1,4 @@
-//! Native Windows scanning and deletion (docs/windows-implementation-plan.md, W01, W02, W08).
+//! Native Windows scanning and deletion (docs/windows-evidence.md).
 //! Runs only on Windows.
 #![cfg(windows)]
 use omg_core::{Index, ScanOptions, model::Entry, platform, scanner};
@@ -248,7 +248,7 @@ fn a_link_as_the_scan_root_is_refused() {
     assert!(error.to_string().contains("link or mount point"), "{error}");
 }
 
-/// Permanent deletion on NTFS (docs/windows-implementation-plan.md, W08): the same safety cases as
+/// Permanent deletion on NTFS: the same safety cases as
 /// the Linux suite in tests/cleanup.rs.
 #[cfg(feature = "permanent-delete")]
 mod deletion {

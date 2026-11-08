@@ -1,4 +1,4 @@
-//! Windows native adapter (`docs/windows-implementation-plan.md`, W02).
+//! Windows native adapter (`docs/windows-evidence.md`).
 //!
 //! Objects are opened as verbatim `\\?\` paths with `FILE_FLAG_OPEN_REPARSE_POINT`, so links and
 //! mount points are seen, never followed. A directory is accepted only when its final path and file

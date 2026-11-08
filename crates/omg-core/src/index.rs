@@ -267,11 +267,11 @@ impl Index {
         let large = fs::metadata(state.join("index.sqlite")).is_ok_and(|m| m.len() > 256 << 20);
         let check: String = if large {
             db.query_row("PRAGMA schema_version", [], |r| r.get::<_, i64>(0))
-                .context("index unreadable; preserve DB/WAL and see docs/operations.md recovery")?;
+                .context("index unreadable; keep the state folder and see the README, \"If the index is damaged\"")?;
             "ok".into()
         } else {
             db.query_row("PRAGMA quick_check", [], |r| r.get(0))
-                .context("index unreadable; preserve DB/WAL and see docs/operations.md recovery")?
+                .context("index unreadable; keep the state folder and see the README, \"If the index is damaged\"")?
         };
         if check != "ok" {
             bail!("index corruption detected; preserve state and rebuild inventory explicitly");

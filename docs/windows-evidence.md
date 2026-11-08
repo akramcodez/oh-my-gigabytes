@@ -1,6 +1,6 @@
 # Windows evidence
 
-Status: **development build: native Windows scanning of NTFS and ReFS, read-only views and permanent delete on NTFS (`development-unqualified`, owner request 2026-10-15).** Recycle Bin is not implemented. Recorded 2026-10-15 on the owner's machine. Plan: [windows-implementation-plan.md](windows-implementation-plan.md). Safety invariants S01–S12 still apply.
+Status: **development build: native Windows scanning of NTFS and ReFS, read-only views and permanent delete on NTFS (`development-unqualified`, owner request 2026-10-15).** Recycle Bin is not implemented. Recorded 2026-10-15 on the owner's machine. Plan: windows-implementation-plan.md. Safety invariants S01–S12 still apply.
 
 ## Environment
 

@@ -1,6 +1,6 @@
 # Development distribution, authenticity and installation
 
-Status: Phase 4 development packaging implementation. **No npm package or signed public release is published.** Source wrapper/native packages are private; the production signing key and npm namespace ownership are not provisioned. **Update (2026-10-24, owner decision):** the first release is a development-preview beta (`0.1.0-beta.1`) for Linux, Windows and macOS whose binaries include permanent delete, declared `development-unqualified` (macOS since the owner's decision of 2026-11-07, APFS only). See [Releasing the beta](#releasing-the-beta) and [beta-release-progress.md](beta-release-progress.md). The analysis-only variant (`--no-default-features`, delete compiled out) is still built and tested in CI. OS Trash is not implemented.
+Status: Phase 4 development packaging implementation. **No npm package or signed public release is published.** Source wrapper/native packages are private; the production signing key and npm namespace ownership are not provisioned. **Update (2026-10-24, owner decision):** the first release is a development-preview beta (`0.1.0-beta.1`) for Linux, Windows and macOS whose binaries include permanent delete, declared `development-unqualified` (macOS since the owner's decision of 2026-11-07, APFS only). See [Releasing the beta](#releasing-the-beta) and [Not passed yet](#not-passed-yet). The analysis-only variant (`--no-default-features`, delete compiled out) is still built and tested in CI. OS Trash is not implemented.
 
 ## What exists
 
@@ -114,68 +114,14 @@ Everything below runs on a commit that has passed `Checks`. Steps marked **owner
 5. **Draft release (owner).** Create a draft GitHub Release and upload `signed/tarballs/*`, `signed/offline/*`, `SHA256SUMS`, `release-public.pem`, `KEY-FINGERPRINT.txt` and the SBOM. Publish the key fingerprint somewhere independent of the release (the README, `SECURITY.md`, a post).
 6. **Smoke.** Run `Install smoke test` with `source=release`, the release tag and the trusted fingerprint (and `previous_tag` for an upgrade check).
 7. **npm (owner).** `npm publish --tag beta` each tarball with the platform packages first and `oh-my-gigabytes-<version>.tgz` last, so a plain `npm install oh-my-gigabytes` never selects the beta. Names `oh-my-gigabytes` and `oh-my-gigabytes-<target>` were unclaimed on 2026-10-18.
-8. **Publish the release**, and record the run ids in [beta-release-progress.md](beta-release-progress.md).
+8. **Publish the release**, and record the run ids under [Not passed yet](#not-passed-yet).
 
 A user verifies a manual download with `sha256sum -c SHA256SUMS` in the download folder, compares `KEY-FINGERPRINT.txt` with the fingerprint published elsewhere, and installs with `npm install --global --ignore-scripts --offline <offline tarball>`. On macOS a binary downloaded in a browser carries a quarantine mark and is not notarized; the npm path avoids that, and `xattr -d com.apple.quarantine` clears it for a manual copy.
 
-## Release controls still required
+## Not passed yet
 
-- Confirm npm name/platform-package ownership and repository/publisher identities; consider trusted publishing for provenance on npm (a local publish has none). Never ship the dry-run key.
-- CI actions are pinned by commit SHA and updated through Dependabot; keep reviewing those pull requests. Hosted runners now test Linux x64/arm64, Windows x64/arm64 and macOS arm64/Intel; `cargo deny` and the SBOM schema check run in CI.
-- Authenticate release key fingerprints; implement rotation/revocation and offline trust instructions with actual identities.
-- Sign final bytes after any code signing/notarization, attest actual binary and npm builds, inspect package contents/notices and release matrix.
-- Certify native metadata/cloud/Trash/state permissions, recovery and every advertised capability. macOS/Windows stub builds are not cross-platform cleaner support.
-
-No production release or automatic publishing workflow is enabled by this milestone.
-
-
-## Local signed Linux build (0.1.0, analysis-only, not published)
-
-Status: **superseded** by [Releasing the beta](#releasing-the-beta), kept as a record of an earlier local test. It is a local, signed test artifact built on the maintainer's machine, not in the `manylinux_2_28` container, so it does not run on glibc older than 2.39; the beta binaries do run on glibc 2.28. Nothing is uploaded or published. It is not qualified.
-
-| Item | Value |
-| --- | --- |
-| Location | `dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/omg` (git-ignored by `/dist/`) |
-| Files | `artifact/omg`, `artifact/manifest.json`, `artifact/manifest.sig`, `SHA256SUMS` |
-| Variant | `analysis-only` (built with `--no-default-features`; permanent delete is compiled off) |
-| Target | `linux-x64-gnu` (x86_64-unknown-linux-gnu) |
-| Size | 6050792 bytes |
-| SHA-256 | `5fdc6e4c3c4f64b5b0df0fff19f68fb0799d03d0866065add07ed4859462cd4c` |
-| Signing key ID | `22dd52bb7e7e006092f50d05abdb38e8019402c4d45b6f3a53c6cc96c23dff25` |
-| Claimed capabilities | analysis `development-linux`, cleanup `disabled`, service `development-linux` |
-| Minimum glibc | 2.39 (the build host has 2.43) |
-
-### How it was produced
-
-```sh
-# 1. Build the analysis-only binary (permanent delete compiled off).
-cargo build --release -p omg-cli --no-default-features --locked
-cp target/release/omg ~/omg-builds/omg-analysis-only
-
-# 2. Sign it. Keys live outside the repo. The private key must be 0600.
-node scripts/assemble-release.js \
-  --binary ~/omg-builds/omg-analysis-only --target linux-x64-gnu --version 0.1.0 \
-  --variant analysis-only \
-  --public-key ~/omg-release-keys/release-public.pem \
-  --private-key ~/omg-release-keys/release-private.pem \
-  --out /tmp/omg-release-0.1.0-analysis
-
-# 3. Copy the signed artifact into the repo (git-ignored) and verify the copy.
-mkdir -p dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact
-cp /tmp/omg-release-0.1.0-analysis/oh-my-gigabytes-linux-x64-gnu/artifact/* dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/
-sha256sum dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact/omg > dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/SHA256SUMS
-node scripts/verify-release.js \
-  --artifact dist/oh-my-gigabytes-0.1.0-linux-x64-gnu/artifact \
-  --public-key ~/omg-release-keys/release-public.pem --target linux-x64-gnu --version 0.1.0
-```
-
-### Checks performed
-
-- `assemble-release.js` refuses a `full` claim for the analysis-only binary and refuses to write anything. It runs the binary's own `doctor` to confirm the claim.
-- `verify-release.js` passes on the copy in `dist/`.
-
-### Limits
-
-- The test key in `~/omg-release-keys` is for dry runs. Do not publish with it. A real release needs a new key, held by the owner.
-- Not built with an older glibc. Use a container baseline before any public upload (see the checklist).
-- The copy in `dist/` is local only. Publishing requires explicit authorization.
+- No production key or publisher identity; no real release has been signed.
+- Linux ARM64 and Windows on Arm have only hosted-runner evidence; macOS has hosted runners plus one real Apple silicon Mac (no Full Disk Access or iCloud check). macOS stays `development-macos`.
+- `Release build` and `Install smoke test` (dry-run) were re-run on `4535902` (2026-11-05): `Release build` run 41977876172 passed for all four targets and the dependency inventory; `Install smoke test` dry-run run 41978189694 (throwaway key, build from that run) passed on seven machines (ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-latest, macos-15, macos-26). `cargo deny check` (advisories, bans, licenses, sources) passed locally the same day. Still not run: the smoke test in `release` mode (real signed assets, trusted key fingerprint, upgrade from an earlier release). **Update 2026-11-07:** the index format (schema 12) and the release profile changed after `4535902` ([phase1-evidence.md](phase1-evidence.md), "Index size"), so those dry runs and the final macOS check steps that used the CI-built binary no longer cover the release candidate; `Checks`, `Release build` and `Install smoke test` must run again on the new commit.
+- Permanent delete (Linux and Windows) is not qualified: no recorded native evidence per filesystem, the XFS, Btrfs and old-kernel runs are missing, and the MSVC release binary from `release.yml` has not deleted anything on a real Windows 11 machine (a GNU-toolchain release build did, through ConPTY, on 2026-11-02), nor has any build on a real Linux ARM64 machine. It ships as `development-unqualified` on the owner's decision, with that label in the README, `omg doctor` and the signed manifest.
+- Kernel floor, XFS and Btrfs native runs, service qualification, Windows hard-link totals, ConPTY and virtual-disk matrices, benchmarks, usability review (V01).

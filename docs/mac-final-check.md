@@ -154,7 +154,7 @@ HOME="$T" "$OMG" --state-dir "$S"
 
 ## 9. The binary CI builds for the release, installed like a user would
 
-This checks the exact `darwin-arm64` binary from the `Release build` workflow (built on a hosted macOS 15 runner), signed with a throwaway key on your Mac and installed through npm. It is also the dry run of the changed `release.yml` that [beta-release-progress.md](beta-release-progress.md) still lists as not done. Needs `gh` 2.49 or newer, logged in.
+This checks the exact `darwin-arm64` binary from the `Release build` workflow (built on a hosted macOS 15 runner), signed with a throwaway key on your Mac and installed through npm. It is also the dry run of the changed `release.yml` that [release.md](release.md#not-passed-yet) still lists as not done. Needs `gh` 2.49 or newer, logged in.
 
 ```sh
 gh workflow run release.yml --ref main
@@ -199,6 +199,6 @@ hdiutil info | grep omg- || echo "no omg disk images mounted"
 
 ## Where the results go
 
-Add a section "Final check (DATE)" to [macos-evidence.md](macos-evidence.md) with the environment (Mac model, macOS version, terminal apps), the commit, and for each step: pass, or what happened. Then update the macOS lines in [beta-release-progress.md](beta-release-progress.md) ("Not passed yet") and, if step 9 ran, the `Release build` run id. Anything that failed is a release blocker until it is fixed or explicitly accepted by the owner.
+Add a section "Final check (DATE)" to [macos-evidence.md](macos-evidence.md) with the environment (Mac model, macOS version, terminal apps), the commit, and for each step: pass, or what happened. Then update the macOS lines in [release.md](release.md#not-passed-yet) ("Not passed yet") and, if step 9 ran, the `Release build` run id. Anything that failed is a release blocker until it is fixed or explicitly accepted by the owner.
 
 Not covered by this pass and still open after it: Intel Macs (not a release target), macOS older than 15, Time Machine local snapshots, a second Mac, Apple notarization.

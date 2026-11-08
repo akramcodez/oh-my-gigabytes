@@ -1,6 +1,6 @@
 # macOS evidence
 
-Status: **native analysis-only adapter, tested only on GitHub-hosted runners.** `platform::macos` scans APFS, HFS+, exFAT and FAT volumes and never changes a file. Permanent delete, OS Trash and a background service do not exist on macOS. Hosted runners were the first test bed; one real Mac has now run the suite once (see "Real Mac" below). Nothing here is a certification. See [beta-release-progress.md](beta-release-progress.md).
+Status: **native analysis-only adapter, tested only on GitHub-hosted runners.** `platform::macos` scans APFS, HFS+, exFAT and FAT volumes and never changes a file. Permanent delete, OS Trash and a background service do not exist on macOS. Hosted runners were the first test bed; one real Mac has now run the suite once (see "Real Mac" below). Nothing here is a certification. See [release.md](release.md#not-passed-yet).
 
 ## Test bed
 
@@ -10,7 +10,7 @@ Status: **native analysis-only adapter, tested only on GitHub-hosted runners.** 
 | `macos-15` | 15.7.9 (24G830) | arm64 | same layout |
 | `macos-15-intel` | 15.7.9 (24G830) | x86_64 | same layout; GitHub retires Intel images in fall 2027 |
 
-The repository is public, so standard hosted runners are free. Workflow: `.github/workflows/macos-probe.yml`; probe sources: `spikes/macos-probe/probe.c` and `images.sh`. First run: GitHub Actions run 39106110919 on commit `4f6e8f3`, all three jobs passed.
+The repository is public, so standard hosted runners are free. The probe workflow and its sources (`spikes/macos-probe`) were removed once the adapter existed; they are in Git history. First run: GitHub Actions run 39106110919 on commit `4f6e8f3`, all three jobs passed.
 
 ## Measured (R03, first run)
 
@@ -157,4 +157,4 @@ Not done: a real iCloud placeholder or synced Desktop and Documents (no such fil
 
 ## Gates not passed
 
-No macOS older than 15, only one real Mac (Apple silicon, macOS 26), no Intel Mac, no Full Disk Access / iCloud / Time Machine behaviour, no Apple notarization or code-signing identity, and the signed packages were assembled here only with a throwaway key (no production key exists). The macOS items in `docs/checklist.md` stay unchecked.
+No macOS older than 15, only one real Mac (Apple silicon, macOS 26), no Intel Mac, no Full Disk Access / iCloud / Time Machine behaviour, no Apple notarization or code-signing identity, and the signed packages were assembled here only with a throwaway key (no production key exists). The macOS items in `docs/release.md` stay unchecked.

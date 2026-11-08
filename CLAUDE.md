@@ -9,19 +9,17 @@ OMG (Oh My Gigabytes) is a local-first, keyboard-first storage analyzer for deve
 It is a **development preview**:
 - **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. Permanent delete runs on Linux, Windows NTFS and macOS APFS. The older `planning::execute` still always fails closed.
 - **Linux, Windows and macOS.** Native scanning and state work on all three. Permanent delete exists on Linux, Windows NTFS and macOS APFS in the default build only. Windows scans NTFS and ReFS (FAT32/exFAT are refused with a message). The background service is Linux only. macOS scans APFS, HFS+, exFAT and FAT through `platform::macos` (macOS 15 or newer) and has been tested on GitHub-hosted runners and one Apple silicon Mac. Status and gaps: `docs/windows-evidence.md`, `docs/macos-evidence.md`, `docs/linux-qualification.md`.
-- **First release is a development-preview beta (`0.1.0-beta.1`) and includes permanent delete on every platform (owner decisions 2026-10-24 and, for macOS, 2026-11-07).** Release builds use the default features and declare `cleanup: development-unqualified`. `--no-default-features` still builds, tests and lints the analysis-only variant. Progress and what is left: `docs/beta-release-progress.md`. Procedure: `docs/release.md`, "Releasing the beta".
-- **Phases ship as development milestones.** Phases 0–5 are recorded as milestones with unpassed acceptance gates. See `docs/checklist.md`.
+- **First release is a development-preview beta (`0.1.0-beta.1`) and includes permanent delete on every platform (owner decisions 2026-10-24 and, for macOS, 2026-11-07).** Release builds use the default features and declare `cleanup: development-unqualified`. `--no-default-features` still builds, tests and lints the analysis-only variant. Procedure and what is left: `docs/release.md`, "Releasing the beta" and "Not passed yet".
 
 ## Source-of-truth documents
 
-- `docs/fullcontext.md` is the authoritative product brief.
 - `docs/safety.md` defines the mandatory invariants **S01–S12**. No flag, config, catalog rule or user preference may weaken them.
-- `docs/checklist.md` and `docs/phaseN-evidence.md` record what is actually implemented and verified, plus the gates that have not passed. Their stated limits override the forward-looking design docs: `architecture.md`, `operations.md`, `ux.md` and `rules.md`.
+- `docs/evidence.md` and the platform pages (`docs/linux-qualification.md`, `docs/macos-evidence.md`, `docs/windows-evidence.md`) record what is implemented and verified, and the gates that have not passed. `docs/release.md` is the release procedure and its open items; `docs/mac-final-check.md` is the owner's hands-on Mac pass.
+- Planning, phase and research documents were removed before the first release; they are in Git history.
 - When documents disagree, keep the stronger safety requirement.
 
 Documentation is evidence-based:
-- A checklist item is `[x]` only when the deliverable exists and its check passed.
-- Completing work means updating the matching `docs/phaseN-evidence.md`. Record the environment, the exact verification commands, measured results and the gates that have not passed.
+- Completing work means updating `docs/evidence.md` or the matching platform page. Record the environment, the exact verification commands, measured results and the gates that have not passed.
 - Never claim platform certification, performance, or "safe to delete" without native evidence.
 
 ## Commands
@@ -48,7 +46,6 @@ cargo test -p omg-core --test migrations                   # schema 1..12 upgrad
 cargo test -p omg-core --test macos                        # macOS only: hdiutil disk images (APFS, HFS+, exFAT, FAT32)
 scripts/fs-sandbox.sh ext4|xfs|btrfs up|test|down          # loop-image filesystem sandbox (needs sudo and mkfs tools)
 cargo run --release -p omg-core --example benchmark        # synthetic scan benchmark
-python3 -m unittest discover -s spikes/phase0 -p 'test_*.py' -v   # Phase 0 Python probe (not the engine)
 cargo test -p omg-core --test windows                     # Windows only: native scan and delete tests
 python -m unittest discover -s tests -p 'test_terminal_windows.py' -v   # Windows only: ConPTY tests, including delete (pip install pywinpty==2.0.15; uses target/debug/omg.exe or OMG_BINARY)
 ```

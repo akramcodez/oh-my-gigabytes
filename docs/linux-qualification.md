@@ -8,7 +8,7 @@ Status: **no profile is qualified.** This page records what was actually run, an
 | --- | --- | --- |
 | Analysis | Metadata scan, index, TUI/CLI browsing, findings | Development; tested on tmpfs and Btrfs |
 | Permanent delete (D15) | Home-only, confirmed plan, revalidated, not recoverable | `development-unqualified` on ext-family, tmpfs, Btrfs |
-| OS Trash | Reversible move to the freedesktop Trash | `unsupported` (see `linux-os-trash-investigation.md`) |
+| OS Trash | Reversible move to the freedesktop Trash | `unsupported` (see `the OS Trash investigation (Git history)`) |
 | Service | Optional scan-only systemd user unit | Development; Linux-only tests pass here; desktop notifications broken on this host |
 
 ## Profiles
