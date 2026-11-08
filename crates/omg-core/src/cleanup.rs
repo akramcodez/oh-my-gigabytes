@@ -210,8 +210,25 @@ fn is_cache_root(absolute: &Path, home: &Path) -> bool {
     crate::catalog::DISCOVERIES
         .iter()
         .filter_map(|kind| crate::catalog::discovery_root(kind, home))
+        .chain(
+            crate::catalog::toolchains(home)
+                .into_iter()
+                .flat_map(|t| t.roots),
+        )
         .any(|root| absolute.starts_with(&root))
 }
+
+/// An application's own folder directly in a per-user data area: not a cache, so it stays an
+/// ordinary folder (anything protected inside stops the deletion) and carries a warning.
+fn app_data_folder(absolute: &Path, home: &Path) -> bool {
+    absolute.parent().is_some_and(|parent| {
+        crate::catalog::app_data_parents(home)
+            .iter()
+            .any(|p| p == parent)
+    })
+}
+
+const APP_DATA: &str = "an application's own data: its settings, sign-ins and offline files go with it, and it starts fresh next time";
 
 /// Live (identity, creation time) of a root-relative path, read without following links.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -396,7 +413,11 @@ pub fn verdict(
                 .contains(&n.to_string_lossy().as_ref())
             });
             Verdict {
-                gate: Gate::Allowed,
+                gate: if !cache && app_data_folder(&absolute, home) {
+                    Gate::Warn(APP_DATA.into())
+                } else {
+                    Gate::Allowed
+                },
                 kind: if cache || regenerable {
                     Kind::Cache
                 } else {
@@ -602,6 +623,8 @@ impl Index {
                 "old_tool_versions",
                 "session_history",
                 "unused_clones",
+                "unused_apps",
+                "unused_toolchains",
             ]
             .contains(&finding.rule.category.as_str())
                 || finding.effective_tier == "protected"

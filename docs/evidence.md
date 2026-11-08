@@ -2,6 +2,21 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Unused applications and toolchains (2026-11-08)
+
+Requested by the owner after a Windows scan where `AppData` held 45 GiB of 62 GiB and `.rustup` 6 GiB. Two discoveries, on Linux, macOS and Windows, feed `Index::suggest` (categories `unused_apps`, `unused_toolchains`); listing authorizes nothing and every item still goes through a confirmed plan.
+
+- `unused_app_data`: a direct subfolder of `%USERPROFILE%\AppData\{Local,LocalLow,Roaming}` (plus `LOCALAPPDATA`/`APPDATA`), `~/Library/Application Support`, or `~/.local/share`, `~/.config`, `~/.cache` (plus the XDG overrides); 50 MB or more; newest modification time in the subtree older than 150 days; no unreadable part; `dir_totals.protected = 0`, so a folder with a database, key or other protected item is never suggested (docs/safety.md, "Databases: deny parent removal that contains them"); not hidden, not `com.apple.*`, not a system/desktop/VM name (`Microsoft`, `Packages`, `Programs`, `Temp`, `Docker`, `wsl`, `Trash`, `keyrings`, `flatpak`, `containers`, `omg`, ...); and not overlapping a known cache, a toolchain or the AI tool's folders. At deletion it stays `Kind::Plain` (every descendant checked) and carries a warning that the app's settings and sign-ins go with it.
+- `unused_toolchain`: `.rustup` (with `.cargo`), nvm (with `.npm`), pyenv, SDKMAN! (with `.gradle`, `.m2`), the Android SDK (with `.gradle`, `.android`), at the default location and any absolute override; 50 MB or more; it and its related folders unchanged for 150 days; and no folder named `target`, `node_modules`, `__pycache__`/`.venv`/`venv` or `build`/`.gradle` anywhere in the scan changed in that time. Toolchains are cache roots at deletion.
+
+Limits: "unchanged" is the newest modification time, not last use. An app that only reads its folder looks unused; a build outside the scanned folder is not seen. Both rules say so in their warnings.
+
+Environment: WSL2 (Linux 5.15.167.4-microsoft-standard-WSL2), ext4, Rust 1.95.0. Verification: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` in both builds; `cargo test --workspace --locked` and `--no-default-features`, all passed; `python3 -m unittest discover -s tests -p 'test_*.py'` (8 run, OK, 3 skipped); `node --test packages/oh-my-gigabytes/test/release.test.js` (21 passed). New tests: `apps_untouched_for_five_months_are_suggested_with_a_warning_and_can_be_deleted` and `a_toolchain_unused_for_five_months_is_suggested_unless_something_used_it` in `tests/cleanup.rs` (recent app, database inside, small, `Trash`, hidden, recent build, recent `.cargo`, recent toolchain are all left out; the suggested folder is deleted through a confirmed plan), and `appdata_and_toolchains_unused_for_five_months_are_suggested_and_deletable` in `tests/windows.rs`. A scan of the WSL home (all of it younger than 3 months) produced no such suggestion, as expected.
+
+Windows, natively on the owner's laptop (NTFS, Rust 1.95.0 `x86_64-pc-windows-gnu` with MinGW, `TMP` outside any repository): `cargo test -p omg-core --test windows --locked`, 17 passed, including the new test. A scan of the real profile (`omg --state-dir <private> scan --root "C:\Users\<owner>" --no-suggest`: 1,082,642 entries, 0 errors, 28.5 s debug build) then `omg findings` listed 9 `unused_apps` folders, 2.13 GiB in all, the largest 0.65 GiB (`AppData\Roaming\discord`). `.rustup` (6 GiB) was correctly not listed: toolchains in it had been used that day. Nothing was deleted; the copy, build output and state were removed afterwards.
+
+Not passed yet: the macOS leg of `tests/cleanup.rs` was not run locally (no Mac here); it runs in CI. The MSVC Windows build was not run locally (no C++ build tools on the laptop); CI builds with MSVC.
+
 ## Index size (2026-11-07)
 
 The index stored every path twice and a parent copy twice, and its file never shrank: deleted scans left free pages, so after one rescan it stayed about twice the size of its data. Changes:

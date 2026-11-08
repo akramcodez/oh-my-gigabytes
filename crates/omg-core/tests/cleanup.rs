@@ -1519,3 +1519,142 @@ fn projects_and_session_history_are_only_deleted_on_their_own() {
     assert!(!h.join(".claude/projects/p/old.jsonl").exists());
     assert!(h.join("rusty/target/debug/app").exists());
 }
+
+fn app_area(home: &Path) -> std::path::PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/Application Support")
+    } else {
+        home.join(".local/share")
+    }
+}
+fn relative(home: &Path, path: &Path) -> Vec<u8> {
+    path.strip_prefix(home)
+        .unwrap()
+        .as_os_str()
+        .as_encoded_bytes()
+        .to_vec()
+}
+fn five_months_and_more_ago() -> std::time::SystemTime {
+    std::time::SystemTime::now() - std::time::Duration::from_secs(200 * 86_400)
+}
+const OVER_FLOOR: usize = 51 << 20;
+
+#[test]
+fn apps_untouched_for_five_months_are_suggested_with_a_warning_and_can_be_deleted() {
+    let (home, state) = setup();
+    let h = home.path();
+    let area = app_area(h);
+    for app in ["OldApp", "RecentApp", "DatabaseApp", "Trash", ".hidden-app"] {
+        write_bytes(&area.join(app).join("data/blob"), OVER_FLOOR);
+    }
+    write_bytes(&area.join("DatabaseApp/state.sqlite"), 100);
+    write_bytes(&area.join("SmallApp/settings"), 100);
+    for app in ["OldApp", "DatabaseApp", "SmallApp", "Trash", ".hidden-app"] {
+        age(&area.join(app), five_months_and_more_ago());
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let old = relative(h, &area.join("OldApp"));
+    assert_eq!(
+        suggested(&index),
+        vec![old.clone()],
+        "only the big, untouched app folder without protected items is suggested"
+    );
+    let item = index.marked().unwrap().remove(0);
+    assert!(
+        item.warning
+            .as_deref()
+            .is_some_and(|w| w.contains("application's own data")),
+        "{:?}",
+        item.warning
+    );
+    assert!(
+        h.join(platform_path(&old)).exists(),
+        "listing never deletes"
+    );
+    let plan = index.prepare_delete(&[item.id], h).unwrap();
+    assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
+    index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert!(!area.join("OldApp").exists());
+    for kept in [
+        "RecentApp",
+        "DatabaseApp",
+        "SmallApp",
+        "Trash",
+        ".hidden-app",
+    ] {
+        assert!(area.join(kept).exists(), "{kept} must stay");
+    }
+}
+
+fn platform_path(raw: &[u8]) -> std::path::PathBuf {
+    std::path::PathBuf::from(String::from_utf8(raw.to_vec()).unwrap())
+}
+
+#[test]
+fn a_toolchain_unused_for_five_months_is_suggested_unless_something_used_it() {
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(
+        &h.join(".rustup/toolchains/stable/lib/librustc.so"),
+        OVER_FLOOR,
+    );
+    write_bytes(&h.join(".cargo/registry/index/config.json"), 100);
+    age(&h.join(".rustup"), five_months_and_more_ago());
+    age(&h.join(".cargo"), five_months_and_more_ago());
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert!(
+        suggested(&index).contains(&b".rustup".to_vec()),
+        "{:?}",
+        suggested(&index)
+    );
+    // A toolchain is regenerable: its installer downloads it again.
+    assert_eq!(index.mark(b".rustup", 1, h).unwrap(), Gate::Allowed);
+    index.unmark(id_of(&index, b".rustup")).unwrap();
+
+    // A project built recently means Rust is still in use, even if the toolchain is old.
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(
+        &h.join(".rustup/toolchains/stable/lib/librustc.so"),
+        OVER_FLOOR,
+    );
+    age(&h.join(".rustup"), five_months_and_more_ago());
+    write_bytes(&h.join("work/app/Cargo.toml"), 10);
+    write_bytes(&h.join("work/app/target/debug/app"), 10);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert!(!suggested(&index).contains(&b".rustup".to_vec()));
+
+    // So does a recent change in the toolchain's other folders (cargo's registry).
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(
+        &h.join(".rustup/toolchains/stable/lib/librustc.so"),
+        OVER_FLOOR,
+    );
+    age(&h.join(".rustup"), five_months_and_more_ago());
+    write_bytes(&h.join(".cargo/registry/index/config.json"), 100);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert!(!suggested(&index).contains(&b".rustup".to_vec()));
+
+    // And a toolchain changed recently is in use.
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(
+        &h.join(".rustup/toolchains/stable/lib/librustc.so"),
+        OVER_FLOOR,
+    );
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert!(suggested(&index).is_empty());
+}

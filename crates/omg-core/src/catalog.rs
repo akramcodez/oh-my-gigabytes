@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
 /// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
-pub const DISCOVERIES: [&str; 18] = [
+pub const DISCOVERIES: [&str; 20] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -26,7 +26,163 @@ pub const DISCOVERIES: [&str; 18] = [
     "colima_vm",
     "docker_desktop_vm",
     "unused_clone",
+    "unused_app_data",
+    "unused_toolchain",
 ];
+
+/// An application or toolchain unchanged for this long (about five months) counts as unused.
+pub const UNUSED_DAYS: i64 = 150;
+
+fn absolute_env(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os(name)
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+/// Folders whose direct subfolders each belong to one application: the per-user data, config and
+/// cache areas of each platform. The defaults are always included; an absolute override is added.
+pub fn app_data_parents(home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out: Vec<std::path::PathBuf> = if cfg!(windows) {
+        let mut out = vec![
+            home.join("AppData").join("Local"),
+            home.join("AppData").join("LocalLow"),
+            home.join("AppData").join("Roaming"),
+        ];
+        out.extend(absolute_env("LOCALAPPDATA"));
+        out.extend(absolute_env("APPDATA"));
+        out
+    } else if cfg!(target_os = "macos") {
+        vec![home.join("Library/Application Support")]
+    } else {
+        let mut out = vec![
+            home.join(".local/share"),
+            home.join(".config"),
+            home.join(".cache"),
+        ];
+        out.extend(absolute_env("XDG_DATA_HOME"));
+        out.extend(absolute_env("XDG_CONFIG_HOME"));
+        out.extend(absolute_env("XDG_CACHE_HOME"));
+        out
+    };
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Subfolders of the application areas that the system, the desktop or a VM manages, or that hold
+/// installed programs, credentials or OMG's own state. Compared without regard to case.
+const APP_DATA_SKIP: [&str; 34] = [
+    // Windows
+    "microsoft",
+    "packages",
+    "programs",
+    "temp",
+    "comms",
+    "connecteddevicesplatform",
+    "d3dscache",
+    "crashdumps",
+    "peerdistrepub",
+    "publishers",
+    "virtualstore",
+    "history",
+    "application data",
+    "temporary internet files",
+    "docker",
+    "wsl",
+    "lxss",
+    // Linux desktop
+    "trash",
+    "keyrings",
+    "containers",
+    "flatpak",
+    "systemd",
+    "gnome-shell",
+    "applications",
+    "fonts",
+    "icons",
+    "dconf",
+    "autostart",
+    "evolution",
+    // macOS
+    "crashreporter",
+    "knowledge",
+    "fileprovider",
+    "clouddocs",
+    // OMG itself
+    "omg",
+];
+
+/// A development toolchain: the folders it installs into (its default and any absolute override),
+/// other folders it writes to while in use, and the names of project folders its builds write (a
+/// recent one means it is still used).
+pub struct Toolchain {
+    pub name: &'static str,
+    pub roots: Vec<std::path::PathBuf>,
+    pub also: Vec<std::path::PathBuf>,
+    pub outputs: &'static [&'static str],
+}
+
+/// The default location plus an absolute override, without duplicates.
+fn located(default: std::path::PathBuf, overridden: &str) -> Vec<std::path::PathBuf> {
+    let mut out = vec![default];
+    out.extend(absolute_env(overridden).filter(|p| *p != out[0]));
+    out
+}
+
+/// Per-user toolchain installs, at each tool's documented location or absolute override.
+pub fn toolchains(home: &std::path::Path) -> Vec<Toolchain> {
+    let gradle = located(home.join(".gradle"), "GRADLE_USER_HOME");
+    let android = if cfg!(windows) {
+        home.join("AppData")
+            .join("Local")
+            .join("Android")
+            .join("Sdk")
+    } else if cfg!(target_os = "macos") {
+        home.join("Library/Android/sdk")
+    } else {
+        home.join("Android/Sdk")
+    };
+    let nvm = if cfg!(windows) {
+        located(home.join("AppData").join("Roaming").join("nvm"), "NVM_HOME")
+    } else {
+        located(home.join(".nvm"), "NVM_DIR")
+    };
+    let mut out = vec![
+        Toolchain {
+            name: "Rust (rustup)",
+            roots: located(home.join(".rustup"), "RUSTUP_HOME"),
+            also: located(home.join(".cargo"), "CARGO_HOME"),
+            outputs: &["target"],
+        },
+        Toolchain {
+            name: "Node.js (nvm)",
+            roots: nvm,
+            also: vec![home.join(".npm")],
+            outputs: &["node_modules"],
+        },
+        Toolchain {
+            name: "Python (pyenv)",
+            roots: located(home.join(".pyenv"), "PYENV_ROOT"),
+            also: vec![],
+            outputs: &["__pycache__", ".venv", "venv"],
+        },
+        Toolchain {
+            name: "Android SDK",
+            roots: located(android, "ANDROID_HOME"),
+            also: [gradle.clone(), vec![home.join(".android")]].concat(),
+            outputs: &["build", ".gradle"],
+        },
+    ];
+    if !cfg!(windows) {
+        out.push(Toolchain {
+            name: "Java (SDKMAN!)",
+            roots: located(home.join(".sdkman"), "SDKMAN_DIR"),
+            also: [gradle, vec![home.join(".m2")]].concat(),
+            outputs: &["build", ".gradle", "target"],
+        });
+    }
+    out
+}
 
 /// A `~/Library/Caches` folder the system manages, including one without Apple's usual prefix.
 pub(crate) fn apple_cache(name: &str) -> bool {
@@ -291,6 +447,8 @@ pub fn parse(payload: &str) -> Result<Catalog> {
             "session_history",
             "container_storage",
             "unused_clones",
+            "unused_apps",
+            "unused_toolchains",
         ]
         .contains(&rule.category.as_str())
         {
@@ -599,6 +757,12 @@ impl Index {
         if cfg!(target_os = "macos") {
             found.push(("app_caches", self.app_caches(scan, &root, &home)?));
         }
+        // Before app data, so a toolchain inside an application area is judged as a toolchain.
+        found.push((
+            "unused_toolchain",
+            self.unused_toolchains(scan, &root, &home)?,
+        ));
+        found.push(("unused_app_data", self.unused_app_data(scan, &root, &home)?));
         for (discovery, paths) in found {
             let Some(rule) = catalog
                 .rules
@@ -752,6 +916,132 @@ impl Index {
             if !apple_cache(&String::from_utf8_lossy(
                 name.strip_prefix(b"/").unwrap_or(name),
             )) {
+                out.push(path);
+            }
+        }
+        Ok(out)
+    }
+    /// Toolchains not changed for `UNUSED_DAYS`, whose other folders did not change either, and with
+    /// no project build folder of theirs written since. Unreadable parts mean unknown, not unused.
+    fn unused_toolchains(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let cutoff = crate::now() - UNUSED_DAYS * 86_400;
+        let gaps = self.gaps(scan)?;
+        let mut out = Vec::new();
+        for toolchain in toolchains(home) {
+            for install in &toolchain.roots {
+                let Some(path) = crate::rollup::relative_raw(root, install) else {
+                    continue;
+                };
+                let Some(totals) = self.subtree(&path)? else {
+                    continue;
+                };
+                if path.is_empty()
+                    || totals.allocated < SUGGEST_MIN_BYTES as u64
+                    || totals.newest <= 0
+                    || totals.newest >= cutoff
+                    || gaps.covers(&path)
+                {
+                    continue;
+                }
+                let mut recent = false;
+                for other in &toolchain.also {
+                    let Some(other) = crate::rollup::relative_raw(root, other) else {
+                        continue;
+                    };
+                    if let Some(t) = self.subtree(&other)? {
+                        recent |= t.newest >= cutoff || gaps.covers(&other);
+                    }
+                }
+                for name in toolchain.outputs {
+                    recent = recent || self.recent_folder_named(scan, name, cutoff)?;
+                }
+                if !recent && !out.contains(&path) {
+                    out.push(path);
+                }
+            }
+        }
+        Ok(out)
+    }
+    /// Whether any folder called `name` anywhere in the scan changed at or after `since`.
+    fn recent_folder_named(&self, scan: i64, name: &str, since: i64) -> Result<bool> {
+        let mut nested = b"/".to_vec();
+        nested.extend_from_slice(name.as_bytes());
+        Ok(self
+            .db
+            .prepare_cached(
+                "SELECT 1 FROM dir_totals WHERE scan_id=?1 AND newest>=?2 AND (path=?3 OR substr(path,-?4)=?5) LIMIT 1",
+            )?
+            .exists(params![
+                scan,
+                since,
+                name.as_bytes(),
+                i64::try_from(nested.len())?,
+                nested
+            ])?)
+    }
+    /// Applications' own folders in the per-user data areas, 50 MB or larger, not changed for
+    /// `UNUSED_DAYS`, with nothing protected inside (a database or credential inside means the
+    /// folder is not suggested at all). Folders that hold or sit in a known cache or toolchain are
+    /// left to those rules.
+    fn unused_app_data(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let cutoff = crate::now() - UNUSED_DAYS * 86_400;
+        let gaps = self.gaps(scan)?;
+        let mut known: Vec<Vec<u8>> = DISCOVERIES
+            .iter()
+            .filter_map(|kind| discovery_root(kind, home))
+            .chain(toolchains(home).into_iter().flat_map(|t| t.roots))
+            .chain([home.join(".local/share/claude"), home.join(".claude")])
+            .filter_map(|p| crate::rollup::relative_raw(root, &p))
+            .collect();
+        known.retain(|p| !p.is_empty());
+        let mut statement = self.db.prepare(
+            "SELECT path,newest,protected FROM dir_totals WHERE scan_id=? AND parent=? AND allocated>=? AND path<>x''",
+        )?;
+        let mut out: Vec<Vec<u8>> = Vec::new();
+        for parent in app_data_parents(home) {
+            let Some(parent) = crate::rollup::relative_raw(root, &parent) else {
+                continue;
+            };
+            if parent.is_empty() {
+                continue;
+            }
+            let rows = statement.query_map(params![scan, parent, SUGGEST_MIN_BYTES], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (path, newest, protected) = row?;
+                let name = crate::index::split_path(&path).1;
+                let name = String::from_utf8_lossy(name.strip_prefix(b"/").unwrap_or(name))
+                    .to_ascii_lowercase();
+                let newest = newest.unwrap_or(0);
+                if name.starts_with('.')
+                    || name.starts_with("com.apple.")
+                    || APP_DATA_SKIP.contains(&name.as_str())
+                    || protected != 0
+                    || newest <= 0
+                    || newest >= cutoff
+                    || gaps.covers(&path)
+                    || known
+                        .iter()
+                        .any(|k| policy::inside(&path, k, true) || policy::inside(k, &path, true))
+                    || out.contains(&path)
+                {
+                    continue;
+                }
                 out.push(path);
             }
         }
@@ -972,7 +1262,7 @@ mod tests {
     #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 18);
+        assert_eq!(parse(payload).unwrap().rules.len(), 20);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());

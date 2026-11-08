@@ -478,6 +478,67 @@ mod deletion {
         assert!(report.needs_reconcile, "{report:?}");
         assert_eq!(fs::read(h.join("keep/data.bin")).unwrap().len(), 8192);
     }
+
+    /// Set a file's or folder's modification time (folders need backup semantics to be opened).
+    fn age(path: &Path, past: std::time::SystemTime) {
+        if path.is_dir() {
+            for item in fs::read_dir(path).unwrap() {
+                age(&item.unwrap().path(), past);
+            }
+        }
+        const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        fs::OpenOptions::new()
+            .access_mode(FILE_WRITE_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+
+    #[test]
+    fn appdata_and_toolchains_unused_for_five_months_are_suggested_and_deletable() {
+        let Some(home) = sandbox() else { return };
+        let h = home.path();
+        let local = h.join("AppData").join("Local");
+        let big = vec![7u8; 51 << 20];
+        for app in ["OldApp", "RecentApp", "Microsoft", "DatabaseApp"] {
+            fs::create_dir_all(local.join(app)).unwrap();
+            fs::write(local.join(app).join("blob"), &big).unwrap();
+        }
+        fs::write(local.join("DatabaseApp").join("state.sqlite"), b"x").unwrap();
+        fs::create_dir_all(h.join(".rustup").join("toolchains")).unwrap();
+        fs::write(h.join(".rustup").join("toolchains").join("lib"), &big).unwrap();
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(200 * 86_400);
+        for old in ["OldApp", "Microsoft", "DatabaseApp"] {
+            age(&local.join(old), past);
+        }
+        age(&h.join(".rustup"), past);
+        let state = state();
+        let mut index = Index::open(state.path()).unwrap();
+        scan(&mut index, h);
+        index.suggest(h).unwrap();
+        let mut listed: Vec<Vec<u8>> = index
+            .marked()
+            .unwrap()
+            .into_iter()
+            .map(|m| m.path)
+            .collect();
+        listed.sort();
+        assert_eq!(
+            listed,
+            vec![b".rustup".to_vec(), b"AppData/Local/OldApp".to_vec()],
+            "recent apps, system folders and folders with a database inside are never suggested"
+        );
+        let id = id_of(&index, b"AppData/Local/OldApp");
+        let report = delete(&mut index, &[id], h);
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+        assert!(!local.join("OldApp").exists());
+        for kept in ["RecentApp", "Microsoft", "DatabaseApp"] {
+            assert!(local.join(kept).exists(), "{kept} must stay");
+        }
+    }
 }
 
 /// The owner-only state directory (the Windows counterpart of the Unix 0700 check).
