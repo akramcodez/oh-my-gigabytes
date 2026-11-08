@@ -70,7 +70,10 @@ function assemble({ binary, target, version, publicKey, privateKey, out, variant
     fs.writeFileSync(path.join(artifact, filename), data, { mode: 0o755 });
     fs.writeFileSync(path.join(artifact, 'manifest.json'), bytes);
     fs.writeFileSync(path.join(artifact, 'manifest.sig'), signature);
+    const wrapperSource = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8'));
     const nativePackage = { name: `oh-my-gigabytes-${target}`, version, private: !publishable,
+      description: `Signed ${target} binary for oh-my-gigabytes; install oh-my-gigabytes instead`,
+      homepage: wrapperSource.homepage, repository: wrapperSource.repository, bugs: wrapperSource.bugs,
       license: 'MIT OR Apache-2.0', os: [target.split('-')[0]], cpu: [target.split('-')[1]],
       files: ['artifact', 'LICENSE-MIT', 'LICENSE-APACHE', 'README.md'] };
     if (target.startsWith('linux-')) nativePackage.libc = ['glibc'];

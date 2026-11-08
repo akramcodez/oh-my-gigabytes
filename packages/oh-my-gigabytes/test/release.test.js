@@ -198,6 +198,13 @@ test('sign-release can mark the packages publishable only when asked', t => {
   signRelease({ artifacts: ciArtifacts(f.directory), version: '0.1.0-beta.1', publicKey: f.publicFile, privateKey: f.privateFile, out, skipAttestation: true, publishable: true, checkBinary: false });
   assert.equal(JSON.parse(tarText(path.join(out, 'tarballs/oh-my-gigabytes-0.1.0-beta.1.tgz'), 'package/package.json')).private, false);
   assert.equal(JSON.parse(tarText(path.join(out, 'tarballs/oh-my-gigabytes-linux-x64-gnu-0.1.0-beta.1.tgz'), 'package/package.json')).private, false);
+  // npm shows the README and links to the repository for every published package.
+  for (const name of ['oh-my-gigabytes', 'oh-my-gigabytes-linux-x64-gnu']) {
+    const meta = JSON.parse(tarText(path.join(out, `tarballs/${name}-0.1.0-beta.1.tgz`), 'package/package.json'));
+    assert.match(meta.repository.url, /github\.com\/akramcodez\/oh-my-gigabytes/);
+    assert.ok(meta.homepage && meta.bugs && meta.description, name);
+    assert.match(tarText(path.join(out, `tarballs/${name}-0.1.0-beta.1.tgz`), 'package/README.md'), /npm install --global oh-my-gigabytes@beta/);
+  }
 });
 
 test('sign-release refuses a binary that does not match its recorded digest, a missing repo and an existing output', t => {
