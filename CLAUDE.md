@@ -9,7 +9,7 @@ OMG (Oh My Gigabytes) is a local-first, keyboard-first storage analyzer for deve
 It is a **development preview**:
 - **Cleanup is explicit and home-scoped (decision D15).** Users add paths to "OMG Trash" (a saved list; nothing moves) and can delete permanently after a confirmed plan, via `cleanup.rs`. Permanent delete runs on Linux, Windows NTFS and macOS APFS. The older `planning::execute` still always fails closed.
 - **Linux, Windows and macOS.** Native scanning and state work on all three. Permanent delete exists on Linux, Windows NTFS and macOS APFS in the default build only. Windows scans NTFS and ReFS (FAT32/exFAT are refused with a message). The background service is Linux only. macOS scans APFS, HFS+, exFAT and FAT through `platform::macos` (macOS 15 or newer) and has been tested on GitHub-hosted runners and one Apple silicon Mac. Status and gaps: `docs/windows-evidence.md`, `docs/macos-evidence.md`, `docs/linux-qualification.md`.
-- **First release is a development-preview beta (`0.1.0-beta.1`) and includes permanent delete on every platform (owner decisions 2026-10-24 and, for macOS, 2026-11-07).** Release builds use the default features and declare `cleanup: development-unqualified`. `--no-default-features` still builds, tests and lints the analysis-only variant. Procedure and what is left: `docs/release.md`, "Releasing the beta" and "Not passed yet".
+- **First release is a development-preview beta (`0.1.0-beta.1`) and includes permanent delete on every platform (owner decisions 2026-10-24 and, for macOS, 2026-11-07).** Release builds use the default features and declare `cleanup: development-unqualified`. `--no-default-features` still builds, tests and lints the analysis-only variant. Procedure, current release state and what is left: `docs/release.md` ("Releasing the beta", "Current state", "Not passed yet").
 
 ## Source-of-truth documents
 
@@ -74,7 +74,7 @@ Constraints that affect tests and running:
 - **`crates/omg-core`** contains all logic. It has no UI.
 - **`crates/omg-cli`** builds the `omg` binary:
   - `main.rs`: clap commands.
-  - `tui/`: ratatui interface. `worker.rs` owns the SQLite connection and answers requests over channels; `mod.rs` holds `AppState`, menus/actions and a redraw-on-change loop; `render.rs` is pure rendering that must never query SQLite; `theme.rs` has colours, the block-letter banner and formatting.
+  - `tui/`: ratatui interface. `worker.rs` owns the SQLite connection and answers requests over channels; `mod.rs` holds `AppState`, menus/actions and a redraw-on-change loop; `render.rs` is pure rendering that must never query SQLite (the disk gauge is refreshed every 2 s through `Request::Volume`, redrawn only when its text changes); `theme.rs` has colours, the block-letter banner and formatting.
   - `svc.rs`: service control surface, Linux only.
 - **`catalog/bundled.toml`** is the known-good rule catalog. It is compiled in with `include_str!`.
 - **`migrations/NNN.sql`** holds the schema migrations.
@@ -86,7 +86,9 @@ Constraints that affect tests and running:
 
 | Module | Methods it adds to `Index` |
 | --- | --- |
-| `catalog.rs` | `catalog`, `import_catalog`, `rollback_catalog`, `findings`, ignores |
+| `index.rs` | `open` (migrations), `status`, `prune_stale` (also gives free pages back), `index_bytes` |
+| `catalog.rs` | `catalog`, `import_catalog`, `rollback_catalog`, `findings`, `findings_in`, ignores |
+| `cleanup.rs` | `mark`, `unmark`, `marked` (OMG Trash), `suggest`, `auto_trash`, `prepare_delete`, `delete_permanently` |
 | `planning.rs` | `preview`, `record_preview`, `history`, `execute` (always denied) |
 | `service/trend.rs` | `record_sample`, `prune_samples`, `trend` |
 | `service/notify.rs` | Notification state persistence |
@@ -104,7 +106,9 @@ Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per fi
 
 ### Scan and publish
 
-(Performance notes: workers pull directories from an in-memory queue, so scanner speed comes from `scanner.rs` queue/batching, not from SQLite jobs; keep per-entry work to one `statat`. Old scans are pruned lazily via `Index::prune_stale` / `omg prune`.)
+(Performance notes: workers pull directories from an in-memory queue, so scanner speed comes from `scanner.rs` queue/batching, not from SQLite jobs; keep per-entry work to one `statat`.)
+
+Index size: `entries` is a `WITHOUT ROWID` table keyed by `(scan_id, parent, name)` with no secondary indexes except the partial `entry_large`; query it by key (`parent=? AND name=?`, or a `parent` range for a subtree), never by a reconstructed path. New databases use `auto_vacuum=INCREMENTAL`. `Index::prune_stale` deletes every unpublished scan's rows (the latest keeps its record and issues) and hands free pages back in bounded slices; it runs after each scan, at interface launch and in `omg prune`. `journal_size_limit` caps a kept WAL at 32 MiB.
 
 `scanner::scan` takes `scan.lock` and records a `running` row in `scans`. Bounded worker threads then traverse the tree. Entries are batched through a bounded channel into `IMMEDIATE` transactions.
 
@@ -126,7 +130,15 @@ Entries follow these conventions:
 
 ### Findings are derived, not stored
 
-`Index::findings` builds findings on demand. Directory-root rules (npm, pip and uv caches) resolve their root and carry subtree totals. `large_file` comes from an indexed query and skips files already inside a directory finding. A directory containing protected descendants is itself `protected`. Findings are then sorted by `estimate` and paged. The active catalog is either `bundled.toml` or an Ed25519-signed import stored in `catalog_releases`.
+`Index::findings` builds findings on demand from the fixed discovery kinds in `catalog::DISCOVERIES`, in this order (an earlier finding's folder is never counted again inside a later one):
+- directory roots of tool caches (npm, pip, uv, pnpm, Yarn, Cargo, Go, Gradle, Homebrew) and of container VMs (`.colima`, Docker Desktop), which `policy::hard_protection` refuses to delete;
+- `unused_clone`: Git clones untouched 30 days that `policy::pristine_clone` proves have nothing local (remote, every branch on it, no loose objects, stash, local tag or later change time in the working tree);
+- `stale_dependencies` (projects untouched 30 days), then `project_build_output` (50 MB+ `target` beside `Cargo.toml`, `node_modules` beside `package.json`, virtualenvs), AI coding tool old versions and session transcripts (7 days, 1 MB, `projects/<p>/*.jsonl` only), and on macOS app caches in `~/Library/Caches` (50 MB+, not `com.apple.*` or `GeoServices`);
+- `large_file`, which skips files already inside a directory finding.
+
+The same `cleanup::verdict` that gates deletion decides each finding's tier, so `protected` means it really cannot be deleted. Findings are sorted by `estimate` and paged. The active catalog is either `bundled.toml` or an Ed25519-signed import stored in `catalog_releases`.
+
+`Index::suggest` adds findings of the categories `package_caches`, `build_artifacts`, `app_caches`, `old_tool_versions`, `session_history` and `unused_clones` to OMG Trash after a published scan, unless the user turned `auto_trash` off (default on). `omg scan` then prints a line to stderr, so scripts that parse its JSON must not merge stderr or must pass `--no-suggest`. Listing authorizes nothing. `prepare_delete` refuses whole repositories and session transcripts in a plan of several items (`one_at_a_time`), so `D` never takes them.
 
 `catalog::parse` admits only:
 - tiers `info` or `review`
@@ -160,13 +172,14 @@ Only `config`, `notify`, `schedule` and `trend` are portable. `daemon`, `ipc` an
 - **Git metadata is the only content read.** `policy::pristine_clone` reads `.git/config`, `HEAD` and references, bounded and without following links, to judge old clones. Never run Git, and never read any other file's contents.
 - **Structural guard test.** `service_logic_contains_no_deletion_or_cleanup_calls` in `crates/omg-core/tests/service.rs` greps the service sources for `remove_file`, `remove_dir`, `rename(`, `planning`, `Trash`, `unlink` and `authoriz`. **Comments count too.** Choose wording that avoids those words in `daemon.rs`, `notify.rs`, `trend.rs`, `schedule.rs` and `config.rs`.
 - **Unknown is not zero.** Represent unknown sizes and identities as unknown. Keep paths as raw bytes; display strings are never path authority. Notifications and default diagnostics must not contain paths or filenames.
-- **Strict, bounded parsers.** All external input — catalog, config, IPC, release manifests — is size-bounded and rejects unknown fields. Keep it that way.
+- **Strict, bounded parsers.** All external input (catalog, config, IPC, release manifests) is size-bounded and rejects unknown fields. Keep it that way.
 - **Packaging capability coupling.** Manifest `capabilities` are produced in `scripts/assemble-release.js` and validated exactly in `packages/oh-my-gigabytes/lib/verify.js`. Change both together, and update `release.test.js`. Full builds declare `cleanup: development-unqualified`; Windows declares `analysis: development-windows` and `service: disabled`; macOS declares `analysis: development-macos` and `service: disabled`. `assemble-release.js` defaults to the `analysis-only` variant and only runs a binary the host can execute; `scripts/sign-release.js` is the owner's multi-target signing step (the signing key never goes to CI).
+- **Tests run real Git.** The clone tests in `tests/cleanup.rs` call `git` with `GIT_CONFIG_GLOBAL=/dev/null`; age files with `set_modified`, and keep Git's index newer than the change times that ageing causes.
 - **Tests must not touch the real user session.** systemd tests use a fake `systemctl` script (`Systemd { systemctl, unit_dir, unit }`). CLI tests set `XDG_CONFIG_HOME` and `HOME` to temp directories. Never let a test write to the real `~/.config/systemd/user`.
-- **Platform gating.** Linux-only code stays behind `#[cfg(target_os = "linux")]`, macOS-only code behind `#[cfg(target_os = "macos")]` and Windows-only code behind `#[cfg(windows)]`, so every CI leg compiles. There is no local Mac: macOS code is compiled and tested only by CI, so push and read the macOS legs before relying on it. Declare every `windows-sys` feature omg-core uses in its own `Cargo.toml`: `cargo test -p omg-core` builds it without the CLI's dependencies, which otherwise enable some features by accident.
+- **Platform gating.** Linux-only code stays behind `#[cfg(target_os = "linux")]`, macOS-only code behind `#[cfg(target_os = "macos")]` and Windows-only code behind `#[cfg(windows)]`, so every CI leg compiles. The owner has one Apple silicon Mac; Linux, Windows and the other macOS versions are tested only by CI, so push and read those legs before relying on them. Declare every `windows-sys` feature omg-core uses in its own `Cargo.toml`: `cargo test -p omg-core` builds it without the CLI's dependencies, which otherwise enable some features by accident.
 
 ## Style
 
 - Match the existing compact Rust style: `anyhow::Result` with `bail!`, terse safety-rationale comments only where behavior is non-obvious, and `rustfmt` defaults.
-- Commit subjects follow the history: one imperative line such as "Implement Phase N …".
+- Commit messages are one Conventional Commit line (`feat: ...`, `fix: ...`, `docs: ...`), as in the history.
 - The source code and the independently authored catalog are licensed MIT OR Apache-2.0.

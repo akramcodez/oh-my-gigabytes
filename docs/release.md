@@ -1,6 +1,6 @@
 # Development distribution, authenticity and installation
 
-Status: Phase 4 development packaging implementation. **No npm package or signed public release is published.** Source wrapper/native packages are private; the production signing key and npm namespace ownership are not provisioned. **Update (2026-10-24, owner decision):** the first release is a development-preview beta (`0.1.0-beta.1`) for Linux, Windows and macOS whose binaries include permanent delete, declared `development-unqualified` (macOS since the owner's decision of 2026-11-07, APFS only). See [Releasing the beta](#releasing-the-beta) and [Not passed yet](#not-passed-yet). The analysis-only variant (`--no-default-features`, delete compiled out) is still built and tested in CI. OS Trash is not implemented.
+Status: **not published yet**; see [Current state](#current-state-2026-11-08). **Update (2026-10-24, owner decision):** the first release is a development-preview beta (`0.1.0-beta.1`) for Linux, Windows and macOS whose binaries include permanent delete, declared `development-unqualified` (macOS since the owner's decision of 2026-11-07, APFS only). See [Releasing the beta](#releasing-the-beta) and [Not passed yet](#not-passed-yet). The analysis-only variant (`--no-default-features`, delete compiled out) is still built and tested in CI. OS Trash is not implemented.
 
 ## What exists
 
@@ -118,10 +118,25 @@ Everything below runs on a commit that has passed `Checks`. Steps marked **owner
 
 A user verifies a manual download with `sha256sum -c SHA256SUMS` in the download folder, compares `KEY-FINGERPRINT.txt` with the fingerprint published elsewhere, and installs with `npm install --global --ignore-scripts --offline <offline tarball>`. On macOS a binary downloaded in a browser carries a quarantine mark and is not notarized; the npm path avoids that, and `xattr -d com.apple.quarantine` clears it for a manual copy.
 
+## Current state (2026-11-08)
+
+Candidate: `main` at `c5b03a6`. `Checks` passed on `ce0528f`; `c5b03a6` changes only `SECURITY.md`.
+
+Done:
+- Production Ed25519 key created by the owner (held outside the repository, never in CI). Fingerprint (`KEY-FINGERPRINT.txt`): `01deacfe588025e045419b57c4f39abd9f151294c8310e0a0dd28a18c9d9adc0`. Publish it somewhere independent of the release before announcing.
+- Security contact in `SECURITY.md`; GitHub private vulnerability reporting enabled.
+- npm login as `skakram`. The names `oh-my-gigabytes` and `oh-my-gigabytes-<target>` were still unclaimed on 2026-11-08.
+- `Release build` run 42444990692 on `c5b03a6`: all four targets and the SBOM; every `CLEANUP` is `development-unqualified`. Signed by the owner with `--publishable` into a local `signed/` folder (outside the repository): 9 files, all matching `SHA256SUMS`, every package `private: false`.
+- macOS, signed package installed with npm into a prefix with a space: `--version`, `doctor` (`development-unqualified`), no quarantine mark, Cancel kept the file, "Yes, delete permanently" removed only that file (a `.pem` and a neighbour stayed), one appended byte refused with "Binary integrity verification failed".
+
+Next, in order:
+1. Owner: the same install and throwaway delete on a Windows 11 PC and a Linux machine (step 4 of [Releasing the beta](#releasing-the-beta)). In progress.
+2. Owner: draft GitHub Release with `signed/tarballs/*`, `signed/offline/*`, `SHA256SUMS`, `release-public.pem`, `KEY-FINGERPRINT.txt` and the SBOM.
+3. `Install smoke test` with `source=release`, the tag and the fingerprint (never run in this mode).
+4. Owner: `npm publish --tag beta`, platform packages first and the wrapper last (npm requires two-factor authentication), then publish the GitHub Release.
+
 ## Not passed yet
 
-- No production key or publisher identity; no real release has been signed.
-- Linux ARM64 and Windows on Arm have only hosted-runner evidence; macOS has hosted runners plus one real Apple silicon Mac (no Full Disk Access or iCloud check). macOS stays `development-macos`.
-- `Release build` and `Install smoke test` (dry-run) were re-run on `4535902` (2026-11-05): `Release build` run 41977876172 passed for all four targets and the dependency inventory; `Install smoke test` dry-run run 41978189694 (throwaway key, build from that run) passed on seven machines (ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, windows-2022, windows-latest, macos-15, macos-26). `cargo deny check` (advisories, bans, licenses, sources) passed locally the same day. Still not run: the smoke test in `release` mode (real signed assets, trusted key fingerprint, upgrade from an earlier release). **Update 2026-11-07:** the index format (schema 12) and the release profile changed after `4535902` ([phase1-evidence.md](phase1-evidence.md), "Index size"), so those dry runs and the final macOS check steps that used the CI-built binary no longer cover the release candidate; `Checks`, `Release build` and `Install smoke test` must run again on the new commit.
-- Permanent delete (Linux and Windows) is not qualified: no recorded native evidence per filesystem, the XFS, Btrfs and old-kernel runs are missing, and the MSVC release binary from `release.yml` has not deleted anything on a real Windows 11 machine (a GNU-toolchain release build did, through ConPTY, on 2026-11-02), nor has any build on a real Linux ARM64 machine. It ships as `development-unqualified` on the owner's decision, with that label in the README, `omg doctor` and the signed manifest.
-- Kernel floor, XFS and Btrfs native runs, service qualification, Windows hard-link totals, ConPTY and virtual-disk matrices, benchmarks, usability review (V01).
+- Linux ARM64 and Windows on Arm have only hosted-runner evidence; macOS has hosted runners plus one Apple silicon Mac, without Full Disk Access, iCloud placeholder or real external-drive checks (`mac-final-check.md` steps 5 to 8b).
+- Permanent delete is not qualified on any platform: no recorded native evidence per filesystem, the XFS, Btrfs and old-kernel runs are missing, and no CI-built binary has deleted anything on a real Windows 11 or Linux machine yet. It ships as `development-unqualified` on the owner's decision, with that label in the README, `omg doctor` and the signed manifest.
+- Kernel floor, XFS and Btrfs native runs, service qualification, Windows hard-link totals, ConPTY and virtual-disk matrices, benchmarks, usability review.
