@@ -1466,3 +1466,56 @@ fn a_file_changed_after_the_checkout_keeps_a_clone_out_even_with_an_old_modified
     index.suggest(h).unwrap();
     assert!(suggested(&index).is_empty(), "{:?}", suggested(&index));
 }
+
+#[test]
+fn projects_and_session_history_are_only_deleted_on_their_own() {
+    let (home, state) = setup();
+    let h = home.path();
+    let source = clone_source();
+    old_clone(h, source.path(), "clone");
+    write_bytes(&h.join(".claude/projects/p/old.jsonl"), 2 << 20);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    fs::File::options()
+        .write(true)
+        .open(h.join(".claude/projects/p/old.jsonl"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    write_bytes(&h.join("rusty/Cargo.toml"), 10);
+    write_bytes(&h.join("rusty/target/debug/app"), 60 << 20);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let ids: Vec<i64> = index.marked().unwrap().iter().map(|m| m.id).collect();
+    assert_eq!(ids.len(), 3, "{:?}", suggested(&index));
+
+    // "Delete everything listed" leaves both out, with the reason, and keeps the rest.
+    let plan = index.prepare_delete(&ids, h).unwrap();
+    let planned: Vec<_> = plan.items.iter().map(|i| i.path.clone()).collect();
+    assert_eq!(planned, vec![b"rusty/target".to_vec()]);
+    let mut held: Vec<_> = plan.denied.iter().map(|(p, _)| p.clone()).collect();
+    held.sort();
+    assert_eq!(
+        held,
+        vec![b".claude/projects/p/old.jsonl".to_vec(), b"clone".to_vec()]
+    );
+    assert!(
+        plan.denied
+            .iter()
+            .all(|(_, why)| why.contains("on its own"))
+    );
+    index.discard_plan(&plan.fingerprint);
+
+    // On its own, each can still be deleted.
+    for path in [b"clone".as_slice(), b".claude/projects/p/old.jsonl"] {
+        let plan = index.prepare_delete(&[id_of(&index, path)], h).unwrap();
+        assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
+        let report = index
+            .delete_permanently(&plan, &plan.fingerprint, h)
+            .unwrap();
+        assert_eq!(report.deleted.len(), 1, "{report:?}");
+    }
+    assert!(!h.join("clone").exists());
+    assert!(!h.join(".claude/projects/p/old.jsonl").exists());
+    assert!(h.join("rusty/target/debug/app").exists());
+}

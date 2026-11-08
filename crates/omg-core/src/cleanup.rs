@@ -278,6 +278,23 @@ fn remove_target(
     windows::delete_one(root, root_path, home, item, kind)
 }
 
+const ONE_AT_A_TIME: &str =
+    "a whole project or session history is never deleted with other items; delete it on its own";
+
+/// Owner decision 2026-11-07: whole repositories and session transcripts cannot be recreated by a
+/// tool, so they never ride along in a plan with other items.
+fn one_at_a_time(root: &Path, home: &Path, entry: &Entry, kind: Kind) -> bool {
+    if kind == Kind::StaleRepo {
+        return true;
+    }
+    let Ok(relative) = platform::path(&entry.path) else {
+        return true;
+    };
+    let absolute = root.join(relative);
+    absolute.starts_with(home.join(".claude/projects"))
+        && absolute.extension().is_some_and(|e| e == "jsonl")
+}
+
 /// A folder whose name alone proves nothing, next to the file that shows a tool owns it.
 fn proven_build_output(absolute: &Path) -> bool {
     let beside = |file: &str| absolute.parent().is_some_and(|p| p.join(file).is_file());
@@ -715,6 +732,10 @@ impl Index {
                         Gate::Warn(text) => Some(text),
                         Gate::Allowed => None,
                     };
+                    if ids.len() > 1 && one_at_a_time(&root, home, &entry, verdict.kind) {
+                        denied.push((item.path.clone(), ONE_AT_A_TIME.into()));
+                        continue;
+                    }
                     // Protected names inside make the deletion refuse the whole folder. Say so now,
                     // not after the user has confirmed.
                     let inside = if entry.kind == "directory" {
