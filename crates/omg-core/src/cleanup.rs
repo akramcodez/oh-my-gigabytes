@@ -309,7 +309,7 @@ fn one_at_a_time(root: &Path, home: &Path, entry: &Entry, kind: Kind) -> bool {
     let absolute = root.join(relative);
     (absolute.starts_with(home.join(".claude/projects"))
         && absolute.extension().is_some_and(|e| e == "jsonl"))
-        || app_data_folder(&absolute, home)
+        || (app_data_folder(&absolute, home) && !is_cache_root(&absolute, home))
 }
 
 /// A folder whose name alone proves nothing, next to the file that shows a tool owns it.
