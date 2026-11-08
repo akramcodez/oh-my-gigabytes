@@ -6,8 +6,8 @@ OMG is a development preview. The beta release (`0.1.0-beta.1`) includes an unqu
 
 Do not open a public issue for a security problem.
 
-- **Preferred:** GitHub private vulnerability reporting on this repository (Security tab, "Report a vulnerability"). The repository owner must enable it first.
-- **Maintainer contact:** `[owner to provide before publishing]`.
+- **Preferred:** GitHub private vulnerability reporting on this repository (Security tab, "Report a vulnerability").
+- **Maintainer contact:** skakram00zz@gmail.com (put "omg security" in the subject).
 
 Include the OMG version (`omg --version`), your OS and filesystem, and the steps to reproduce. Do not include real personal file names or contents.
 
