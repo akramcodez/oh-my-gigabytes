@@ -64,6 +64,7 @@ pub fn app_data_parents(home: &std::path::Path) -> Vec<std::path::PathBuf> {
         out.extend(absolute_env("XDG_CACHE_HOME"));
         out
     };
+    out.retain(|parent| tool_root_allowed(home, parent));
     out.sort();
     out.dedup();
     out
@@ -131,6 +132,14 @@ fn located(default: std::path::PathBuf, overridden: &str) -> Vec<std::path::Path
 
 /// Per-user toolchain installs, at each tool's documented location or absolute override.
 pub fn toolchains(home: &std::path::Path) -> Vec<Toolchain> {
+    let mut out = declared_toolchains(home);
+    for toolchain in &mut out {
+        toolchain.roots.retain(|root| tool_root_allowed(home, root));
+    }
+    out
+}
+
+fn declared_toolchains(home: &std::path::Path) -> Vec<Toolchain> {
     let gradle = located(home.join(".gradle"), "GRADLE_USER_HOME");
     let android = if cfg!(windows) {
         home.join("AppData")
@@ -220,6 +229,49 @@ pub fn discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::P
         macos_discovery_root(kind, home)
     } else {
         unix_discovery_root(kind, home)
+    }
+    .filter(|root| tool_root_allowed(home, root))
+}
+
+/// Folders a user keeps their own files in, directly in the home folder.
+const PERSONAL_FOLDERS: [&str; 13] = [
+    "desktop",
+    "documents",
+    "downloads",
+    "pictures",
+    "music",
+    "movies",
+    "videos",
+    "public",
+    "applications",
+    "library",
+    "appdata",
+    "projects",
+    "src",
+];
+
+/// Whether a tool's folder (often taken from an environment variable) may be treated as that tool's
+/// own. Folders inside one count as cache or app data and lose ordinary-folder checks, so the home
+/// folder, anything above it and a personal folder directly in it never qualify.
+pub(crate) fn tool_root_allowed(home: &std::path::Path, root: &std::path::Path) -> bool {
+    if home.starts_with(root) {
+        return false;
+    }
+    match root.strip_prefix(home) {
+        Ok(below) => {
+            let mut parts = below.components();
+            !(parts.clone().count() == 1
+                && parts.next().is_some_and(|first| {
+                    PERSONAL_FOLDERS.contains(
+                        &first
+                            .as_os_str()
+                            .to_string_lossy()
+                            .to_ascii_lowercase()
+                            .as_str(),
+                    )
+                }))
+        }
+        Err(_) => true,
     }
 }
 
@@ -1240,6 +1292,30 @@ impl Index {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn a_tool_folder_from_the_environment_never_takes_in_the_home_folder_or_a_personal_folder() {
+        let home = Path::new("/home/me");
+        for root in [
+            "/home/me",
+            "/home",
+            "/",
+            "/home/me/Documents",
+            "/home/me/projects",
+        ] {
+            assert!(!tool_root_allowed(home, Path::new(root)), "{root}");
+        }
+        for root in [
+            "/home/me/.rustup",
+            "/home/me/Documents/sdk",
+            "/home/me/.cache",
+            "/opt/rust",
+        ] {
+            assert!(tool_root_allowed(home, Path::new(root)), "{root}");
+        }
+    }
+
     use super::*;
     #[cfg(target_os = "linux")]
     use ed25519_dalek::Signer;

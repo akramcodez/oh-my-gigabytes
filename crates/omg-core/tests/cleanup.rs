@@ -1573,7 +1573,21 @@ fn apps_untouched_for_five_months_are_suggested_with_a_warning_and_can_be_delete
         h.join(platform_path(&old)).exists(),
         "listing never deletes"
     );
-    let plan = index.prepare_delete(&[item.id], h).unwrap();
+    // With anything else, an application's data is held back; on its own it can go.
+    write_bytes(&h.join("rusty/Cargo.toml"), 10);
+    write_bytes(&h.join("rusty/target/debug/app"), 60 << 20);
+    index.unmark(item.id).unwrap();
+    scan(&mut index, h);
+    index.mark(&old, 1, h).unwrap();
+    index.mark(b"rusty/target", 1, h).unwrap();
+    let ids: Vec<i64> = index.marked().unwrap().iter().map(|m| m.id).collect();
+    let both = index.prepare_delete(&ids, h).unwrap();
+    assert_eq!(both.items.len(), 1, "{:?}", both.items);
+    assert_eq!(both.denied.len(), 1, "{:?}", both.denied);
+    assert_eq!(both.denied[0].0, old);
+    assert!(both.denied[0].1.contains("on its own"));
+    index.discard_plan(&both.fingerprint);
+    let plan = index.prepare_delete(&[id_of(&index, &old)], h).unwrap();
     assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
     index
         .delete_permanently(&plan, &plan.fingerprint.clone(), h)

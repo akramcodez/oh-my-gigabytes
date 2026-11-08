@@ -295,11 +295,10 @@ fn remove_target(
     windows::delete_one(root, root_path, home, item, kind)
 }
 
-const ONE_AT_A_TIME: &str =
-    "a whole project or session history is never deleted with other items; delete it on its own";
+const ONE_AT_A_TIME: &str = "a whole project, session history or application data is never deleted with other items; delete it on its own";
 
-/// Owner decision 2026-11-07: whole repositories and session transcripts cannot be recreated by a
-/// tool, so they never ride along in a plan with other items.
+/// Owner decisions 2026-11-07 and 2026-11-08: whole repositories, session transcripts and an
+/// application's own data cannot be recreated by a tool, so they never ride along with other items.
 fn one_at_a_time(root: &Path, home: &Path, entry: &Entry, kind: Kind) -> bool {
     if kind == Kind::StaleRepo {
         return true;
@@ -308,8 +307,9 @@ fn one_at_a_time(root: &Path, home: &Path, entry: &Entry, kind: Kind) -> bool {
         return true;
     };
     let absolute = root.join(relative);
-    absolute.starts_with(home.join(".claude/projects"))
-        && absolute.extension().is_some_and(|e| e == "jsonl")
+    (absolute.starts_with(home.join(".claude/projects"))
+        && absolute.extension().is_some_and(|e| e == "jsonl"))
+        || app_data_folder(&absolute, home)
 }
 
 /// A folder whose name alone proves nothing, next to the file that shows a tool owns it.
