@@ -1,6 +1,6 @@
 # Security policy
 
-OMG is a development preview. The beta release (`0.1.0-beta.1`) includes an unqualified permanent-delete feature on Linux, Windows and macOS, which deletes files only after you confirm an exact plan. A build made with `--no-default-features` compiles delete out.
+OMG is a development preview. The beta release (`0.1.0-beta.2`) includes an unqualified permanent-delete feature on Linux, Windows and macOS, which deletes files only after you confirm an exact plan. A build made with `--no-default-features` compiles delete out.
 
 ## Reporting a vulnerability
 

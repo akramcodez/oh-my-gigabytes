@@ -5,7 +5,7 @@
 // tarballs (release plan R19). Runs on the owner's machine with the offline Ed25519 key; the key
 // never goes to CI. Nothing here uploads or publishes anything.
 //
-//   node scripts/sign-release.js --artifacts DIR --version 0.1.0-beta.1 \
+//   node scripts/sign-release.js --artifacts DIR --version 0.1.0-beta.2 \
 //     --public-key release-public.pem --private-key release-private.pem --out OUT \
 //     [--repo owner/name] [--skip-attestation] [--publishable]
 //

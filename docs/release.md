@@ -104,7 +104,7 @@ Everything below runs on a commit that has passed `Checks`. Steps marked **owner
 3. **Sign (owner).** With the production key kept outside the repository and `gh` 2.49 or newer:
 
    ```sh
-   node scripts/sign-release.js --artifacts ci-artifacts --version 0.1.0-beta.1 \
+   node scripts/sign-release.js --artifacts ci-artifacts --version 0.1.0-beta.2 \
      --public-key /safe/release-public.pem --private-key /safe/release-private.pem \
      --out signed --repo akramcodez/oh-my-gigabytes
    ```

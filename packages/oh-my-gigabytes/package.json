@@ -1,6 +1,6 @@
 {
   "name": "oh-my-gigabytes",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "private": true,
   "description": "See where your disk space went and take it back: a local-first, keyboard-first storage analyzer for developers",
   "keywords": ["disk", "disk-usage", "storage", "cleanup", "cache", "node_modules", "developer-tools", "cli", "tui"],

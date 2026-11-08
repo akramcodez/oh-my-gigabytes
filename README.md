@@ -2,7 +2,7 @@
 
 OMG (Oh My Gigabytes) shows where your disk space went and helps you take it back. A Rust engine scans file metadata into a local index, and a terminal interface lets you browse folder sizes, see which developer caches and build folders take space and why, and delete what you choose.
 
-> **Beta (`0.1.0-beta.1`), a development preview.** Scanning reads names, sizes and times, not the contents of your files. The one exception: to tell whether an old Git clone has nothing local to lose, it reads Git's own config and branch references. Nothing is uploaded. Delete is permanent and not qualified: read [Deleting files](#deleting-files) first.
+> **Beta (`0.1.0-beta.2`), a development preview.** Scanning reads names, sizes and times, not the contents of your files. The one exception: to tell whether an old Git clone has nothing local to lose, it reads Git's own config and branch references. Nothing is uploaded. Delete is permanent and not qualified: read [Deleting files](#deleting-files) first.
 
 ## Platforms
 
@@ -22,7 +22,7 @@ Needs Node 22 or newer.
 npm install --global oh-my-gigabytes@beta
 ```
 
-The package runs no install scripts and downloads nothing; each launch re-verifies the binary against an Ed25519-signed manifest. To install a downloaded release offline, check `SHA256SUMS` (`shasum -a 256 -c SHA256SUMS` on macOS), compare `KEY-FINGERPRINT.txt` with the fingerprint published in the release notes, then run `npm install --global --ignore-scripts --offline ./oh-my-gigabytes-offline-<target>-0.1.0-beta.1.tgz`.
+The package runs no install scripts and downloads nothing; each launch re-verifies the binary against an Ed25519-signed manifest. To install a downloaded release offline, check `SHA256SUMS` (`shasum -a 256 -c SHA256SUMS` on macOS), compare `KEY-FINGERPRINT.txt` with the fingerprint published in the release notes, then run `npm install --global --ignore-scripts --offline ./oh-my-gigabytes-offline-<target>-0.1.0-beta.2.tgz`.
 
 ## Use
 
