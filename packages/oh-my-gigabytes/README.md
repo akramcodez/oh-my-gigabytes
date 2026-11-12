@@ -43,7 +43,7 @@ Whole projects, session history and app data are deleted only one at a time, nev
 
 ## What omg never deletes
 
-Anything outside your home folder; credentials, keys, databases and disk images; `.git`, `.ssh` and cloud-synced folders; active Git repositories; container and VM disks (use `docker system prune`); and on macOS, iCloud placeholders, locked files and app bundles. Links are never followed, and every item is re-checked just before it is removed.
+Anything outside your home folder; credentials, keys, databases and disk images; `.git`, `.ssh` and cloud-synced folders; active Git repositories; container and VM disks (press `m` › Clean unused Docker data instead, which asks Docker to remove only old dangling images and unused build cache); and on macOS, iCloud placeholders, locked files and app bundles. Links are never followed, and every item is re-checked just before it is removed.
 
 ## Commands
 

@@ -2,6 +2,7 @@
 pub mod capability;
 pub mod catalog;
 pub mod cleanup;
+pub mod docker;
 pub mod index;
 pub mod model;
 pub mod planning;

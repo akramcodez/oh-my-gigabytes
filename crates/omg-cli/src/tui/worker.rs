@@ -49,6 +49,11 @@ pub enum Request {
     SetAutoTrash(bool),
     /// Progress of a scan run by another process.
     PollRunning,
+    /// Ask Docker what is unused and plan its removal (the safe kinds only).
+    DockerPlan,
+    /// Remove a reviewed Docker plan through the Docker API.
+    #[cfg_attr(not(feature = "permanent-delete"), allow(dead_code))]
+    DockerRemove(Box<omg_core::docker::Plan>),
 }
 
 /// What the user can do with a row in Browse.
@@ -97,6 +102,9 @@ pub enum Response {
         undo: Vec<i64>,
     },
     Deleted(Box<DeleteReport>),
+    DockerPlan(Box<omg_core::docker::Plan>, Box<omg_core::docker::Report>),
+    #[cfg_attr(not(feature = "permanent-delete"), allow(dead_code))]
+    DockerRemoved(Box<omg_core::docker::Outcome>),
     Info(String),
     Error(String),
 }
@@ -279,6 +287,35 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                                 index.unmark(id)?;
                             }
                             send(Response::Info("Cancelled. Nothing was deleted.".into()));
+                        }
+                        Request::DockerPlan => {
+                            match omg_core::docker::Engine::find(&home)? {
+                                None => send(Response::Info("Docker isn't running, so there is nothing to check. Start Docker and try again.".into())),
+                                Some(engine) => {
+                                    let report = engine.report()?;
+                                    let plan = omg_core::docker::make_plan(&report, &omg_core::docker::Kind::DEFAULT);
+                                    send(Response::DockerPlan(Box::new(plan), Box::new(report)))
+                                }
+                            };
+                        }
+                        #[cfg(feature = "permanent-delete")]
+                        Request::DockerRemove(plan) => {
+                            let Some(engine) = omg_core::docker::Engine::find(&home)? else {
+                                anyhow::bail!("Docker stopped; nothing was removed");
+                            };
+                            if engine.endpoint() != plan.endpoint {
+                                anyhow::bail!(
+                                    "a different Docker is running now; nothing was removed"
+                                );
+                            }
+                            let operation = index.docker_intent(&plan)?;
+                            let outcome = engine.remove(&plan, &plan.fingerprint)?;
+                            index.docker_outcome(operation, &outcome)?;
+                            send(Response::DockerRemoved(Box::new(outcome)));
+                        }
+                        #[cfg(not(feature = "permanent-delete"))]
+                        Request::DockerRemove(_) => {
+                            anyhow::bail!("removing is not available in this build");
                         }
                         Request::Delete(plan) => {
                             let fingerprint = plan.fingerprint.clone();
