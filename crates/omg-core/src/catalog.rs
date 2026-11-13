@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
 /// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
-pub const DISCOVERIES: [&str; 20] = [
+pub const DISCOVERIES: [&str; 35] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -28,6 +28,21 @@ pub const DISCOVERIES: [&str; 20] = [
     "unused_clone",
     "unused_app_data",
     "unused_toolchain",
+    "xcode_derived_data",
+    "xcode_device_support",
+    "simulator_caches",
+    "bun_cache",
+    "deno_cache",
+    "maven_repository",
+    "cocoapods_cache",
+    "composer_cache",
+    "playwright_browsers",
+    "puppeteer_browsers",
+    "jetbrains_caches",
+    "huggingface_hub",
+    "ollama_models",
+    "lm_studio_models",
+    "editor_old_extensions",
 ];
 
 /// An application or toolchain unchanged for this long (about five months) counts as unused.
@@ -193,6 +208,26 @@ fn declared_toolchains(home: &std::path::Path) -> Vec<Toolchain> {
     out
 }
 
+/// (version, modified time in ns, path) of one installed extension folder.
+type ExtensionVersion = (Vec<u64>, i64, Vec<u8>);
+
+/// Splits an extension folder name into (`publisher.name`, version, platform suffix). The version is
+/// the first `-` followed by three dot-separated numbers; anything else is not judged.
+fn extension_version(name: &str) -> Option<(String, Vec<u64>, String)> {
+    for (at, _) in name.match_indices('-') {
+        let rest = &name[at + 1..];
+        let (version, suffix) = rest.split_once('-').unwrap_or((rest, ""));
+        let parts: Option<Vec<u64>> = version.split('.').map(|p| p.parse().ok()).collect();
+        if let Some(parts) = parts.filter(|p| p.len() == 3)
+            && at > 0
+            && name[..at].contains('.')
+        {
+            return Some((name[..at].to_ascii_lowercase(), parts, suffix.to_string()));
+        }
+    }
+    None
+}
+
 /// A `~/Library/Caches` folder the system manages, including one without Apple's usual prefix.
 pub(crate) fn apple_cache(name: &str) -> bool {
     name.starts_with("com.apple.") || name == "GeoServices"
@@ -223,6 +258,41 @@ const SESSION_MIN_BYTES: i64 = 1 << 20;
 /// Fixed default location of a directory-root discovery, honouring the tool's own absolute
 /// environment override where it has one.
 pub fn discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
+    shared_discovery_root(kind, home)
+        .or_else(|| platform_discovery_root(kind, home))
+        .filter(|root| tool_root_allowed(home, root))
+}
+
+/// Tools whose per-user location is the same on every platform: under the home folder or set by
+/// their own absolute environment variable.
+fn shared_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
+    Some(match kind {
+        "bun_cache" => absolute_env("BUN_INSTALL_CACHE_DIR").unwrap_or_else(|| {
+            absolute_env("BUN_INSTALL")
+                .unwrap_or_else(|| home.join(".bun"))
+                .join("install")
+                .join("cache")
+        }),
+        "maven_repository" => home.join(".m2").join("repository"),
+        "puppeteer_browsers" => absolute_env("PUPPETEER_CACHE_DIR")
+            .unwrap_or_else(|| home.join(".cache").join("puppeteer")),
+        "huggingface_hub" => absolute_env("HF_HUB_CACHE").unwrap_or_else(|| {
+            absolute_env("HF_HOME")
+                .unwrap_or_else(|| home.join(".cache").join("huggingface"))
+                .join("hub")
+        }),
+        "ollama_models" => {
+            absolute_env("OLLAMA_MODELS").unwrap_or_else(|| home.join(".ollama").join("models"))
+        }
+        "lm_studio_models" => home.join(".lmstudio").join("models"),
+        "deno_cache" => absolute_env("DENO_DIR")?,
+        "playwright_browsers" => absolute_env("PLAYWRIGHT_BROWSERS_PATH")?,
+        "composer_cache" => absolute_env("COMPOSER_CACHE_DIR")?,
+        _ => return None,
+    })
+}
+
+fn platform_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::PathBuf> {
     if cfg!(windows) {
         windows_discovery_root(kind, home)
     } else if cfg!(target_os = "macos") {
@@ -230,7 +300,6 @@ pub fn discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::P
     } else {
         unix_discovery_root(kind, home)
     }
-    .filter(|root| tool_root_allowed(home, root))
 }
 
 /// Folders a user keeps their own files in, directly in the home folder.
@@ -303,6 +372,13 @@ fn macos_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path:
         "homebrew_cache" => env("HOMEBREW_CACHE").unwrap_or_else(|| caches.join("Homebrew")),
         "colima_vm" => home.join(".colima"),
         "docker_desktop_vm" => home.join("Library/Containers/com.docker.docker"),
+        "xcode_derived_data" => home.join("Library/Developer/Xcode/DerivedData"),
+        "xcode_device_support" => home.join("Library/Developer/Xcode/iOS DeviceSupport"),
+        "simulator_caches" => home.join("Library/Developer/CoreSimulator/Caches"),
+        "deno_cache" => caches.join("deno"),
+        "cocoapods_cache" => caches.join("CocoaPods"),
+        "playwright_browsers" => caches.join("ms-playwright"),
+        "jetbrains_caches" => caches.join("JetBrains"),
         _ => return None,
     })
 }
@@ -329,6 +405,9 @@ fn windows_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::pat
         "gradle_caches" => env("GRADLE_USER_HOME")
             .unwrap_or_else(|| home.join(".gradle"))
             .join("caches"),
+        "deno_cache" => local.join("deno"),
+        "composer_cache" => local.join("Composer"),
+        "playwright_browsers" => local.join("ms-playwright"),
         _ => return None,
     })
 }
@@ -356,6 +435,10 @@ fn unix_discovery_root(kind: &str, home: &std::path::Path) -> Option<std::path::
             .unwrap_or_else(|| home.join(".gradle"))
             .join("caches"),
         "colima_vm" => home.join(".colima"),
+        "deno_cache" => cache.join("deno"),
+        "composer_cache" => cache.join("composer"),
+        "playwright_browsers" => cache.join("ms-playwright"),
+        "jetbrains_caches" => cache.join("JetBrains"),
         _ => return None,
     })
 }
@@ -501,6 +584,7 @@ pub fn parse(payload: &str) -> Result<Catalog> {
             "unused_clones",
             "unused_apps",
             "unused_toolchains",
+            "ml_models",
         ]
         .contains(&rule.category.as_str())
         {
@@ -805,6 +889,10 @@ impl Index {
             ("ai_tool_sessions", {
                 self.ai_tool_sessions(scan, &root, &home)?
             }),
+            (
+                "editor_old_extensions",
+                self.editor_old_extensions(scan, &root, &home)?,
+            ),
         ];
         if cfg!(target_os = "macos") {
             found.push(("app_caches", self.app_caches(scan, &root, &home)?));
@@ -1140,6 +1228,63 @@ impl Index {
             .map(|(_, _, path)| path)
             .collect())
     }
+    /// Extension folders (`publisher.name-1.2.3`, maybe with a platform suffix) that a newer version
+    /// of the same extension replaced in VS Code or Cursor. Only names; the editors' own lists are
+    /// file contents and are not read. The newer version must be a day old, so the editor has had
+    /// the chance to restart onto it.
+    fn editor_old_extensions(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let settled = (crate::now() - 86_400).saturating_mul(1_000_000_000);
+        let mut statement = self.db.prepare(
+            "SELECT CAST(parent||name AS BLOB),kind,modified_ns FROM entries WHERE scan_id=? AND parent=?",
+        )?;
+        let mut out = Vec::new();
+        for editor in [".vscode", ".cursor"] {
+            let Some(parent) =
+                crate::rollup::relative_raw(root, &home.join(editor).join("extensions"))
+            else {
+                continue;
+            };
+            let rows = statement.query_map(params![scan, parent], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?.unwrap_or(i64::MAX),
+                ))
+            })?;
+            let mut groups: std::collections::BTreeMap<(String, String), Vec<ExtensionVersion>> =
+                Default::default();
+            for row in rows {
+                let (path, kind, modified) = row?;
+                let name = crate::index::split_path(&path).1;
+                let name = String::from_utf8_lossy(name.strip_prefix(b"/").unwrap_or(name));
+                if kind != "directory" {
+                    continue;
+                }
+                let Some((id, version, suffix)) = extension_version(&name) else {
+                    continue;
+                };
+                groups
+                    .entry((id, suffix))
+                    .or_default()
+                    .push((version, modified, path));
+            }
+            for (_, mut versions) in groups {
+                versions.sort();
+                let Some((_, newest_time, _)) = versions.pop() else {
+                    continue;
+                };
+                if newest_time < settled {
+                    out.extend(versions.into_iter().map(|(_, _, path)| path));
+                }
+            }
+        }
+        Ok(out)
+    }
     /// Old session transcripts of the AI coding tool: `projects/<project>/<session>.jsonl`, exactly
     /// that depth, so memory and settings beside or below them are never included.
     fn ai_tool_sessions(
@@ -1336,9 +1481,94 @@ mod tests {
         }
     }
     #[test]
+    fn extension_folder_names_split_into_id_version_and_platform() {
+        let v = |n| extension_version(n);
+        assert_eq!(
+            v("ms-python.python-2024.1.0"),
+            Some(("ms-python.python".into(), vec![2024, 1, 0], String::new()))
+        );
+        assert_eq!(
+            v("rust-lang.rust-analyzer-0.3.2-darwin-arm64"),
+            Some((
+                "rust-lang.rust-analyzer".into(),
+                vec![0, 3, 2],
+                "darwin-arm64".into()
+            ))
+        );
+        assert_eq!(
+            v("Esbenp.Prettier-Vscode-10.1.0").unwrap().0,
+            "esbenp.prettier-vscode"
+        );
+        assert!(v("extensions.json").is_none());
+        assert!(v("ms-python.python-latest").is_none());
+        assert!(v("nopublisher-1.0.0").is_none());
+        assert!(v("a.b-1.0").is_none());
+    }
+    #[test]
+    fn new_tool_folders_use_each_tools_documented_default() {
+        let home = std::path::Path::new("/Users/dev");
+        let root = |kind| discovery_root(kind, home);
+        if std::env::var_os("BUN_INSTALL_CACHE_DIR").is_none()
+            && std::env::var_os("BUN_INSTALL").is_none()
+        {
+            assert_eq!(root("bun_cache").unwrap(), home.join(".bun/install/cache"));
+        }
+        assert_eq!(
+            root("maven_repository").unwrap(),
+            home.join(".m2/repository")
+        );
+        if std::env::var_os("HF_HUB_CACHE").is_none() && std::env::var_os("HF_HOME").is_none() {
+            assert_eq!(
+                root("huggingface_hub").unwrap(),
+                home.join(".cache/huggingface/hub")
+            );
+        }
+        if std::env::var_os("OLLAMA_MODELS").is_none() {
+            assert_eq!(root("ollama_models").unwrap(), home.join(".ollama/models"));
+        }
+        assert_eq!(
+            root("lm_studio_models").unwrap(),
+            home.join(".lmstudio/models")
+        );
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                root("xcode_derived_data").unwrap(),
+                home.join("Library/Developer/Xcode/DerivedData")
+            );
+            assert_eq!(
+                root("xcode_device_support").unwrap(),
+                home.join("Library/Developer/Xcode/iOS DeviceSupport")
+            );
+            assert_eq!(
+                root("simulator_caches").unwrap(),
+                home.join("Library/Developer/CoreSimulator/Caches")
+            );
+            assert_eq!(
+                root("cocoapods_cache").unwrap(),
+                home.join("Library/Caches/CocoaPods")
+            );
+            assert_eq!(
+                root("jetbrains_caches").unwrap(),
+                home.join("Library/Caches/JetBrains")
+            );
+        } else {
+            assert!(root("xcode_derived_data").is_none());
+            assert!(root("cocoapods_cache").is_none());
+        }
+        for kind in ["huggingface_hub", "ollama_models", "lm_studio_models"] {
+            let rule = parse(include_str!("../../../catalog/bundled.toml"))
+                .unwrap()
+                .rules
+                .into_iter()
+                .find(|rule| rule.discovery == kind)
+                .unwrap();
+            assert_eq!(rule.category, "ml_models", "{kind}");
+        }
+    }
+    #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 20);
+        assert_eq!(parse(payload).unwrap().rules.len(), 35);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());
