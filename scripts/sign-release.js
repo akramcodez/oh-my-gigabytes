@@ -8,6 +8,7 @@
 //   node scripts/sign-release.js --artifacts DIR --version 0.1.0-beta.2 \
 //     --public-key release-public.pem --private-key release-private.pem --out OUT \
 //     [--repo owner/name] [--skip-attestation] [--publishable]
+//     [--apple-identity "Developer ID Application: ..." --notary-profile NAME] [--windows-signer PROGRAM]
 //
 // DIR is the output of `gh run download RUN_ID`: DIR/omg-<target>/omg (or omg.exe) + SHA256SUMS + CLEANUP.
 // CLEANUP is what the build's own `omg doctor` reported for permanent delete. The variant that is
@@ -19,6 +20,7 @@ const { spawnSync } = require('node:child_process');
 const { parseArgs } = require('node:util');
 const { TARGETS, readRegular } = require('../packages/oh-my-gigabytes/lib/verify');
 const { assemble } = require('./assemble-release');
+const { checkOptions, platformSign } = require('./platform-sign');
 
 const sha256 = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
@@ -65,7 +67,9 @@ function pack(directory, destination, expectedName) {
   return target;
 }
 
-function signRelease({ artifacts, version, publicKey, privateKey, out, repo, skipAttestation = false, publishable = false, checkBinary = true }) {
+function signRelease({ artifacts, version, publicKey, privateKey, out, repo, skipAttestation = false, publishable = false, checkBinary = true,
+  appleIdentity, notaryProfile, windowsSigner }) {
+  checkOptions({ appleIdentity, notaryProfile });
   // npm pack runs in another directory, so every path must be absolute.
   [artifacts, publicKey, privateKey, out] = [artifacts, publicKey, privateKey, out].map(item => path.resolve(item));
   if (!skipAttestation && !repo) throw new Error('--repo owner/name is required to verify build provenance (or pass --skip-attestation)');
@@ -83,6 +87,7 @@ function signRelease({ artifacts, version, publicKey, privateKey, out, repo, ski
 
     const natives = [];
     const variants = {};
+    const signatures = {};
     let keyId;
     for (const target of targets) {
       const directory = path.join(artifacts, `omg-${target}`);
@@ -92,7 +97,9 @@ function signRelease({ artifacts, version, publicKey, privateKey, out, repo, ski
       if (!skipAttestation) run('gh', ['attestation', 'verify', binary, '--repo', repo]);
       const assembled = path.join(work, target);
       const variant = builtVariant(directory);
-      ({ keyId } = assemble({ binary, target, version, publicKey, privateKey, out: assembled, variant, publishable, checkBinary }));
+      const signed = platformSign({ binary, target, work, appleIdentity, notaryProfile, windowsSigner });
+      signatures[target] = signed.signature;
+      ({ keyId } = assemble({ binary: signed.binary, target, version, publicKey, privateKey, out: assembled, variant, publishable, checkBinary }));
       variants[target] = variant;
       pack(path.join(assembled, `oh-my-gigabytes-${target}`), tarballs, `oh-my-gigabytes-${target}-${version}.tgz`);
       pack(path.join(assembled, 'offline-oh-my-gigabytes'), offline, `oh-my-gigabytes-offline-${target}-${version}.tgz`);
@@ -112,7 +119,7 @@ function signRelease({ artifacts, version, publicKey, privateKey, out, repo, ski
     // Plain file names, so `sha256sum -c SHA256SUMS` works in a folder holding the downloaded assets.
     fs.writeFileSync(path.join(out, 'SHA256SUMS'), files.map(file => `${sha256(path.join(out, file))}  ${path.basename(file)}`).join('\n') + '\n');
     fs.rmSync(work, { recursive: true, force: true });
-    return { version, targets: natives, variants, keyId, files, out };
+    return { version, targets: natives, variants, signatures, keyId, files, out };
   } catch (error) {
     fs.rmSync(out, { recursive: true, force: true });
     throw error;
@@ -125,10 +132,12 @@ if (require.main === module) {
       artifacts: { type: 'string' }, version: { type: 'string' }, 'public-key': { type: 'string' },
       'private-key': { type: 'string' }, out: { type: 'string' }, repo: { type: 'string' },
       'skip-attestation': { type: 'boolean' }, publishable: { type: 'boolean' },
+      'apple-identity': { type: 'string' }, 'notary-profile': { type: 'string' }, 'windows-signer': { type: 'string' },
     } });
     for (const field of ['artifacts', 'version', 'public-key', 'private-key', 'out']) if (!values[field]) throw new Error(`--${field} required`);
     const result = signRelease({ artifacts: values.artifacts, version: values.version, publicKey: values['public-key'], privateKey: values['private-key'],
-      out: values.out, repo: values.repo, skipAttestation: values['skip-attestation'] === true, publishable: values.publishable === true });
+      out: values.out, repo: values.repo, skipAttestation: values['skip-attestation'] === true, publishable: values.publishable === true,
+      appleIdentity: values['apple-identity'], notaryProfile: values['notary-profile'], windowsSigner: values['windows-signer'] });
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   } catch (error) { process.stderr.write(`omg release: ${error.message}\n`); process.exitCode = 1; }
 }
