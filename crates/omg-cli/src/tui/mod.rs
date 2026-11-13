@@ -26,6 +26,16 @@ use worker::{Request, Response, Summary};
 
 /// Whether this build on this platform can delete at all (the analysis-only build cannot).
 /// Delete keys and menu entries are hidden when it cannot; `cleanup.rs` refuses regardless.
+/// What a Docker plan never touches, in one line.
+fn docker_kept(report: &omg_core::docker::Report) -> String {
+    format!(
+        "Never touched: {} volume(s) ({}), {} running container(s), and images in use.",
+        report.volumes,
+        omg_core::bytes(report.volume_bytes),
+        report.running_containers
+    )
+}
+
 pub fn delete_available() -> bool {
     omg_core::capability::platform_permanent_delete() != omg_core::capability::Support::Unsupported
 }
@@ -132,6 +142,10 @@ pub enum Action {
     },
     AcknowledgePreview,
     ToggleAutoTrash,
+    /// Ask Docker what it can safely remove.
+    DockerCheck,
+    /// The confirmation of a reviewed Docker plan.
+    DockerConfirm(Box<omg_core::docker::Plan>),
 }
 
 pub struct Choice {
@@ -364,6 +378,14 @@ impl App {
                 Tone::Normal,
             );
         }
+        if delete_available() {
+            push(
+                "Clean unused Docker data…",
+                None,
+                Action::DockerCheck,
+                Tone::Normal,
+            );
+        }
         push("Scan now", Some('r'), Action::Scan(false), Tone::Normal);
         let auto = s.summary.as_ref().is_some_and(|x| x.auto_trash);
         push(
@@ -504,6 +526,8 @@ impl App {
                 | Action::EmptyTrash
                 | Action::Confirm(_)
                 | Action::PrepareKeeping { .. }
+                | Action::DockerCheck
+                | Action::DockerConfirm(_)
         ) && !delete_available()
         {
             self.state.message = if omg_core::PERMANENT_DELETE {
@@ -626,8 +650,73 @@ impl App {
                 let on = !self.state.summary.as_ref().is_some_and(|x| x.auto_trash);
                 self.request(Request::SetAutoTrash(on), None);
             }
+            Action::DockerCheck => self.request(Request::DockerPlan, Some("Asking Docker")),
+            Action::DockerConfirm(plan) => {
+                self.request(Request::DockerRemove(plan), Some("Removing through Docker"))
+            }
         }
         Ok(false)
+    }
+    fn confirm_docker(&mut self, plan: omg_core::docker::Plan, report: omg_core::docker::Report) {
+        if plan.items.is_empty() {
+            self.state.message = format!(
+                "Docker: no dangling images or unused build cache to remove. {}",
+                docker_kept(&report)
+            );
+            return;
+        }
+        let mut body = vec![(
+            format!(
+                "{} item(s) · ≈ {} · removed by Docker itself, no undo",
+                plan.items.len(),
+                omg_core::bytes(plan.bytes)
+            ),
+            Tone::Danger,
+        )];
+        for item in plan.items.iter().take(6) {
+            body.push((
+                format!(
+                    "  {}  {}  ({})",
+                    item.kind.label(),
+                    theme::clean(item.name.as_bytes()),
+                    omg_core::bytes(item.bytes)
+                ),
+                Tone::Normal,
+            ));
+        }
+        if plan.items.len() > 6 {
+            body.push((
+                format!("  … and {} more", plan.items.len() - 6),
+                Tone::Normal,
+            ));
+        }
+        body.push((docker_kept(&report), Tone::Normal));
+        if cfg!(any(target_os = "macos", windows)) {
+            body.push((
+                "Docker's disk on this machine may take a while to shrink after this.".into(),
+                Tone::Warn,
+            ));
+        }
+        self.state.menu = Some(Menu {
+            title: "Remove unused Docker data?".into(),
+            body,
+            choices: vec![
+                Choice {
+                    label: "Cancel".into(),
+                    key: None,
+                    action: Action::AcknowledgePreview,
+                    tone: Tone::Normal,
+                },
+                Choice {
+                    label: "Yes, remove through Docker".into(),
+                    key: None,
+                    action: Action::DockerConfirm(Box::new(plan)),
+                    tone: Tone::Danger,
+                },
+            ],
+            cursor: 0,
+            tone: Tone::Danger,
+        });
     }
     fn on_response(&mut self, response: Response) {
         let mut start = None;
@@ -775,6 +864,27 @@ impl App {
             Response::Info(text) => {
                 s.busy = None;
                 s.message = text;
+            }
+            Response::DockerPlan(plan, report) => {
+                s.busy = None;
+                self.confirm_docker(*plan, *report);
+            }
+            Response::DockerRemoved(outcome) => {
+                s.busy = None;
+                s.message = format!(
+                    "Docker removed {} item(s), ≈ {}{}",
+                    outcome.removed.len(),
+                    omg_core::bytes(outcome.reclaimed),
+                    outcome
+                        .skipped
+                        .first()
+                        .map(|(item, why)| format!(
+                            " · {} kept: {} ({why})",
+                            outcome.skipped.len(),
+                            theme::clean(item.name.as_bytes())
+                        ))
+                        .unwrap_or_default()
+                );
             }
             Response::Error(text) => {
                 s.busy = None;

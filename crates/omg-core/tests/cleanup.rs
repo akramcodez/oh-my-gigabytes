@@ -1172,7 +1172,7 @@ fn container_disks_are_shown_never_suggested_and_cannot_be_deleted() {
         panic!("{findings:?}");
     };
     assert_eq!(vm.effective_tier, "protected");
-    assert!(vm.rule.explanation.contains("docker system prune"));
+    assert!(vm.rule.explanation.contains("Clean unused Docker data"));
     assert!(
         findings.iter().all(|f| f.rule.discovery != "large_file"),
         "the disk is explained by the folder's finding"

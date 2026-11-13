@@ -2,6 +2,18 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Unused Docker data (2026-11-12)
+
+Owner request. Docker's disk is never deleted (one file holds every image, container and volume); instead `omg docker` and the interface (`m` › Clean unused Docker data) ask the engine itself.
+
+- Reached only locally: `DOCKER_HOST` if it is `unix://` or `npipe://` (anything else is refused), otherwise the known per-user sockets (Docker Desktop, Colima, OrbStack, Rancher Desktop, `/var/run/docker.sock`, rootless Docker and Podman) or `\\.\pipe\docker_engine` on Windows. A socket must be owned by the current user or root.
+- Read: `GET /system/df`. Suggested by default: dangling images (no tag, no container) created 7 or more days ago and build cache not in use and unused for 30 or more days. Opt-in: tagged images no container uses and stopped containers, created 30 or more days ago. Never: volumes, running or paused containers, anything in use, or anything without a date.
+- Removal: a fingerprinted plan the user confirms (the interface dialog defaults to Cancel; the CLI needs `--confirm <fingerprint>`). `Engine::remove` refuses if the plan is older than 15 minutes or if Docker no longer reports exactly the reviewed items, re-reads Docker before each item, and removes with `DELETE /images/<id>?force=false`, `DELETE /containers/<id>?v=false&force=false` or `POST /build/prune` filtered by id and `inuse=false`. `check_request` refuses every other request. Each removal is recorded in `operations` (kind `docker`) before it starts.
+
+Verification on the development Mac (macOS 27.2, Rust 1.95.0): unit tests (request allowlist, remote hosts refused, HTTP chunked and sized bodies, RFC 3339 dates, classification and ages) and `crates/omg-core/tests/docker.rs` against a fake engine on a Unix socket (only planned items removed and without force; nothing removed when Docker changed or the confirmation is wrong; an item that comes into use mid-removal is skipped; opt-in kinds never include running containers). `cargo test --workspace` in both builds and clippy `-D warnings` pass.
+
+Not passed yet: a real Docker engine on any platform (no Docker was running on the development Mac), the Windows named pipe (compiled in CI only), and Podman's compatibility API.
+
 ## Unused applications and toolchains (2026-11-08)
 
 Requested by the owner after a Windows scan where `AppData` held 45 GiB of 62 GiB and `.rustup` 6 GiB. Two discoveries, on Linux, macOS and Windows, feed `Index::suggest` (categories `unused_apps`, `unused_toolchains`); listing authorizes nothing and every item still goes through a confirmed plan.

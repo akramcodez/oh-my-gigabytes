@@ -111,6 +111,27 @@ enum Command {
     },
     /// Recorded dry-run previews
     History,
+    /// Unused Docker data (dangling images, build cache), found and removed through Docker itself
+    Docker {
+        #[command(subcommand)]
+        command: Option<DockerCommand>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DockerCommand {
+    /// Show what a removal would include; with --confirm, remove exactly that
+    Clean {
+        /// Also include tagged images no container uses (they can be pulled or built again)
+        #[arg(long)]
+        include_unused_images: bool,
+        /// Also include stopped containers (their changes outside volumes are lost)
+        #[arg(long)]
+        include_stopped_containers: bool,
+        /// The fingerprint printed by the same command without --confirm
+        #[arg(long)]
+        confirm: Option<String>,
+    },
 }
 // Only the Linux service controller (svc.rs) reads these fields.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -462,6 +483,7 @@ fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&plan)?);
         }
         Some(Command::History) => println!("{}", serde_json::to_string_pretty(&index.history()?)?),
+        Some(Command::Docker { command }) => docker(&index, command)?,
         Some(Command::Findings { offset }) => {
             let mut findings = serde_json::to_value(index.findings(1000, offset, false)?)?;
             // `entry.path` stays the raw bytes (the path authority); `path` is for reading only.
@@ -513,5 +535,81 @@ fn run() -> Result<()> {
         }
         _ => unreachable!(),
     }
+    Ok(())
+}
+
+fn docker(index: &Index, command: Option<DockerCommand>) -> Result<()> {
+    use omg_core::docker::{Engine, Kind, make_plan};
+    let Some(engine) = Engine::find(&platform::home()?)? else {
+        println!("{}", serde_json::json!({ "docker": "not running" }));
+        eprintln!("omg: Docker isn't running on this machine; nothing to check");
+        return Ok(());
+    };
+    let report = engine.report()?;
+    let Some(DockerCommand::Clean {
+        include_unused_images,
+        include_stopped_containers,
+        confirm,
+    }) = command
+    else {
+        let reclaimable = report.total(&Kind::DEFAULT);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "endpoint": report.endpoint,
+                "safe_to_remove_bytes": reclaimable,
+                "safe_to_remove": omg_core::bytes(reclaimable),
+                "items": report.items,
+                "never_touched": { "volumes": report.volumes, "volume_bytes": report.volume_bytes, "running_containers": report.running_containers },
+            }))?
+        );
+        eprintln!("omg: nothing removed; review with `omg docker clean`");
+        return Ok(());
+    };
+    let mut kinds = Kind::DEFAULT.to_vec();
+    if include_unused_images {
+        kinds.push(Kind::UnusedImage);
+    }
+    if include_stopped_containers {
+        kinds.push(Kind::StoppedContainer);
+    }
+    let plan = make_plan(&report, &kinds);
+    let Some(confirm) = confirm else {
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+        if plan.items.is_empty() {
+            eprintln!("omg: nothing unused to remove");
+        } else {
+            eprintln!(
+                "omg: nothing removed yet. To remove exactly these {} item(s) ({}), run the same command with --confirm {}",
+                plan.items.len(),
+                omg_core::bytes(plan.bytes),
+                plan.fingerprint
+            );
+        }
+        return Ok(());
+    };
+    if !omg_core::PERMANENT_DELETE {
+        bail!("removing is not available in this analysis-only build");
+    }
+    if confirm != plan.fingerprint {
+        bail!(
+            "Docker changed since that plan was printed, or the fingerprint is wrong; run `omg docker clean` again to review"
+        );
+    }
+    #[cfg(feature = "permanent-delete")]
+    {
+        let operation = index.docker_intent(&plan)?;
+        let outcome = engine.remove(&plan, &confirm)?;
+        index.docker_outcome(operation, &outcome)?;
+        println!("{}", serde_json::to_string_pretty(&outcome)?);
+        eprintln!(
+            "omg: Docker removed {} item(s), about {}; {} kept",
+            outcome.removed.len(),
+            omg_core::bytes(outcome.reclaimed),
+            outcome.skipped.len()
+        );
+    }
+    #[cfg(not(feature = "permanent-delete"))]
+    let _ = index;
     Ok(())
 }
