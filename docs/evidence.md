@@ -72,3 +72,12 @@ Decisions:
 Verification on the development Mac (macOS 27.2, Rust 1.95.0): `cargo test --workspace --locked` in both builds, clippy `-D warnings`, the PTY tests and `release.test.js`. New tests in `tests/cleanup.rs` cover proof and size floors, container disks, tool versions and transcripts; these run on Linux and macOS, and the application cache test on macOS only. Read-only on the real index of that Mac: `omg findings` lists the new rows.
 
 Not passed yet: no measured use on Linux or Windows beyond the test suites; session transcripts on a real index (none on that Mac were old enough); Docker Desktop's folder, which was not present on that Mac.
+
+## Apple and Windows signatures in the signing step (2026-11-13)
+
+`scripts/platform-sign.js`, used by `sign-release.js` through `--apple-identity` with `--notary-profile`, and `--windows-signer`. Off by default; a release signed without them is unchanged. The platform signature is applied to a copy before the Ed25519 manifest, which covers the final bytes. An Apple identity without a notary profile is refused, as is a Developer ID signature without the hardened runtime or a timestamp, notarization that is not `Accepted`, and a Windows signer that leaves no certificate table.
+
+Verification on the development Mac (macOS 27.2): `node --test packages/oh-my-gigabytes/test/release.test.js` (a fake Windows signer, a signer that signs nothing, Apple identity without notarization, certificate table parsing); an ad-hoc identity on a real `omg` binary was refused as "not a Developer ID Application certificate".
+
+Not passed yet: no Developer ID certificate or Windows code-signing certificate exists, so real notarization, `spctl`, `Get-AuthenticodeSignature` and a signed binary passing `omg`'s own launch verification are untested. Releases stay unsigned by Apple and Microsoft until then.
+

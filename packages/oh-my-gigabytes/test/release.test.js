@@ -9,6 +9,7 @@ const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const { assemble } = require('../../../scripts/assemble-release');
 const { signRelease } = require('../../../scripts/sign-release');
+const { authenticodeSize } = require('../../../scripts/platform-sign');
 const { hostTarget, signedMessage, verifyArtifact } = require('../lib/verify');
 const { resolveArtifact } = require('../bin/omg');
 
@@ -104,7 +105,8 @@ test('a macOS release declares its own capabilities and they are checked', t => 
 // Minimal headers that pass the per-target format check, one for each release target.
 function headers() {
   const elf = machine => { const b = Buffer.alloc(64); Buffer.from('7f454c46', 'hex').copy(b); b[4] = 2; b[5] = 1; b.writeUInt16LE(machine, 18); return b; };
-  const pe = Buffer.alloc(128); pe.write('MZ'); pe.writeUInt32LE(64, 60); Buffer.from('50450000', 'hex').copy(pe, 64); pe.writeUInt16LE(0x8664, 68);
+  const pe = Buffer.alloc(256); pe.write('MZ'); pe.writeUInt32LE(64, 60); Buffer.from('50450000', 'hex').copy(pe, 64); pe.writeUInt16LE(0x8664, 68);
+  pe.writeUInt16LE(0x20b, 88);
   const macho = cpu => { const b = Buffer.alloc(64); b.writeUInt32LE(0xfeedfacf, 0); b.writeUInt32LE(cpu, 4); return b; };
   return {
     'linux-x64-gnu': ['omg', elf(62)], 'linux-arm64-gnu': ['omg', elf(183)], 'win32-x64': ['omg.exe', pe],
@@ -160,6 +162,55 @@ test('sign-release signs every target and names them all in the published wrappe
     assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'), digest, name);
   }
   assert.ok(!fs.existsSync(path.join(out, 'work')), 'staging folders are removed');
+});
+
+// Stands in for signtool or jsign: appends a certificate table and points data directory 4 at it.
+function fakeSigner(directory, sign = true) {
+  const script = path.join(directory, sign ? 'fake-signer' : 'no-op-signer');
+  const body = sign ? `const fs = require('fs'); const f = process.argv[2]; const d = fs.readFileSync(f);
+const entry = d.readUInt32LE(60) + 24 + 112 + 32; const out = Buffer.concat([d, Buffer.alloc(16, 7)]);
+out.writeUInt32LE(d.length, entry); out.writeUInt32LE(16, entry + 4); fs.writeFileSync(f, out);` : '';
+  fs.writeFileSync(script, `#!${process.execPath}\n${body}\n`, { mode: 0o755 });
+  return script;
+}
+
+test('authenticode detection reads the PE certificate table', () => {
+  const [, pe] = headers()['win32-x64'];
+  assert.equal(authenticodeSize(pe), 0);
+  const signed = Buffer.concat([pe, Buffer.alloc(16)]);
+  signed.writeUInt32LE(pe.length, 232); signed.writeUInt32LE(16, 236);
+  assert.equal(authenticodeSize(signed), 16);
+  signed.writeUInt32LE(64, 236);
+  assert.throws(() => authenticodeSize(signed), /outside the file/);
+  assert.throws(() => authenticodeSize(headers()['linux-x64-gnu'][1]), /Not a PE file/);
+});
+
+test('sign-release puts the Windows signature inside what the manifest signs', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t);
+  const artifacts = ciArtifacts(f.directory);
+  const out = path.join(f.directory, 'signed');
+  const result = signRelease({ artifacts, version: '0.1.0-beta.1', publicKey: f.publicFile, privateKey: f.privateFile, out, skipAttestation: true,
+    checkBinary: false, windowsSigner: fakeSigner(f.directory) });
+  assert.deepEqual(result.signatures, { 'linux-x64-gnu': 'none', 'linux-arm64-gnu': 'none', 'win32-x64': 'authenticode', 'darwin-arm64': 'none' });
+  const extracted = path.join(f.directory, 'extracted');
+  fs.mkdirSync(extracted);
+  const run = spawnSync('tar', ['-xzf', path.join(out, 'tarballs', 'oh-my-gigabytes-win32-x64-0.1.0-beta.1.tgz'), '-C', extracted]);
+  assert.equal(run.status, 0);
+  const artifact = path.join(extracted, 'package', 'artifact');
+  assert.equal(authenticodeSize(fs.readFileSync(path.join(artifact, 'omg.exe'))), 16);
+  const trust = JSON.parse(tarText(path.join(out, 'tarballs', 'oh-my-gigabytes-0.1.0-beta.1.tgz'), 'package/trust.json'));
+  verifyArtifact(artifact, trust, { target: 'win32-x64', version: '0.1.0-beta.1' });
+  const original = fs.readFileSync(path.join(artifacts, 'omg-win32-x64', 'omg.exe'));
+  assert.equal(authenticodeSize(original), 0, 'the downloaded CI binary is left as it was');
+});
+
+test('sign-release refuses a signer that did not sign, and Apple signing without notarization', { skip: process.platform === 'win32' }, t => {
+  const f = fixture(t);
+  const options = { artifacts: ciArtifacts(f.directory), version: '0.1.0-beta.1', publicKey: f.publicFile, privateKey: f.privateFile, skipAttestation: true, checkBinary: false };
+  const out = path.join(f.directory, 'unsigned');
+  assert.throws(() => signRelease({ ...options, out, windowsSigner: fakeSigner(f.directory, false) }), /has no Authenticode signature/);
+  assert.ok(!fs.existsSync(out), 'a failed signing leaves nothing behind');
+  assert.throws(() => signRelease({ ...options, out, appleIdentity: 'Developer ID Application: Example (ABCDE12345)' }), /go together/);
 });
 
 test('sign-release signs an analysis-only build as disabled, whatever the target', t => {

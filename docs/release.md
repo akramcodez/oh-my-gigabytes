@@ -116,6 +116,15 @@ Everything below runs on a commit that has passed `Checks`. Steps marked **owner
 7. **npm (owner).** `npm publish --tag beta` each tarball with the platform packages first and `oh-my-gigabytes-<version>.tgz` last, so a plain `npm install oh-my-gigabytes` never selects the beta. Names `oh-my-gigabytes` and `oh-my-gigabytes-<target>` were unclaimed on 2026-10-18.
 8. **Publish the release**, and record the run ids under [Not passed yet](#not-passed-yet).
 
+### Apple and Windows signatures (optional, not used yet)
+
+A binary installed through npm carries no quarantine mark or Mark of the Web, so Gatekeeper and SmartScreen do not check it. A binary downloaded in a browser is checked: on macOS it is blocked until it is allowed in System Settings, and on Windows SmartScreen may warn. `sign-release.js` can sign the macOS and Windows binaries before the Ed25519 manifest is made, so the manifest covers the signed bytes. Without these options nothing changes.
+
+- **macOS** (on a Mac): `--apple-identity "Developer ID Application: NAME (TEAMID)" --notary-profile PROFILE`. Needs an Apple Developer Program membership, a Developer ID Application certificate in the login keychain, and a profile saved once with `xcrun notarytool store-credentials PROFILE`. The binary gets the hardened runtime and a secure timestamp, is submitted for notarization and must come back `Accepted`. A bare binary cannot be stapled, so Gatekeeper fetches the ticket online when a download is first opened.
+- **Windows**: `--windows-signer PROGRAM`, the owner's own script that signs the file it is given (signtool, jsign or a cloud signing service; code-signing keys must be on hardware or a cloud service). omg runs it without a shell and refuses the result if it has no certificate table. A new certificate may still get SmartScreen warnings until it has reputation.
+- The CI binary in the download folder is never changed; a signed copy is made in the work folder. The `signatures` field of the output says what each target got (`none`, `developer-id-notarized`, `authenticode`).
+- Check by hand on the signed copy: `codesign --verify --strict --verbose=2 omg`, `spctl --assess --type install -vv omg` (expects "Notarized Developer ID"), and on Windows `Get-AuthenticodeSignature omg.exe` (expects `Valid`).
+
 A user verifies a manual download with `sha256sum -c SHA256SUMS` in the download folder, compares `KEY-FINGERPRINT.txt` with the fingerprint published elsewhere, and installs with `npm install --global --ignore-scripts --offline <offline tarball>`. On macOS a binary downloaded in a browser carries a quarantine mark and is not notarized; the npm path avoids that, and `xattr -d com.apple.quarantine` clears it for a manual copy.
 
 ## Current state (2026-11-08)
