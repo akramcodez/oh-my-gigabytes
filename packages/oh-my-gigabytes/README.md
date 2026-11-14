@@ -51,6 +51,9 @@ Anything outside your home folder; credentials, keys, databases and disk images;
 omg scan --root "$HOME" --accept-gaps   # scan without opening the interface
 omg findings                             # findings as JSON
 omg status                               # totals, and how much space omg itself uses
+omg grew                                 # which folders grew since the scan before
+omg clean --category logs_and_temp       # list a category, then add --confirm <fingerprint> to delete it
+omg schedule enable                      # macOS and Windows: scan once a day (never deletes)
 omg doctor                               # read-only health check
 ```
 

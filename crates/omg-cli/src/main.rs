@@ -73,10 +73,20 @@ enum Command {
         #[command(subcommand)]
         command: ServiceCommand,
     },
+    /// Daily scan on macOS (launchd) or Windows (Task Scheduler); scan-only, never deletes
+    Schedule {
+        #[command(subcommand)]
+        command: ScheduleCommand,
+    },
     /// Observed free-space and growth history from local scans
     Trends {
         #[arg(long, default_value_t = 30)]
         days: u64,
+    },
+    /// Folders that grew between the last two complete scans, innermost first
+    Grew {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
     /// Largest subdirectories and files under a path in the scanned scope (subtree totals)
     Tree {
@@ -109,6 +119,19 @@ enum Command {
         #[arg(long,required=true,num_args=1..)]
         candidate: Vec<String>,
     },
+    /// Delete findings of chosen categories in one step, for scripts: without --confirm it only
+    /// prints what would go and a fingerprint; with it, deletes exactly that
+    Clean {
+        /// Category to include (repeat for more), e.g. build_artifacts or package_caches
+        #[arg(long, required = true)]
+        category: Vec<String>,
+        /// Only items unchanged for this long, as days: 30 or 30d
+        #[arg(long, value_parser = parse_days)]
+        older_than: Option<u64>,
+        /// The fingerprint printed by the same command without --confirm
+        #[arg(long)]
+        confirm: Option<String>,
+    },
     /// Recorded dry-run previews
     History,
     /// Unused Docker data (dangling images, build cache), found and removed through Docker itself
@@ -116,6 +139,20 @@ enum Command {
         #[command(subcommand)]
         command: Option<DockerCommand>,
     },
+}
+
+#[derive(Subcommand)]
+enum ScheduleCommand {
+    /// Register a daily scan for this user
+    Enable {
+        /// Local hour of the day to scan, 0 to 23
+        #[arg(long, default_value_t = 12)]
+        hour: u8,
+    },
+    /// Remove the daily scan
+    Disable,
+    /// Show whether the daily scan is registered
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -265,6 +302,13 @@ fn run() -> Result<()> {
     ) {
         bail!("background service is not supported on this platform");
     }
+    if let Some(Command::Schedule { command }) = &cli.command {
+        let state = match &cli.state_dir {
+            Some(state) => state.clone(),
+            None => platform::default_state()?,
+        };
+        return schedule(command, state);
+    }
     if matches!(cli.command, Some(Command::Doctor)) && !platform::supported() {
         println!("omg: this platform is not certified; native scanning and cleanup disabled");
         return Ok(());
@@ -370,6 +414,8 @@ fn run() -> Result<()> {
                 .map(|f| f.estimate)
                 .sum::<u64>()
                 .into();
+            value["freed_total_bytes"] = index.freed_total()?.into();
+            value["output_schema"] = omg_core::OUTPUT_SCHEMA.into();
             #[cfg(target_os = "linux")]
             {
                 value["service"] = omg_core::service::daemon::health(&index)?;
@@ -471,6 +517,19 @@ fn run() -> Result<()> {
                 }))?
             );
         }
+        Some(Command::Grew { limit }) => {
+            let mut value = serde_json::to_value(index.grew(limit)?)?;
+            for item in value["items"].as_array_mut().into_iter().flatten() {
+                let raw: Option<Vec<u8>> = serde_json::from_value(item["path"].clone()).ok();
+                if let Some(raw) = raw {
+                    item["path"] = omg_core::display_path(&raw).into();
+                }
+            }
+            if value["since"].is_null() {
+                eprintln!("omg: scan twice to see what grew between scans");
+            }
+            println!("{}", serde_json::to_string_pretty(&value)?)
+        }
         Some(Command::Trends { days }) => {
             println!("{}", serde_json::to_string_pretty(&index.trend(days)?)?)
         }
@@ -484,6 +543,11 @@ fn run() -> Result<()> {
         }
         Some(Command::History) => println!("{}", serde_json::to_string_pretty(&index.history()?)?),
         Some(Command::Docker { command }) => docker(&index, command)?,
+        Some(Command::Clean {
+            category,
+            older_than,
+            confirm,
+        }) => clean(index, &category, older_than, confirm)?,
         Some(Command::Findings { offset }) => {
             let mut findings = serde_json::to_value(index.findings(1000, offset, false)?)?;
             // `entry.path` stays the raw bytes (the path authority); `path` is for reading only.
@@ -535,6 +599,106 @@ fn run() -> Result<()> {
         }
         _ => unreachable!(),
     }
+    Ok(())
+}
+
+fn schedule(command: &ScheduleCommand, state: PathBuf) -> Result<()> {
+    use omg_core::scheduled::{Scheduler, Spec};
+    let scheduler = Scheduler::discover(&platform::home()?)?;
+    match command {
+        ScheduleCommand::Enable { hour } => {
+            let executable = std::env::current_exe()?;
+            let spec = Spec {
+                executable,
+                state_dir: state,
+                hour: *hour,
+            };
+            scheduler.enable(&spec)?;
+            println!(
+                "omg: a scan runs every day at {hour:02}:00 while you are signed in; it never deletes anything. Remove it with `omg schedule disable`"
+            );
+        }
+        ScheduleCommand::Disable => {
+            if scheduler.disable()? {
+                println!("omg: daily scan removed");
+            } else {
+                println!("omg: no daily scan was registered");
+            }
+        }
+        ScheduleCommand::Status => {
+            println!("{}", serde_json::to_string_pretty(&scheduler.state()?)?)
+        }
+    }
+    Ok(())
+}
+
+fn parse_days(text: &str) -> std::result::Result<u64, String> {
+    text.strip_suffix('d')
+        .unwrap_or(text)
+        .parse::<u64>()
+        .ok()
+        .filter(|d| *d <= 36_500)
+        .ok_or_else(|| "give a number of days, like 30 or 30d".into())
+}
+
+fn clean(
+    mut index: Index,
+    categories: &[String],
+    older_than: Option<u64>,
+    confirm: Option<String>,
+) -> Result<()> {
+    let home = platform::home()?;
+    let selection = index.select_for_clean(&home, categories, older_than)?;
+    let Some(confirm) = confirm else {
+        println!("{}", serde_json::to_string_pretty(&selection)?);
+        if selection.items.is_empty() {
+            eprintln!("omg: nothing matches; nothing deleted");
+        } else {
+            eprintln!(
+                "omg: nothing deleted yet. To delete exactly these {} item(s) ({}), run the same command with --confirm {}",
+                selection.items.len(),
+                omg_core::bytes(selection.bytes),
+                selection.fingerprint
+            );
+        }
+        return Ok(());
+    };
+    if !omg_core::PERMANENT_DELETE {
+        bail!("deleting is not available in this analysis-only build");
+    }
+    let (plan, report) = index.clean_selection(&home, &selection, &confirm)?;
+    let denied: Vec<_> = plan
+        .denied
+        .iter()
+        .map(|(path, why)| serde_json::json!({ "path": omg_core::display_path(path), "reason": why }))
+        .collect();
+    let deleted: Vec<_> = report
+        .deleted
+        .iter()
+        .map(|p| omg_core::display_path(p))
+        .collect();
+    let skipped: Vec<_> = report
+        .skipped
+        .iter()
+        .map(|(path, why)| serde_json::json!({ "path": omg_core::display_path(path), "reason": why }))
+        .collect();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "deleted": deleted,
+            "skipped": skipped,
+            "refused": denied,
+            "estimated_bytes": report.estimated_bytes,
+            "observed_free_change": report.observed_free_change,
+        }))?
+    );
+    eprintln!(
+        "omg: deleted {} item(s), about {}; {} skipped, {} refused (see the JSON for why)",
+        report.deleted.len(),
+        omg_core::bytes(report.estimated_bytes),
+        report.skipped.len(),
+        plan.denied.len()
+    );
     Ok(())
 }
 

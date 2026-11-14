@@ -407,6 +407,8 @@ fn summary_with_marked(path: &[u8]) -> worker::Summary {
         home: None,
         auto_trash: true,
         volume: None,
+        freed: 0,
+        grew: vec![],
     }
 }
 

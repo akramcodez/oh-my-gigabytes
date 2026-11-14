@@ -388,3 +388,45 @@ fn eta_matches_the_measured_scan_speed() {
     );
     assert_eq!(scanner::eta(1_560_000, 1_660_000, 24.0, Some(30.0)), 1.0);
 }
+
+#[test]
+fn grew_names_the_innermost_folder_that_grew_between_the_last_two_scans() {
+    let root = tempfile::tempdir().unwrap();
+    for (path, byte) in [
+        ("a/sub/deep/one.bin", 1u8),
+        ("b/two.bin", 2),
+        ("c/three.bin", 3),
+    ] {
+        fs::create_dir_all(root.path().join(path).parent().unwrap()).unwrap();
+        fs::write(root.path().join(path), vec![byte; 2 << 20]).unwrap();
+    }
+    let state = private_state();
+    let mut index = Index::open(state.path()).unwrap();
+    assert_eq!(scan(&mut index, root.path()).state, "complete");
+    let first = index.grew(20).unwrap();
+    assert!(first.since.is_none() && first.items.is_empty());
+    fs::write(root.path().join("a/sub/deep/grown.bin"), vec![4u8; 8 << 20]).unwrap();
+    fs::create_dir_all(root.path().join("d")).unwrap();
+    fs::write(root.path().join("d/new.bin"), vec![5u8; 3 << 20]).unwrap();
+    fs::remove_file(root.path().join("c/three.bin")).unwrap();
+    assert_eq!(scan(&mut index, root.path()).state, "complete");
+    let grew = index.grew(20).unwrap();
+    assert!(grew.since.is_some() && grew.at.is_some());
+    let paths: Vec<&[u8]> = grew.items.iter().map(|g| g.path.as_slice()).collect();
+    assert_eq!(paths, vec![b"a/sub/deep".as_slice(), b"d".as_slice()]);
+    assert!(grew.items[0].change >= 8 << 20 && !grew.items[0].new);
+    assert!(grew.items[1].new);
+    assert!(grew.total_change.unwrap() >= 8 << 20);
+    for _ in 0..3 {
+        scan(&mut index, root.path());
+    }
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    let kept: i64 = db
+        .query_row("SELECT count(*) FROM size_snapshots", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(kept, 2, "only the last two snapshots are kept");
+    assert!(
+        index.grew(20).unwrap().items.is_empty(),
+        "nothing grew since"
+    );
+}

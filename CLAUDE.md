@@ -42,7 +42,7 @@ Running a subset of tests:
 cargo test -p omg-core --test service                      # one integration-test file (scanner, policy, planning, service)
 cargo test -p omg-core --test service ipc_is_a_closed      # one test by name substring
 cargo test -p omg-cli --test cli service::                 # CLI end-to-end tests (use the built binary via CARGO_BIN_EXE_omg)
-cargo test -p omg-core --test migrations                   # schema 1..12 upgrade and recovery
+cargo test -p omg-core --test migrations                   # schema 1..13 upgrade and recovery
 cargo test -p omg-core --test macos                        # macOS only: hdiutil disk images (APFS, HFS+, exFAT, FAT32)
 scripts/fs-sandbox.sh ext4|xfs|btrfs up|test|down          # loop-image filesystem sandbox (needs sudo and mkfs tools)
 cargo run --release -p omg-core --example benchmark        # synthetic scan benchmark
@@ -76,6 +76,8 @@ Constraints that affect tests and running:
   - `main.rs`: clap commands.
   - `tui/`: ratatui interface. `worker.rs` owns the SQLite connection and answers requests over channels; `mod.rs` holds `AppState`, menus/actions and a redraw-on-change loop; `render.rs` is pure rendering that must never query SQLite (the disk gauge is refreshed every 2 s through `Request::Volume`, redrawn only when its text changes); `theme.rs` has colours, the block-letter banner and formatting.
   - `svc.rs`: service control surface, Linux only.
+  - `omg schedule enable|disable|status` (macOS, Windows) registers a daily scan-only job through `omg_core::scheduled`: a marked launchd agent in `~/Library/LaunchAgents` or a Task Scheduler task, with fixed tool paths and arguments. It runs `scan --accept-gaps --no-suggest` only.
+  - JSON output follows `omg_core::OUTPUT_SCHEMA` (`docs/compatibility.md`): add fields, never remove or rename them.
 - **`catalog/bundled.toml`** is the known-good rule catalog. It is compiled in with `include_str!`.
 - **`migrations/NNN.sql`** holds the schema migrations.
 - **`packages/oh-my-gigabytes` and `scripts/`** hold the npm launcher, signed release assembly, verification and SBOM.
@@ -86,18 +88,18 @@ Constraints that affect tests and running:
 
 | Module | Methods it adds to `Index` |
 | --- | --- |
-| `index.rs` | `open` (migrations), `status`, `prune_stale` (also gives free pages back), `index_bytes` |
+| `index.rs` | `open` (migrations), `status`, `prune_stale` (also gives free pages back), `index_bytes`, `freed_total` |
 | `catalog.rs` | `catalog`, `import_catalog`, `rollback_catalog`, `findings`, `findings_in`, ignores |
-| `cleanup.rs` | `mark`, `unmark`, `marked` (OMG Trash), `suggest`, `auto_trash`, `prepare_delete`, `delete_permanently` |
+| `cleanup.rs` | `mark`, `unmark`, `marked` (OMG Trash), `suggest`, `auto_trash`, `prepare_delete`, `delete_permanently`, `select_for_clean`/`clean_selection` (`omg clean`) |
 | `planning.rs` | `preview`, `record_preview`, `history`, `execute` (always denied) |
-| `service/trend.rs` | `record_sample`, `prune_samples`, `trend` |
+| `service/trend.rs` | `record_sample` (also the size snapshot behind `omg grew`), `prune_samples`, `trend`, `grew` |
 | `service/notify.rs` | Notification state persistence |
 
 Find functionality by grepping for `impl Index`.
 
 ### Schema migrations
 
-Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/00N.sql` (currently up to 012) requires three edits in `index.rs`:
+Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/0NN.sql` (currently up to 013) requires three edits in `index.rs`:
 1. Add the `include_str!` step.
 2. Bump the "schema is newer than this omg build" check (`version > N`).
 3. Bump `schema_supported` in `diagnose`.
@@ -134,12 +136,13 @@ Entries follow these conventions:
 - directory roots of tool caches (npm, pip, uv, pnpm, Yarn, Cargo, Go, Gradle, Homebrew, Bun, Deno, Maven, CocoaPods, Composer, Playwright, Puppeteer, JetBrains; on macOS Xcode DerivedData, iOS DeviceSupport and Simulator caches), of downloaded ML models (Hugging Face, Ollama, LM Studio; category `ml_models`, never auto-suggested) and of container VMs (`.colima`, Docker Desktop), which `policy::hard_protection` refuses to delete;
 - `unused_clone`: Git clones untouched 30 days that `policy::pristine_clone` proves have nothing local (remote, every branch on it, no loose objects, stash, local tag or later change time in the working tree);
 - `stale_dependencies` (projects untouched 30 days), then `project_build_output` (50 MB+ `target` beside `Cargo.toml`, `node_modules` beside `package.json`, virtualenvs), AI coding tool old versions and session transcripts (7 days, 1 MB, `projects/<p>/*.jsonl` only), older VS Code and Cursor extension versions (`editor_old_extensions`: per id and platform suffix, all but the newest, once the newest is a day old), and on macOS app caches in `~/Library/Caches` (50 MB+, not `com.apple.*` or `GeoServices`);
+- `toolchain_old_versions` (`catalog::VersionScheme`: older nvm, pyenv and rustup versions of a line unchanged 30 days once the newest of that line is a day old; pyenv versions with `envs` are skipped) and, on macOS and Windows, `home_logs_and_temp` (direct items of `~/Library/Logs`, `AppData/Local/Temp`, `AppData/Local/CrashDumps`, 1 MB+, modified 7+ days ago; category `logs_and_temp`);
 - `unused_toolchain` (`catalog::toolchains`: rustup, nvm, pyenv, SDKMAN!, Android SDK, default and override locations) and `unused_app_data` (direct subfolders of `catalog::app_data_parents`, 50 MB+, nothing protected inside, not a system name in `APP_DATA_SKIP`, not overlapping a known cache or toolchain): unchanged for `catalog::UNUSED_DAYS` (150). A toolchain also needs its related folders (`.cargo`, `.gradle`) unchanged and no recent project folder of its language (`target`, `node_modules`, `__pycache__`, `build`). Toolchains are cache roots at deletion; app data stays `Kind::Plain` with a warning;
 - `large_file`, which skips files already inside a directory finding.
 
 The same `cleanup::verdict` that gates deletion decides each finding's tier, so `protected` means it really cannot be deleted. Findings are sorted by `estimate` and paged. The active catalog is either `bundled.toml` or an Ed25519-signed import stored in `catalog_releases`.
 
-`Index::suggest` adds findings of the categories `package_caches`, `build_artifacts`, `app_caches`, `old_tool_versions`, `session_history`, `unused_clones`, `unused_apps` and `unused_toolchains` to OMG Trash after a published scan, unless the user turned `auto_trash` off (default on). `omg scan` then prints a line to stderr, so scripts that parse its JSON must not merge stderr or must pass `--no-suggest`. Listing authorizes nothing. `prepare_delete` refuses whole repositories and session transcripts in a plan of several items (`one_at_a_time`), so `D` never takes them.
+`Index::suggest` adds findings of `cleanup::SUGGESTED_CATEGORIES` to OMG Trash after a published scan, unless the user turned `auto_trash` off (default on). `omg scan` then prints a line to stderr, so scripts that parse its JSON must not merge stderr or must pass `--no-suggest`. Listing authorizes nothing. `prepare_delete` refuses whole repositories and session transcripts in a plan of several items (`one_at_a_time`), so `D` never takes them.
 
 `catalog::parse` admits only:
 - tiers `info` or `review`

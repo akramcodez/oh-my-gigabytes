@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 pub const MAX_CATALOG: usize = 256 * 1024;
 /// Builtin discovery kinds. A catalog can only refer to these; it can never name a path itself.
-pub const DISCOVERIES: [&str; 35] = [
+pub const DISCOVERIES: [&str; 37] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -43,7 +43,67 @@ pub const DISCOVERIES: [&str; 35] = [
     "ollama_models",
     "lm_studio_models",
     "editor_old_extensions",
+    "toolchain_old_versions",
+    "home_logs_and_temp",
 ];
+
+/// Logs and temporary files unchanged for this long are suggested.
+pub const LOGS_MIN_AGE_DAYS: i64 = 7;
+
+/// A version folder: parsed version, newest change time, path.
+type VersionDir = (Vec<u64>, i64, Vec<u8>);
+
+#[derive(Clone, Copy)]
+enum VersionScheme {
+    Node,
+    Python,
+    Rust,
+}
+
+impl VersionScheme {
+    /// The line a version folder belongs to (only one per line is kept) and its comparable number.
+    /// Anything that is not plainly a released version is not ours to judge.
+    fn parse(self, name: &str) -> Option<(String, Vec<u64>)> {
+        fn numbers(text: &str, count: usize) -> Option<Vec<u64>> {
+            let parts: Vec<u64> = text
+                .split('.')
+                .map(|p| p.parse().ok().filter(|_| !p.is_empty()))
+                .collect::<Option<_>>()?;
+            (parts.len() == count).then_some(parts)
+        }
+        match self {
+            Self::Node => {
+                let version = numbers(name.strip_prefix('v')?, 3)?;
+                Some((version[0].to_string(), version))
+            }
+            Self::Python => {
+                let version = numbers(name, 3)?;
+                Some((format!("{}.{}", version[0], version[1]), version))
+            }
+            Self::Rust => {
+                let (head, rest) = name.split_once('-')?;
+                if let Some(version) = numbers(head, 3) {
+                    return Some((format!("release-{rest}"), version));
+                }
+                if head != "nightly" {
+                    return None;
+                }
+                let mut fields = rest.splitn(4, '-');
+                let (year, month, day, target) = (
+                    fields.next()?,
+                    fields.next()?,
+                    fields.next()?,
+                    fields.next()?,
+                );
+                if year.len() != 4 || month.len() != 2 || day.len() != 2 || target.is_empty() {
+                    return None;
+                }
+                let date = vec![year.parse().ok()?, month.parse().ok()?, day.parse().ok()?];
+                Some((format!("nightly-{target}"), date))
+            }
+        }
+    }
+}
 
 /// An application or toolchain unchanged for this long (about five months) counts as unused.
 pub const UNUSED_DAYS: i64 = 150;
@@ -585,6 +645,7 @@ pub fn parse(payload: &str) -> Result<Catalog> {
             "unused_apps",
             "unused_toolchains",
             "ml_models",
+            "logs_and_temp",
         ]
         .contains(&rule.category.as_str())
         {
@@ -901,6 +962,14 @@ impl Index {
         found.push((
             "unused_toolchain",
             self.unused_toolchains(scan, &root, &home)?,
+        ));
+        found.push((
+            "toolchain_old_versions",
+            self.toolchain_old_versions(scan, &root, &home)?,
+        ));
+        found.push((
+            "home_logs_and_temp",
+            self.home_logs_and_temp(scan, &root, &home)?,
         ));
         found.push(("unused_app_data", self.unused_app_data(scan, &root, &home)?));
         for (discovery, paths) in found {
@@ -1285,6 +1354,157 @@ impl Index {
         }
         Ok(out)
     }
+    /// Installed versions that a newer one of the same line replaced: Node.js (nvm) within a major
+    /// version, Python (pyenv) within a minor version, and Rust (rustup) numbered releases and dated
+    /// nightlies per target, once the newest is a day old. Channel toolchains (`stable`, `beta`,
+    /// `nightly`) are never suggested.
+    /// Version pin files are contents and are not read, so an old version must also be unchanged
+    /// for `policy::STALE_DAYS`; each tool installs a pinned version again on demand.
+    fn toolchain_old_versions(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let cutoff = crate::now() - policy::STALE_DAYS * 86_400;
+        let settled = crate::now() - 86_400;
+        let gaps = self.gaps(scan)?;
+        let mut folders: Vec<(std::path::PathBuf, VersionScheme)> = Vec::new();
+        for toolchain in toolchains(home) {
+            for install in toolchain.roots {
+                match toolchain.name {
+                    "Rust (rustup)" => {
+                        folders.push((install.join("toolchains"), VersionScheme::Rust))
+                    }
+                    "Node.js (nvm)" if cfg!(windows) => {
+                        folders.push((install, VersionScheme::Node))
+                    }
+                    "Node.js (nvm)" => {
+                        folders.push((install.join("versions").join("node"), VersionScheme::Node))
+                    }
+                    "Python (pyenv)" => {
+                        folders.push((install.join("versions"), VersionScheme::Python))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut statement = self.db.prepare(
+            "SELECT path,newest FROM dir_totals WHERE scan_id=? AND parent=? AND path<>x''",
+        )?;
+        let mut out = Vec::new();
+        for (folder, scheme) in folders {
+            let Some(parent) = crate::rollup::relative_raw(root, &folder) else {
+                continue;
+            };
+            if parent.is_empty() || gaps.covers(&parent) {
+                continue;
+            }
+            let rows = statement.query_map(params![scan, parent], |r| {
+                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Option<i64>>(1)?))
+            })?;
+            let mut groups: std::collections::BTreeMap<String, Vec<VersionDir>> =
+                Default::default();
+            for row in rows {
+                let (path, newest) = row?;
+                let name = crate::index::split_path(&path).1;
+                let name = String::from_utf8_lossy(name.strip_prefix(b"/").unwrap_or(name));
+                let Some((line, version)) = scheme.parse(&name) else {
+                    continue;
+                };
+                groups
+                    .entry(line)
+                    .or_default()
+                    .push((version, newest.unwrap_or(0), path));
+            }
+            for (_, mut versions) in groups {
+                versions.sort();
+                // A newest version installed within a day may still be on trial.
+                if versions
+                    .pop()
+                    .is_none_or(|(_, newest, _)| newest <= 0 || newest >= settled)
+                {
+                    continue;
+                }
+                for (_, newest, path) in versions {
+                    // pyenv-virtualenv keeps environments inside the version they were made with.
+                    let mut envs = path.clone();
+                    envs.extend_from_slice(b"/envs");
+                    if newest > 0
+                        && newest < cutoff
+                        && !gaps.covers(&path)
+                        && self.subtree(&envs)?.is_none()
+                    {
+                        out.push(path);
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+    /// Logs, crash reports and temporary files the current user's programs left in the home folder:
+    /// each direct item of `~/Library/Logs` (macOS) or of `%LOCALAPPDATA%\Temp` and
+    /// `%LOCALAPPDATA%\CrashDumps` (Windows), 1 MB or larger and unchanged for
+    /// `LOGS_MIN_AGE_DAYS`. The folders themselves are never suggested.
+    fn home_logs_and_temp(
+        &self,
+        scan: i64,
+        root: &std::path::Path,
+        home: &std::path::Path,
+    ) -> Result<Vec<Vec<u8>>> {
+        let folders: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
+            vec![home.join("Library/Logs")]
+        } else if cfg!(windows) {
+            let local = home.join("AppData").join("Local");
+            vec![local.join("Temp"), local.join("CrashDumps")]
+        } else {
+            vec![]
+        };
+        let cutoff = crate::now() - LOGS_MIN_AGE_DAYS * 86_400;
+        let gaps = self.gaps(scan)?;
+        let mut items = self.db.prepare(
+            "SELECT CAST(parent||name AS BLOB),kind,allocated,modified_ns FROM entries WHERE scan_id=? AND parent=? AND excluded IS NULL",
+        )?;
+        let mut out = Vec::new();
+        for folder in folders {
+            let Some(parent) = crate::rollup::relative_raw(root, &folder) else {
+                continue;
+            };
+            if parent.is_empty() {
+                continue;
+            }
+            let rows = items.query_map(params![scan, parent], |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            })?;
+            for row in rows {
+                let (path, kind, allocated, modified) = row?;
+                let (size, newest) = match kind.as_str() {
+                    "directory" => match self.subtree(&path)? {
+                        Some(t) => (Some(t.allocated), t.newest),
+                        None => continue,
+                    },
+                    "file" => (
+                        allocated.and_then(|a| u64::try_from(a).ok()),
+                        modified.unwrap_or(0) / 1_000_000_000,
+                    ),
+                    _ => continue,
+                };
+                if size.is_some_and(|s| s >= 1 << 20)
+                    && newest > 0
+                    && newest < cutoff
+                    && !gaps.covers(&path)
+                {
+                    out.push(path);
+                }
+            }
+        }
+        Ok(out)
+    }
     /// Old session transcripts of the AI coding tool: `projects/<project>/<session>.jsonl`, exactly
     /// that depth, so memory and settings beside or below them are never included.
     fn ai_tool_sessions(
@@ -1481,6 +1701,38 @@ mod tests {
         }
     }
     #[test]
+    fn toolchain_version_folders_group_by_line_and_skip_channels() {
+        let rust = VersionScheme::Rust;
+        assert_eq!(
+            rust.parse("1.75.0-aarch64-apple-darwin"),
+            Some(("release-aarch64-apple-darwin".into(), vec![1, 75, 0]))
+        );
+        assert_eq!(
+            rust.parse("nightly-2024-01-31-x86_64-unknown-linux-gnu"),
+            Some(("nightly-x86_64-unknown-linux-gnu".into(), vec![2024, 1, 31]))
+        );
+        for channel in [
+            "stable-aarch64-apple-darwin",
+            "beta-aarch64-apple-darwin",
+            "nightly-aarch64-apple-darwin",
+            "1.75-aarch64-apple-darwin",
+        ] {
+            assert_eq!(rust.parse(channel), None, "{channel}");
+        }
+        assert_eq!(
+            VersionScheme::Node.parse("v20.11.1"),
+            Some(("20".into(), vec![20, 11, 1]))
+        );
+        assert_eq!(VersionScheme::Node.parse("20.11.1"), None);
+        assert_eq!(
+            VersionScheme::Python.parse("3.11.4"),
+            Some(("3.11".into(), vec![3, 11, 4]))
+        );
+        for odd in ["3.12.0b1", "miniconda3-latest", "3.11", "my-env"] {
+            assert_eq!(VersionScheme::Python.parse(odd), None, "{odd}");
+        }
+    }
+    #[test]
     fn extension_folder_names_split_into_id_version_and_platform() {
         let v = |n| extension_version(n);
         assert_eq!(
@@ -1568,7 +1820,7 @@ mod tests {
     #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 35);
+        assert_eq!(parse(payload).unwrap().rules.len(), 37);
         assert!(parse(&payload.replace("action = \"info\"", "action = \"shell\"")).is_err());
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());

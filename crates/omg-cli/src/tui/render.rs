@@ -596,11 +596,16 @@ fn overview(state: &AppState, theme: &Theme, width: usize) -> Lines {
         Span::styled(format!("   ≈ {} explained", bytes(explained)), theme.dim()),
     ]));
     let marked: u64 = summary.marked.iter().map(|m| m.allocated).sum();
+    let freed = if summary.freed > 0 {
+        format!(" · ≈ {} freed so far", bytes(summary.freed))
+    } else {
+        String::new()
+    };
     out.push(Line::from(vec![
         Span::styled("  OMG Trash  ", theme.bold()),
         Span::styled(
             format!(
-                "{} item(s) · ≈ {} waiting for your decision",
+                "{} item(s) · ≈ {} waiting for your decision{freed}",
                 summary.marked.len(),
                 bytes(marked)
             ),
@@ -621,6 +626,26 @@ fn overview(state: &AppState, theme: &Theme, width: usize) -> Lines {
                     bytes(change.unsigned_abs())
                 ),
                 style,
+            ),
+        ]));
+    }
+    if !summary.grew.is_empty() {
+        let grew: Vec<String> = summary
+            .grew
+            .iter()
+            .map(|g| {
+                format!(
+                    "{} +{}",
+                    truncate_middle(&omg_core::display_path(&g.path), 32),
+                    bytes(g.change.unsigned_abs())
+                )
+            })
+            .collect();
+        out.push(Line::from(vec![
+            Span::styled("  Grew       ", theme.bold()),
+            Span::styled(
+                format!("since the last scan: {}", grew.join(", ")),
+                theme.warn(),
             ),
         ]));
     }

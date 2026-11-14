@@ -9,6 +9,11 @@ use std::collections::HashMap;
 pub const DEFAULT_SAMPLE_DAYS: u64 = 365;
 pub const DEFAULT_MAX_SAMPLES: u64 = 4000;
 const SNAPSHOT_PATHS: usize = 50;
+/// Folders kept per size snapshot (the largest first) and the smallest one kept.
+const SIZE_PATHS: i64 = 2000;
+const SIZE_MIN_BYTES: i64 = 1 << 20;
+/// Growth smaller than this is not reported.
+const GREW_MIN_BYTES: i64 = 1 << 20;
 const PRUNE_BATCH: i64 = 500;
 
 #[derive(Debug, Serialize)]
@@ -17,6 +22,22 @@ pub struct Grower {
     pub allocated: u64,
     /// `None` when the path was not in the earlier top-N list, so its earlier size is unknown.
     pub change: Option<i64>,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct Grown {
+    pub path: Vec<u8>,
+    pub allocated: u64,
+    pub change: i64,
+    /// Not among the earlier scan's folders of 1 MB or more: the change counts it from zero.
+    pub new: bool,
+}
+#[derive(Debug, Clone, Serialize)]
+pub struct GrewReport {
+    /// Times of the two complete scans compared; `None` until there are two.
+    pub since: Option<i64>,
+    pub at: Option<i64>,
+    pub total_change: Option<i64>,
+    pub items: Vec<Grown>,
 }
 #[derive(Debug, Serialize)]
 pub struct TrendReport {
@@ -70,6 +91,19 @@ impl Index {
                     params![sample, path, i64::try_from(bytes)?],
                 )?;
             }
+            tx.execute(
+                "INSERT INTO size_snapshots(at,root,indexed_allocated) VALUES(?,?,?)",
+                params![now(), root, allocated],
+            )?;
+            let snapshot = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO size_snapshot_paths SELECT ?1,path,allocated FROM dir_totals WHERE scan_id=?2 AND path<>x'' AND allocated>=?3 ORDER BY allocated DESC LIMIT ?4",
+                params![snapshot, scan_id, SIZE_MIN_BYTES, SIZE_PATHS],
+            )?;
+            tx.execute(
+                "DELETE FROM size_snapshots WHERE root=?1 AND id NOT IN (SELECT id FROM size_snapshots WHERE root=?1 ORDER BY id DESC LIMIT 2)",
+                [&root],
+            )?;
         }
         tx.commit()?;
         self.prune_samples(max_age_days, max_samples)?;
@@ -93,6 +127,83 @@ impl Index {
             }
         }
         Ok(list)
+    }
+
+    /// What grew between the last two complete scans of the published root. A folder is left out
+    /// when one inside it accounts for most of its growth, so the list names where it happened.
+    pub fn grew(&self, limit: usize) -> Result<GrewReport> {
+        let mut statement = self.db.prepare(
+            "SELECT id,at FROM size_snapshots WHERE root=(SELECT root FROM scans WHERE id=(SELECT scan_id FROM active WHERE singleton=1)) ORDER BY id DESC LIMIT 2",
+        )?;
+        let snapshots: Vec<(i64, i64)> = statement
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let indexed = |id: i64| -> Result<Option<i64>> {
+            Ok(self.db.query_row(
+                "SELECT indexed_allocated FROM size_snapshots WHERE id=?",
+                [id],
+                |r| r.get(0),
+            )?)
+        };
+        let [(newer, at), (older, since)] = snapshots[..] else {
+            return Ok(GrewReport {
+                since: None,
+                at: None,
+                total_change: None,
+                items: vec![],
+            });
+        };
+        let sizes = |id: i64| -> Result<HashMap<Vec<u8>, u64>> {
+            let mut statement = self
+                .db
+                .prepare("SELECT path,allocated FROM size_snapshot_paths WHERE snapshot=?")?;
+            Ok(statement
+                .query_map([id], |r| Ok((r.get::<_, Vec<u8>>(0)?, unsigned(r, 1)?)))?
+                .collect::<rusqlite::Result<_>>()?)
+        };
+        let (before, after) = (sizes(older)?, sizes(newer)?);
+        let total = match (indexed(older)?, indexed(newer)?) {
+            (Some(a), Some(b)) => Some(b - a),
+            _ => None,
+        };
+        let mut grown: Vec<Grown> = Vec::new();
+        for (path, allocated) in after {
+            let old = before.get(&path).copied();
+            let change = i64::try_from(allocated)? - i64::try_from(old.unwrap_or(0))?;
+            if change >= GREW_MIN_BYTES {
+                grown.push(Grown {
+                    path,
+                    allocated,
+                    change,
+                    new: old.is_none(),
+                });
+            }
+        }
+        let explained: Vec<bool> = grown
+            .iter()
+            .map(|outer| {
+                grown.iter().any(|inner| {
+                    inner.path.len() > outer.path.len()
+                        && inner.path.starts_with(&outer.path)
+                        && inner.path[outer.path.len()] == b'/'
+                        && inner.change * 5 >= outer.change * 4
+                })
+            })
+            .collect();
+        let mut items: Vec<Grown> = grown
+            .into_iter()
+            .zip(explained)
+            .filter(|(_, explained)| !explained)
+            .map(|(g, _)| g)
+            .collect();
+        items.sort_by(|a, b| b.change.cmp(&a.change).then(a.path.cmp(&b.path)));
+        items.truncate(limit.clamp(1, 200));
+        Ok(GrewReport {
+            since: Some(since),
+            at: Some(at),
+            total_change: total,
+            items,
+        })
     }
 
     pub fn prune_samples(&self, max_age_days: u64, max_samples: u64) -> Result<()> {

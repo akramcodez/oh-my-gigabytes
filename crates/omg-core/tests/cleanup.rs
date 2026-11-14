@@ -1745,3 +1745,149 @@ fn a_toolchain_unused_for_five_months_is_suggested_unless_something_used_it() {
     index.suggest(h).unwrap();
     assert!(suggested(&index).is_empty());
 }
+
+#[test]
+fn replaced_toolchain_versions_are_suggested_and_channels_and_envs_are_kept() {
+    let (home, state) = setup();
+    let h = home.path();
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    let rust = h.join(".rustup/toolchains");
+    for name in [
+        "1.70.0-aarch64-apple-darwin",
+        "1.95.0-aarch64-apple-darwin",
+        "1.70.0-x86_64-unknown-linux-gnu",
+        "stable-aarch64-apple-darwin",
+        "nightly-aarch64-apple-darwin",
+        "nightly-2024-01-05-aarch64-apple-darwin",
+        "nightly-2024-03-01-aarch64-apple-darwin",
+    ] {
+        write_bytes(&rust.join(name).join("lib/librustc.so"), 100);
+    }
+    let node = h.join(".nvm/versions/node");
+    for name in ["v18.1.0", "v18.20.0", "v20.0.0", "system"] {
+        write_bytes(&node.join(name).join("bin/node"), 100);
+    }
+    let python = h.join(".pyenv/versions");
+    for name in ["3.11.1", "3.11.2", "3.11.9", "3.12.0", "miniconda3-latest"] {
+        write_bytes(&python.join(name).join("bin/python"), 100);
+    }
+    write_bytes(&python.join("3.11.1/envs/work/bin/python"), 100);
+    age(&h.join(".rustup"), past);
+    age(&h.join(".nvm"), past);
+    age(&h.join(".pyenv"), past);
+    write_bytes(&node.join("v20.1.0/bin/node"), 100);
+    write_bytes(&node.join("v20.2.0/bin/node"), 100);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut listed = suggested(&index);
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![
+            b".nvm/versions/node/v18.1.0".to_vec(),
+            b".pyenv/versions/3.11.2".to_vec(),
+            b".rustup/toolchains/1.70.0-aarch64-apple-darwin".to_vec(),
+            b".rustup/toolchains/nightly-2024-01-05-aarch64-apple-darwin".to_vec(),
+        ],
+        "only an old version of a line with a newer one; channels, recent versions and versions holding environments stay"
+    );
+    assert_eq!(index.freed_total().unwrap(), 0);
+    let id = id_of(&index, b".rustup/toolchains/1.70.0-aarch64-apple-darwin");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert!(report.estimated_bytes > 0);
+    assert_eq!(index.freed_total().unwrap(), report.estimated_bytes);
+    assert!(!rust.join("1.70.0-aarch64-apple-darwin").exists());
+    assert!(rust.join("1.95.0-aarch64-apple-darwin").exists());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn old_home_logs_are_suggested_item_by_item() {
+    let (home, state) = setup();
+    let h = home.path();
+    let logs = h.join("Library/Logs");
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 86_400);
+    write_bytes(&logs.join("OldApp/app.log"), 2 << 20);
+    write_bytes(&logs.join("old.log"), 2 << 20);
+    write_bytes(&logs.join("small.log"), 100);
+    write_bytes(&logs.join("DiagnosticReports/crash.ips"), 100);
+    age(&logs, past);
+    write_bytes(&logs.join("fresh.log"), 2 << 20);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut listed = suggested(&index);
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![
+            b"Library/Logs/OldApp".to_vec(),
+            b"Library/Logs/old.log".to_vec(),
+        ]
+    );
+    let id = id_of(&index, b"Library/Logs/OldApp");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert!(!logs.join("OldApp").exists());
+    assert!(logs.join("fresh.log").exists());
+}
+
+#[test]
+fn scripted_clean_selects_by_category_and_age_and_deletes_only_a_confirmed_selection() {
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(&h.join(".cache/uv/archive/wheel"), 400_000);
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    for name in ["v18.1.0", "v18.20.0"] {
+        write_bytes(
+            &h.join(".nvm/versions/node").join(name).join("bin/node"),
+            100,
+        );
+    }
+    age(&h.join(".nvm"), past);
+    let big = fs::File::create(h.join("movie.mkv")).unwrap();
+    big.set_len(150 << 20).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    let caches = ["package_caches".to_string()];
+    let selection = index.select_for_clean(h, &caches, None).unwrap();
+    let paths: Vec<&[u8]> = selection.items.iter().map(|i| i.raw.as_slice()).collect();
+    assert_eq!(paths, vec![b".cache/uv".as_slice()]);
+    assert!(
+        index
+            .select_for_clean(h, &caches, Some(30))
+            .unwrap()
+            .items
+            .is_empty(),
+        "a cache written just now is not older than 30 days"
+    );
+    let versions = index
+        .select_for_clean(h, &["old_tool_versions".to_string()], Some(30))
+        .unwrap();
+    assert_eq!(versions.items.len(), 1);
+    assert!(
+        index
+            .select_for_clean(h, &["large_files".to_string()], None)
+            .is_err(),
+        "large files are never scripted"
+    );
+    assert!(index.select_for_clean(h, &[], None).is_err());
+    assert!(index.clean_selection(h, &selection, "wrong").is_err());
+    assert!(h.join(".cache/uv").exists());
+    let again = index.select_for_clean(h, &caches, None).unwrap();
+    assert_eq!(again.fingerprint, selection.fingerprint, "deterministic");
+    let (plan, report) = index
+        .clean_selection(h, &again, &selection.fingerprint)
+        .unwrap();
+    assert!(plan.denied.is_empty(), "{:?}", plan.denied);
+    assert_eq!(report.deleted, vec![b".cache/uv".to_vec()]);
+    assert!(!h.join(".cache/uv").exists());
+    assert!(h.join("movie.mkv").exists());
+    assert!(h.join(".nvm/versions/node/v18.1.0").exists());
+}
