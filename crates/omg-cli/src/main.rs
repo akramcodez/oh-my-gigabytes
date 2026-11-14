@@ -63,7 +63,11 @@ enum Command {
     /// Finish removing rows of superseded scans (housekeeping; scans only prune for a few seconds)
     Prune,
     /// Read-only check of this build, platform capabilities and the state directory
-    Doctor,
+    Doctor {
+        /// Print only JSON (for scripts)
+        #[arg(long)]
+        json: bool,
+    },
     /// Start the scan-only background service (asks before registering it)
     Start,
     /// Stop the background service
@@ -309,13 +313,20 @@ fn run() -> Result<()> {
         };
         return schedule(command, state);
     }
-    if matches!(cli.command, Some(Command::Doctor)) && !platform::supported() {
+    if matches!(cli.command, Some(Command::Doctor { .. })) && !platform::supported() {
         println!("omg: this platform is not certified; native scanning and cleanup disabled");
         return Ok(());
     }
     let state = cli.state_dir.unwrap_or(platform::default_state()?);
-    if matches!(cli.command, Some(Command::Doctor)) {
-        let diagnosis = omg_core::index::diagnose(&state)?;
+    if let Some(Command::Doctor { json }) = cli.command {
+        let mut diagnosis = omg_core::index::diagnose(&state)?;
+        if json {
+            diagnosis["permanent_delete"] = omg_core::capability::platform_permanent_delete()
+                .as_str()
+                .into();
+            println!("{}", serde_json::to_string_pretty(&diagnosis)?);
+            return Ok(());
+        }
         println!("omg: {}", serde_json::to_string_pretty(&diagnosis)?);
         let scope = if !omg_core::PERMANENT_DELETE {
             "(not included in this analysis-only build)"

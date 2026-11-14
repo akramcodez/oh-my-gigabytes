@@ -171,7 +171,7 @@ Mac17,9 (Apple silicon), macOS 27.2.1 (26B131), Terminal.app without Full Disk A
 
 Daily scan (`omg schedule`) with the real `launchctl`: `enable --hour 3` wrote `~/Library/LaunchAgents/dev.omg.scan.plist` (`plutil -lint` OK) and loaded it with a calendar trigger `Hour 3, Minute 0`, low priority I/O and nice 10; `launchctl kickstart` ran it and a second complete scan was recorded (exit code 0); `enable --hour 4` replaced the loaded job (trigger now `Hour 4`); `disable` unloaded it and removed the file; `status` then says not registered. A plist without omg's marker at the same path was left alone by both `enable` and `disable`. The calendar trigger itself was not waited for.
 
-Finding: a locked (`uchg`) file is refused only after "Yes", not before the question as an app bundle is. Nothing is deleted either way.
+Finding, fixed the same day: a locked (`uchg`) file was refused only after "Yes". `cleanup::verdict` now reads the item's own flags on macOS, so a locked item or cloud placeholder is refused before any question, like an app bundle; one inside a folder is still caught at delete time (`a_locked_item_stops_the_whole_folder_before_anything_is_removed`).
 
 ## Gates not passed
 
