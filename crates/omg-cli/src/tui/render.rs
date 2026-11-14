@@ -777,7 +777,7 @@ fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lin
     if state.details
         && let Some(f) = rows.get(state.cursor)
     {
-        return details(f, theme);
+        return details(f, state.now, theme);
     }
     let visible = (height.saturating_sub(1) / 2).max(1);
     let start = state.cursor.saturating_sub(visible.saturating_sub(1));
@@ -823,12 +823,21 @@ fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lin
     out
 }
 
-fn details(f: &Finding, theme: &Theme) -> Lines {
+fn details(f: &Finding, now: i64, theme: &Theme) -> Lines {
     let line = |label: &str, text: String| {
         Line::from(vec![
             Span::styled(format!("  {label:<13}"), theme.dim()),
             Span::raw(text),
         ])
+    };
+    let changed = match f.subtree.as_ref().map(|t| t.newest) {
+        Some(newest) if newest > 0 => ago(now, Some(newest)),
+        _ => "unknown".into(),
+    };
+    let changed_label = if f.rule.category == "build_artifacts" {
+        "Last built"
+    } else {
+        "Last changed"
     };
     vec![
         Line::from(""),
@@ -838,6 +847,7 @@ fn details(f: &Finding, theme: &Theme) -> Lines {
         )),
         line("Tier", f.effective_tier.clone()),
         line("Why", f.reason.clone()),
+        line(changed_label, changed),
         line("Evidence", f.evidence.clone()),
         line("Effects", f.rule.side_effects.clone()),
         line("Regenerates", f.rule.regeneration.clone()),

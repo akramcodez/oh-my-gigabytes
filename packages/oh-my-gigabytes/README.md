@@ -34,7 +34,7 @@ Move with `↑` `↓` (or `j` `k`). Press `r` to scan again, `?` for all keys, `
 
 ## 4. Clean up
 
-1. After a scan, **OMG Trash** (`4`) already lists safe suggestions: package caches, build output (`target`, `node_modules`), app caches, old tool versions, untouched Git clones, and app data or toolchains unused for 5 months.
+1. After a scan, **OMG Trash** (`4`) already lists safe suggestions: package caches (npm, pip, Cargo, Bun, Maven and more), build output (`target`, `node_modules`, Xcode DerivedData), app and IDE caches, old tool and editor extension versions, untouched Git clones, and app data or toolchains unused for 5 months.
 2. Review the list. `u` removes anything you want to keep; in Browse or Findings, `␣` adds more.
 3. `d` deletes the selected item, `D` everything listed. "Are you sure?" shows the exact paths and size, and **Cancel is the default**.
 4. Choose **"Yes, delete permanently"**. There is no undo.

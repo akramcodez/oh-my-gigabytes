@@ -1236,6 +1236,79 @@ fn when_the_newest_tool_version_is_the_one_in_use_only_it_is_kept() {
 }
 
 #[test]
+fn older_editor_extension_versions_are_suggested_once_the_newest_has_settled() {
+    let (home, state) = setup();
+    let h = home.path();
+    let vscode = h.join(".vscode/extensions");
+    let cursor = h.join(".cursor/extensions");
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 86_400);
+    for name in [
+        "acme.tool-1.2.0",
+        "acme.tool-1.10.0",
+        "acme.native-0.3.1-darwin-arm64",
+        "acme.native-0.3.2-darwin-arm64",
+        "acme.native-0.3.0-linux-x64",
+        "acme.single-2.0.0",
+        "acme.fresh-1.0.0",
+    ] {
+        write_bytes(&vscode.join(name).join("package.json"), 100);
+    }
+    write_bytes(&cursor.join("Acme.Other-1.0.0/package.json"), 100);
+    write_bytes(&cursor.join("acme.other-1.1.0/package.json"), 100);
+    write_bytes(&vscode.join("extensions.json"), 100);
+    age(&vscode, past);
+    age(&cursor, past);
+    write_bytes(&vscode.join("acme.fresh-1.1.0/package.json"), 100);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut listed = suggested(&index);
+    listed.sort();
+    assert_eq!(
+        listed,
+        vec![
+            b".cursor/extensions/Acme.Other-1.0.0".to_vec(),
+            b".vscode/extensions/acme.native-0.3.1-darwin-arm64".to_vec(),
+            b".vscode/extensions/acme.tool-1.2.0".to_vec(),
+        ],
+        "versions compare as numbers per platform; a just-installed newest keeps the old one"
+    );
+    let id = id_of(&index, b".vscode/extensions/acme.tool-1.2.0");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert!(!vscode.join("acme.tool-1.2.0").exists());
+    assert!(vscode.join("acme.tool-1.10.0").exists());
+}
+
+#[test]
+fn large_tool_caches_and_models_are_found_and_only_caches_are_suggested() {
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(&h.join(".m2/repository/org/lib/1.0/lib.jar"), 100);
+    write_bytes(&h.join(".lmstudio/models/org/model/model.gguf"), 100);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    let found: Vec<(String, Vec<u8>)> = index
+        .findings_in(100, 0, false, h)
+        .unwrap()
+        .into_iter()
+        .map(|f| (f.rule.discovery, f.entry.path))
+        .collect();
+    assert!(
+        found.contains(&("maven_repository".into(), b".m2/repository".to_vec())),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&("lm_studio_models".into(), b".lmstudio/models".to_vec())),
+        "{found:?}"
+    );
+    index.suggest(h).unwrap();
+    assert_eq!(suggested(&index), vec![b".m2/repository".to_vec()]);
+}
+
+#[test]
 fn only_old_session_transcripts_are_suggested_and_memory_never() {
     let (home, state) = setup();
     let h = home.path();

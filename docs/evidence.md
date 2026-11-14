@@ -2,6 +2,22 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Xcode, ML models, more tool caches and editor extensions (2026-11-13)
+
+Owner request after public beta feedback. New discoveries in `catalog::DISCOVERIES`, each a directory root resolved by `catalog::discovery_root` and then `tool_root_allowed` (so an environment override never takes in the home folder or a personal folder), and treated as a cache root at deletion:
+
+- Every platform: Bun (`BUN_INSTALL_CACHE_DIR`, else `$BUN_INSTALL` or `~/.bun`, `/install/cache`), Maven `~/.m2/repository`, Puppeteer (`PUPPETEER_CACHE_DIR` or `~/.cache/puppeteer`), Hugging Face (`HF_HUB_CACHE`, else `$HF_HOME` or `~/.cache/huggingface`, `/hub`), Ollama (`OLLAMA_MODELS` or `~/.ollama/models`), LM Studio `~/.lmstudio/models`, and the overrides `DENO_DIR`, `PLAYWRIGHT_BROWSERS_PATH`, `COMPOSER_CACHE_DIR`.
+- macOS: `~/Library/Developer/Xcode/DerivedData`, `~/Library/Developer/Xcode/iOS DeviceSupport`, `~/Library/Developer/CoreSimulator/Caches`, `~/Library/Caches/{deno,CocoaPods,ms-playwright,JetBrains}`. Linux: the XDG cache `{deno,composer,ms-playwright,JetBrains}`. Windows: `%LOCALAPPDATA%\{deno,Composer,ms-playwright}`; JetBrains is left out there because Toolbox installs IDEs in that folder.
+- `editor_old_extensions`: in `~/.vscode/extensions` and `~/.cursor/extensions`, folders named `publisher.name-x.y.z[-platform]` are grouped by lowercased id and platform suffix; all but the numerically newest are suggested once the newest folder's modification time is more than a day old (a window opened before an update may still use the old one). Deletion stays `Kind::Plain`.
+- Hugging Face, Ollama and LM Studio use the new category `ml_models`, which `Index::suggest` does not add: last use of a model cannot be told from metadata, and Ollama shares blobs between models (the rule points to `ollama rm`). Maven warns that `mvn install` artifacts must be rebuilt; Xcode and JetBrains rules say to quit the app first.
+- The interface's finding details show "Last built" (build output) or "Last changed" from the subtree's newest modification time; `omg findings` already reported it in `subtree.newest`.
+
+Left out on purpose: Xcode Archives (they hold app bundles, which are protected, and dSYMs that cannot be recreated), Simulator runtimes (outside the home folder) and Simulator devices (they hold app data; `xcrun simctl delete unavailable` is the right tool).
+
+Verification on the development Mac (macOS 27.2, Rust 1.95.0): unit tests `extension_folder_names_split_into_id_version_and_platform` and `new_tool_folders_use_each_tools_documented_default`; `tests/cleanup.rs` `older_editor_extension_versions_are_suggested_once_the_newest_has_settled` (numeric order, per platform suffix, case-insensitive ids, a just-installed newest keeps the older one, the suggested folder deletes through a confirmed plan) and `large_tool_caches_and_models_are_found_and_only_caches_are_suggested`. Full suite results are in the pull request.
+
+Not passed yet: no real Xcode, Ollama, LM Studio or JetBrains folders were scanned; Linux and Windows locations are covered only by CI and by the documented defaults.
+
 ## Unused Docker data (2026-11-12)
 
 Owner request. Docker's disk is never deleted (one file holds every image, container and volume); instead `omg docker` and the interface (`m` › Clean unused Docker data) ask the engine itself.
