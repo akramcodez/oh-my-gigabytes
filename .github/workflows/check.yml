@@ -67,6 +67,9 @@ jobs:
       - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
         shell: pwsh
         run: ./scripts/win-vhd-matrix.ps1 -Omg ./target/debug/omg.exe -Optional ReFS
+      - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
+        shell: pwsh
+        run: ./scripts/win-schedule-check.ps1 -Omg ./target/debug/omg.exe
       - if: runner.os != 'Windows'
         run: cargo build -p omg-cli --locked && python3 -m unittest discover -s tests -p 'test_*.py' -v
       # Windows on Arm is a Rust-only leg: the launcher has no win32-arm64 target in this release.
