@@ -436,6 +436,19 @@ pub fn verdict(
             };
         }
     };
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        if let Some(reason) = std::fs::symlink_metadata(&absolute)
+            .ok()
+            .and_then(|m| platform::macos::removal_hazard(m.st_flags()))
+        {
+            return Verdict {
+                gate: Gate::Denied(reason.into()),
+                kind: Kind::Plain,
+            };
+        }
+    }
     let cache = is_cache_root(&absolute, home) || proven_build_output(&absolute);
     let verdict = match policy::repository_status(root, entry, memo) {
         policy::RepoStatus::Outside => {

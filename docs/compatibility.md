@@ -4,7 +4,7 @@ What stays stable between omg versions, so scripts and saved state keep working.
 
 ## JSON output
 
-Every command that prints JSON follows output schema **1**. `omg status` and `omg doctor` report it as `output_schema`.
+Every command that prints JSON follows output schema **1**. `omg status` and `omg doctor --json` report it as `output_schema`. Plain `omg doctor` is a report for people, with plain lines after its JSON; scripts should use `--json`.
 
 Within one output schema:
 

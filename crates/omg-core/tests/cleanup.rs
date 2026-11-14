@@ -1038,9 +1038,10 @@ fn a_locked_item_stops_the_whole_folder_before_anything_is_removed() {
     let mut index = Index::open(state.path()).unwrap();
     scan(&mut index, h);
     index.mark(b"stuff", 7, h).unwrap();
-    index.mark(b"alone.txt", 7, h).unwrap();
-    let ids = [id_of(&index, b"stuff"), id_of(&index, b"alone.txt")];
-    let plan = index.prepare_delete(&ids, h).unwrap();
+    // A locked item itself is refused before any question; one inside a folder stops it at delete.
+    let refused = index.mark(b"alone.txt", 7, h).unwrap_err().to_string();
+    assert!(refused.contains("locked"), "{refused}");
+    let plan = index.prepare_delete(&[id_of(&index, b"stuff")], h).unwrap();
     let report = index
         .delete_permanently(&plan, &plan.fingerprint, h)
         .unwrap();
@@ -1048,7 +1049,7 @@ fn a_locked_item_stops_the_whole_folder_before_anything_is_removed() {
     set_flags(&h.join("alone.txt"), "nouchg");
     assert!(report.deleted.is_empty(), "{report:?}");
     assert_eq!(report.removed_entries, 0, "{report:?}");
-    assert_eq!(report.skipped.len(), 2, "{report:?}");
+    assert_eq!(report.skipped.len(), 1, "{report:?}");
     assert!(report.skipped.iter().all(|(_, why)| why.contains("locked")));
     assert!(h.join("stuff/first.txt").exists());
     assert!(h.join("stuff/locked.txt").exists());

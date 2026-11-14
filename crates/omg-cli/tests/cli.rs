@@ -470,6 +470,9 @@ fn tree_reports_subtree_sizes_and_rejects_escapes() {
     assert!(status["explained_estimate_bytes"].is_u64());
     // Output contract (docs/compatibility.md): these fields keep their names and types.
     assert_eq!(status["output_schema"], 1);
+    let doctor = json(&omg(&["doctor", "--json"]));
+    assert_eq!(doctor["output_schema"], 1);
+    assert!(doctor["permanent_delete"].is_string() && doctor["state"].is_string());
     assert_eq!(status["freed_total_bytes"], 0);
     for field in ["entries", "unique_allocated", "index_bytes"] {
         assert!(status[field].is_u64(), "{field}: {status}");
