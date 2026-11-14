@@ -787,3 +787,25 @@ fn the_result_explains_when_less_space_came_back_than_shown() {
     assert_eq!(space_note(1000 * mib, None), "");
     assert_eq!(space_note(mib / 2, Some(0)), "");
 }
+
+#[test]
+fn lists_scroll_with_a_margin_and_stop_at_the_end() {
+    let mut state = AppState::default();
+    let start = |state: &mut AppState, cursor| {
+        state.cursor = cursor;
+        render::scroll_start(state, 100, 20)
+    };
+    // Moving down: the view starts scrolling 5 rows before the bottom edge.
+    assert_eq!(start(&mut state, 14), 0);
+    assert_eq!(start(&mut state, 15), 1);
+    assert_eq!(start(&mut state, 40), 26);
+    // Moving up inside the view does not scroll until 5 rows from the top.
+    assert_eq!(start(&mut state, 31), 26);
+    assert_eq!(start(&mut state, 30), 25);
+    // At the end the view stops, so the last rows are reachable without blank space.
+    assert_eq!(start(&mut state, 97), 80);
+    assert_eq!(start(&mut state, 99), 80);
+    // A short list never scrolls.
+    state.cursor = 3;
+    assert_eq!(render::scroll_start(&state, 4, 20), 0);
+}

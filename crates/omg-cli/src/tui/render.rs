@@ -58,6 +58,29 @@ pub fn row_count(state: &AppState) -> usize {
     }
 }
 
+/// Rows kept between the cursor and the top or bottom edge while scrolling (like yazi's
+/// scrolloff). The view stops at the ends of the list, so the cursor still reaches them.
+const SCROLLOFF: usize = 5;
+
+/// First row to draw for a list of `len` rows with `visible` rows on screen. Starts from the
+/// previous frame's offset and moves only as far as needed to keep the margin around the cursor.
+pub fn scroll_start(state: &AppState, len: usize, visible: usize) -> usize {
+    let visible = visible.max(1);
+    let margin = SCROLLOFF.min(visible.saturating_sub(1) / 2);
+    let max_start = len.saturating_sub(visible);
+    let cursor = state.cursor.min(len.saturating_sub(1));
+    let mut start = state.scroll.get().min(max_start);
+    if cursor < start + margin {
+        start = cursor.saturating_sub(margin);
+    }
+    if cursor + margin >= start + visible {
+        start = cursor + margin + 1 - visible;
+    }
+    let start = start.min(max_start);
+    state.scroll.set(start);
+    start
+}
+
 fn tone(theme: &Theme, tone: Tone) -> Style {
     match tone {
         Tone::Normal => Style::new(),
@@ -705,7 +728,7 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
         .max(1);
     let bar_width = (width.saturating_sub(46)).clamp(6, 24);
     let visible = height.saturating_sub(2).max(1);
-    let start = state.cursor.saturating_sub(visible.saturating_sub(1));
+    let start = scroll_start(state, view.children.len(), visible);
     for (n, child) in view.children.iter().enumerate().skip(start).take(visible) {
         let selected = n == state.cursor;
         let in_trash = marked.contains(&child.path.as_slice());
@@ -805,7 +828,7 @@ fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lin
         return details(f, state.now, theme);
     }
     let visible = (height.saturating_sub(1) / 2).max(1);
-    let start = state.cursor.saturating_sub(visible.saturating_sub(1));
+    let start = scroll_start(state, rows.len(), visible);
     let marked: Vec<&[u8]> = state
         .summary
         .as_ref()
@@ -919,7 +942,7 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
         return out;
     }
     let visible = height.saturating_sub(2).max(1);
-    let start = state.cursor.saturating_sub(visible.saturating_sub(1));
+    let start = scroll_start(state, summary.marked.len(), visible);
     for (n, item) in summary.marked.iter().enumerate().skip(start).take(visible) {
         let selected = n == state.cursor;
         let check = if state.selected.contains(&item.id) {
