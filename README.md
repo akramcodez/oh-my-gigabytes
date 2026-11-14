@@ -31,7 +31,9 @@ omg scan --root "$HOME" --accept-gaps   # index your home folder
 omg                                      # interface: 1 Overview, 2 Browse, 3 Findings, 4 OMG Trash, q quits
 omg status                               # totals, and how much space omg itself uses (index_bytes)
 omg findings                             # what can be cleaned, with explanations
+omg grew                                 # which folders grew between the last two scans
 omg doctor                               # read-only health check
+omg schedule enable --hour 12            # macOS and Windows: a daily scan-only job (Linux: omg start)
 ```
 
 Folders omg cannot read show as `unknown`, never as empty. On macOS, allow your terminal app in System Settings › Privacy & Security to scan Desktop, Documents and Downloads.
@@ -39,13 +41,14 @@ Folders omg cannot read show as `unknown`, never as empty. On macOS, allow your 
 ## Deleting files
 
 - `␣` adds a path to **OMG Trash**, a saved list; nothing moves. `d` deletes the selected item and `D` everything listed, after an "Are you sure?" whose default is Cancel. There is no undo.
-- After a scan, OMG Trash suggests: package caches (including Bun, Deno, Maven, CocoaPods, Composer, and Playwright and Puppeteer browsers); Xcode DerivedData, iOS device support files, Simulator caches and JetBrains IDE caches; older versions of VS Code and Cursor extensions once a newer one has been installed for a day; build output and dependencies of 50 MB or more (`target` next to `Cargo.toml`, `node_modules` next to `package.json`, Python virtualenvs); app caches of 50 MB or more in `~/Library/Caches`; old versions of an AI coding tool; its session history older than 7 days; Git clones untouched for 30 days whose branches all match the remote, with no local commits, stashes or changes; application data folders of 50 MB or more in which nothing changed for 5 months (`AppData` on Windows, `~/Library/Application Support` on macOS, `~/.local/share`, `~/.config` and `~/.cache` on Linux), never one with a database or key inside; and toolchains (rustup, nvm, pyenv, SDKMAN!, the Android SDK) unchanged for 5 months with no build of that language in that time. Turn suggestions off from the options menu.
+- After a scan, OMG Trash suggests: package caches (including Bun, Deno, Maven, CocoaPods, Composer, and Playwright and Puppeteer browsers); Xcode DerivedData, iOS device support files, Simulator caches and JetBrains IDE caches; older versions of VS Code and Cursor extensions once a newer one has been installed for a day; build output and dependencies of 50 MB or more (`target` next to `Cargo.toml`, `node_modules` next to `package.json`, Python virtualenvs); app caches of 50 MB or more in `~/Library/Caches`; old versions of an AI coding tool; its session history older than 7 days; Git clones untouched for 30 days whose branches all match the remote, with no local commits, stashes or changes; application data folders of 50 MB or more in which nothing changed for 5 months (`AppData` on Windows, `~/Library/Application Support` on macOS, `~/.local/share`, `~/.config` and `~/.cache` on Linux), never one with a database or key inside; toolchains (rustup, nvm, pyenv, SDKMAN!, the Android SDK) unchanged for 5 months with no build of that language in that time; older Node, Python and Rust versions (nvm, pyenv, rustup) unchanged for 30 days once a newer version of the same line has been installed for a day; and on macOS and Windows, logs, crash dumps and temporary files of 1 MB or more unchanged for 7 days (`~/Library/Logs`, `AppData\Local\Temp`, `AppData\Local\CrashDumps`). Turn suggestions off from the options menu.
 - Downloaded AI models (Hugging Face, Ollama, LM Studio) are listed in Findings but never suggested, because when a model was last used cannot be told from file times. For Ollama, remove single models with `ollama rm`.
 - A finding's details show when its folder last changed ("Last built" for build output).
 - A whole project, session history or application's data is deleted only on its own, never with `D`.
 - Home folder only. Credentials, keys, databases, disk images, `.git`, `.ssh`, cloud-synced folders and active Git repositories are refused, and links are never followed. Container and VM disks (`.colima`, Docker Desktop) are shown but never deleted.
 - **Docker:** press `m` and choose **Clean unused Docker data**, or run `omg docker clean`. omg asks Docker itself, on this machine only, for dangling images older than 7 days and build cache unused for 30 days, and after you confirm, Docker removes exactly those, one by one and without force. `--include-unused-images` and `--include-stopped-containers` add tagged images and stopped containers older than 30 days. Volumes, running containers and anything in use are never touched.
 - On a Mac, iCloud placeholders, locked files, app bundles and folders such as `~/Library` itself are refused, and deleting inside Desktop or Documents warns that iCloud may remove the file everywhere.
+- **Scripted:** `omg clean --category logs_and_temp --older-than 14d` prints what would be deleted and a fingerprint; run it again with `--confirm <fingerprint>` to delete exactly that selection. Categories are those of `omg findings`. `omg status` reports `freed_total_bytes`, everything omg has deleted so far.
 - Before removing anything, omg re-checks that each item is still the same file, and skips it if not.
 - Freed space can be less than shown: hard links, APFS clones and snapshots share data.
 
@@ -59,6 +62,6 @@ Moving to the system trash, a macOS or Windows background service, Authenticode 
 
 ## More
 
-Security reports: [SECURITY.md](SECURITY.md). Safety rules: [docs/safety.md](docs/safety.md). Building and signing a release: [docs/release.md](docs/release.md). Development: Rust 1.95.0, commands in [CLAUDE.md](CLAUDE.md).
+Security reports: [SECURITY.md](SECURITY.md). Safety rules: [docs/safety.md](docs/safety.md). Output and file formats that stay stable: [docs/compatibility.md](docs/compatibility.md). Reviewing the deletion code: [docs/review.md](docs/review.md). Building and signing a release: [docs/release.md](docs/release.md). Development: Rust 1.95.0, commands in [CLAUDE.md](CLAUDE.md).
 
 MIT OR Apache-2.0. The rule catalog is independently authored and under the same terms.

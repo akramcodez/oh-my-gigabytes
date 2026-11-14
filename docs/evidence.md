@@ -2,6 +2,32 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Old toolchain versions, logs and temp files, scripted clean, what grew, daily scans (2026-11-14)
+
+Owner request (1.0 list items 5 to 12, without a release). Implemented:
+
+- `toolchain_old_versions` (category `old_tool_versions`, suggested): direct folders of rustup `toolchains`, nvm `versions/node` and pyenv `versions`, grouped by line (Node major, Python major.minor, Rust release or nightly per target triple). The newest of a line is kept and must be a day old; an older one must be unchanged for 30 days. Channel toolchains, two-part versions and pyenv versions with `envs` are never listed.
+- `home_logs_and_temp` (category `logs_and_temp`, suggested, macOS and Windows): direct items of `~/Library/Logs`, `AppData/Local/Temp` and `AppData/Local/CrashDumps`, 1 MB or more, modified at least 7 days ago. Removal goes through the same `verdict`, `prepare_delete` and `delete_permanently`.
+- `omg clean --category C [--older-than N[d]] [--confirm FP]`: `select_for_clean` lists unprotected findings of the categories with a fingerprint over their finding ids; `clean_selection` refuses a different fingerprint and then marks, plans and deletes through the single deletion path. Whole repositories and session transcripts stay one at a time and end up denied.
+- `freed_total_bytes` in `omg status` and "freed so far" in the interface: the sum of completed deletions and Docker removals in `operations`.
+- `omg grew` and a "Grew" line in Overview: migration 013 adds `size_snapshots`; each complete scan stores folders of 1 MB or more (top 2000) and keeps two per root.
+- `omg schedule enable|disable|status` (`scheduled.rs`): macOS launchd agent or Windows Task Scheduler task running only `scan --accept-gaps --no-suggest`; the executable must be a regular file not writable by others; only a file carrying omg's marker is replaced or removed. Linux keeps `omg start`.
+- `OUTPUT_SCHEMA` 1 in `status` and `doctor`, with the promise in [compatibility.md](compatibility.md); a reviewer guide in [review.md](review.md).
+
+Verified on the owner's Apple silicon Mac (macOS 27.2, Rust 1.95.0):
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings                       # also --no-default-features
+TMPDIR=$(cd "$TMPDIR" && pwd -P) OMG_REQUIRE_DISK_IMAGES=1 cargo test --workspace --locked   # also --no-default-features: all pass
+python3 -m unittest discover -s tests -p 'test_*.py'                                  # 8 run, 3 skipped (Linux only)
+node --test packages/oh-my-gigabytes/test/release.test.js                            # 21 pass
+```
+
+New tests: `toolchain_version_folders_group_by_line_and_skip_channels` (catalog), `replaced_toolchain_versions_are_suggested_and_channels_and_envs_are_kept`, `old_home_logs_are_suggested_item_by_item` and `scripted_clean_selects_by_category_and_age_and_deletes_only_a_confirmed_selection` (`tests/cleanup.rs`), `grew_names_the_innermost_folder_that_grew_between_the_last_two_scans` (`tests/scanner.rs`), `scheduled` unit tests and `tests/scheduled.rs` (fake `launchctl`, macOS), and the output contract in the CLI status test. A smoke run of `scan`, `grew`, `status`, `clean`, `schedule status` and `doctor` against a private state directory behaved as described.
+
+Not passed yet: the launchd job has not been loaded by the real `launchctl`, and the Task Scheduler path has run only as compiled code on CI, not against a real task. Logs and temp files on Windows rely on CI. The reviewer guide asks for an outside review of `cleanup.rs` and `docker.rs`, which has not happened.
+
 ## Xcode, ML models, more tool caches and editor extensions (2026-11-13)
 
 Owner request after public beta feedback. New discoveries in `catalog::DISCOVERIES`, each a directory root resolved by `catalog::discovery_root` and then `tool_root_allowed` (so an environment override never takes in the home folder or a personal folder), and treated as a cache root at deletion:

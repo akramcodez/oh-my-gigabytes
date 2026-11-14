@@ -10,10 +10,14 @@ pub mod platform;
 pub mod policy;
 pub mod rollup;
 pub mod scanner;
+pub mod scheduled;
 pub mod service;
 
 pub use index::Index;
 pub use model::{Entry, ScanOptions, ScanReport, Status};
+
+/// Version of the JSON output contract; see docs/compatibility.md.
+pub const OUTPUT_SCHEMA: u32 = 1;
 
 /// Whether this build contains permanent delete at all. The analysis-only build sets this false.
 pub const PERMANENT_DELETE: bool = cfg!(feature = "permanent-delete");

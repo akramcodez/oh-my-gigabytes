@@ -6,8 +6,8 @@ use omg_core::Index;
 use rusqlite::Connection;
 use std::fs;
 
-const CURRENT: i64 = 12;
-const MIGRATIONS: [&str; 12] = [
+const CURRENT: i64 = 13;
+const MIGRATIONS: [&str; 13] = [
     include_str!("../../../migrations/001.sql"),
     include_str!("../../../migrations/002.sql"),
     include_str!("../../../migrations/003.sql"),
@@ -20,6 +20,7 @@ const MIGRATIONS: [&str; 12] = [
     include_str!("../../../migrations/010.sql"),
     include_str!("../../../migrations/011.sql"),
     include_str!("../../../migrations/012.sql"),
+    include_str!("../../../migrations/013.sql"),
 ];
 
 fn private_state() -> tempfile::TempDir {

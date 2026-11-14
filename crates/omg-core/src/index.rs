@@ -77,7 +77,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let database = absolute.join("index.sqlite");
     if !database.exists() {
         return Ok(
-            serde_json::json!({"state":"no index","sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status"}),
+            serde_json::json!({"state":"no index","output_schema":crate::OUTPUT_SCHEMA,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status"}),
         );
     }
     for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
@@ -96,7 +96,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","schema":schema,"schema_supported":schema<=12,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
+        serde_json::json!({"state":"existing index","output_schema":crate::OUTPUT_SCHEMA,"schema":schema,"schema_supported":schema<=13,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
     )
 }
 
@@ -258,7 +258,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 12 {
+        if version > 13 {
             bail!("index schema is newer than this omg build");
         }
         // quick_check reads the whole file (seconds on a multi-GB index), so very large indexes
@@ -326,6 +326,9 @@ impl Index {
             if version > 0 {
                 let _ = db.execute_batch("PRAGMA auto_vacuum=INCREMENTAL; VACUUM;");
             }
+        }
+        if version < 13 {
+            db.execute_batch(include_str!("../../../migrations/013.sql"))?;
         }
         #[cfg(unix)]
         {
@@ -535,6 +538,36 @@ impl Index {
         }
         self.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
         Ok(true)
+    }
+    /// Space omg has freed so far, as recorded with each permanent deletion and Docker removal: the
+    /// indexed size of what was deleted, and what the engine reported freeing. An estimate.
+    pub fn freed_total(&self) -> Result<u64> {
+        let mut statement = self.db.prepare(
+            "SELECT kind,detail FROM operations WHERE kind IN ('delete','docker') AND outcome IN ('deleted','partial','cancelled','removed')",
+        )?;
+        let rows = statement.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        })?;
+        let mut total = 0u64;
+        for row in rows {
+            let (kind, detail) = row?;
+            let Some(detail) =
+                detail.and_then(|d| serde_json::from_str::<serde_json::Value>(&d).ok())
+            else {
+                continue;
+            };
+            let bytes = if kind == "delete" {
+                detail["estimated_bytes"].as_u64().unwrap_or(0)
+            } else {
+                let listed: u64 = detail["removed"]
+                    .as_array()
+                    .map(|items| items.iter().filter_map(|i| i["bytes"].as_u64()).sum())
+                    .unwrap_or(0);
+                detail["reclaimed"].as_u64().unwrap_or(0).max(listed)
+            };
+            total = total.saturating_add(bytes);
+        }
+        Ok(total)
     }
     /// Bytes omg's own index takes on disk, including its write-ahead log.
     pub fn index_bytes(&self) -> u64 {

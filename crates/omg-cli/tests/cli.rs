@@ -468,6 +468,32 @@ fn tree_reports_subtree_sizes_and_rejects_escapes() {
     assert!(!omg(&["tree", "no-such-dir"]).status.success());
     let status = json(&omg(&["status"]));
     assert!(status["explained_estimate_bytes"].is_u64());
+    // Output contract (docs/compatibility.md): these fields keep their names and types.
+    assert_eq!(status["output_schema"], 1);
+    assert_eq!(status["freed_total_bytes"], 0);
+    for field in ["entries", "unique_allocated", "index_bytes"] {
+        assert!(status[field].is_u64(), "{field}: {status}");
+    }
+    let grew = json(&omg(&["grew"]));
+    assert!(grew["since"].is_null() && grew["items"].as_array().unwrap().is_empty());
+    let clean = json(&omg(&["clean", "--category", "build_artifacts"]));
+    assert!(clean["fingerprint"].is_string() && clean["items"].is_array());
+    assert!(
+        !omg(&["clean", "--category", "large_files"])
+            .status
+            .success()
+    );
+    assert!(
+        !omg(&[
+            "clean",
+            "--category",
+            "build_artifacts",
+            "--confirm",
+            "wrong"
+        ])
+        .status
+        .success()
+    );
 }
 
 /// Without a terminal the interactive TUI must refuse with a clear message, not hang or draw.

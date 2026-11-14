@@ -78,6 +78,9 @@ pub struct Summary {
     pub auto_trash: bool,
     /// (capacity, used) bytes read from the filesystem now, not from the scan record.
     pub volume: Option<(u64, u64)>,
+    pub freed: u64,
+    /// Folders that grew between the last two complete scans, largest growth first.
+    pub grew: Vec<omg_core::service::trend::Grown>,
 }
 
 pub enum Response {
@@ -127,6 +130,8 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
             .ok()
             .and_then(|t| t.indexed_allocated_change),
         auto_trash: index.auto_trash()?,
+        freed: index.freed_total()?,
+        grew: index.grew(3).map(|g| g.items).unwrap_or_default(),
         volume: status
             .root
             .as_deref()

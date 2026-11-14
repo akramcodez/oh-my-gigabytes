@@ -138,6 +138,43 @@ pub struct DeletePlan {
     pub keepable: Vec<i64>,
 }
 
+/// Finding categories whose owner can recreate them or does not need them: scans suggest them and
+/// `omg clean` may select them. Large files and downloaded models are never among them.
+pub const SUGGESTED_CATEGORIES: [&str; 9] = [
+    "package_caches",
+    "build_artifacts",
+    "app_caches",
+    "old_tool_versions",
+    "session_history",
+    "unused_clones",
+    "unused_apps",
+    "unused_toolchains",
+    "logs_and_temp",
+];
+
+/// Findings chosen by category and age for a scripted cleanup. The fingerprint covers every
+/// finding id (each hashes the entry, its subtree totals, the rule and the catalog), so it only
+/// matches again while the index and the selection are unchanged.
+#[derive(Debug, Clone, Serialize)]
+pub struct Selection {
+    pub fingerprint: String,
+    pub bytes: u64,
+    pub items: Vec<Selected>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Selected {
+    pub path: String,
+    #[serde(skip)]
+    pub raw: Vec<u8>,
+    pub category: String,
+    pub rule: String,
+    pub estimate: u64,
+    /// Newest modification time inside (Unix seconds); 0 when unknown.
+    pub last_changed: i64,
+    pub warning: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeleteReport {
     pub deleted: Vec<Vec<u8>>,
@@ -534,6 +571,102 @@ impl Index {
         Ok(freed)
     }
     /// Save a path in OMG Trash. Nothing on disk changes. Denied items are refused.
+    /// Findings of the given categories, not protected, last changed more than `older_than_days`
+    /// ago when given. Selecting changes nothing.
+    pub fn select_for_clean(
+        &self,
+        home: &Path,
+        categories: &[String],
+        older_than_days: Option<u64>,
+    ) -> Result<Selection> {
+        if categories.is_empty() {
+            bail!(
+                "name at least one --category: {}",
+                SUGGESTED_CATEGORIES.join(", ")
+            );
+        }
+        if let Some(unknown) = categories
+            .iter()
+            .find(|c| !SUGGESTED_CATEGORIES.contains(&c.as_str()))
+        {
+            bail!(
+                "category {unknown:?} cannot be cleaned by a script; choose from {}",
+                SUGGESTED_CATEGORIES.join(", ")
+            );
+        }
+        let cutoff = match older_than_days {
+            Some(days) => Some(now() - i64::try_from(days.min(36_500))? * 86_400),
+            None => None,
+        };
+        let mut items = Vec::new();
+        let mut ids = Vec::new();
+        for finding in self.findings_in(1000, 0, false, home)? {
+            if finding.effective_tier == "protected" || !categories.contains(&finding.rule.category)
+            {
+                continue;
+            }
+            let last_changed = match &finding.subtree {
+                Some(t) => t.newest,
+                None => finding.entry.modified_ns / 1_000_000_000,
+            };
+            if cutoff.is_some_and(|c| last_changed <= 0 || last_changed >= c) {
+                continue;
+            }
+            ids.push(finding.id.clone());
+            items.push(Selected {
+                path: crate::display_path(&finding.entry.path),
+                raw: finding.entry.path.clone(),
+                category: finding.rule.category.clone(),
+                rule: finding.rule.id.clone(),
+                estimate: finding.estimate,
+                last_changed,
+                warning: finding
+                    .reason
+                    .split_once(" ⚠ ")
+                    .map(|(_, why)| why.to_string()),
+            });
+        }
+        ids.sort();
+        Ok(Selection {
+            fingerprint: crate::catalog::digest(ids.join("\n").as_bytes())[..24].to_string(),
+            bytes: items.iter().map(|i| i.estimate).sum(),
+            items,
+        })
+    }
+    /// Delete a selection the user confirmed by its fingerprint: the items go to OMG Trash and
+    /// through the same plan and checks as a deletion from the interface. Whole repositories and
+    /// session transcripts are left for one-at-a-time review there.
+    pub fn clean_selection(
+        &mut self,
+        home: &Path,
+        selection: &Selection,
+        confirmed: &str,
+    ) -> Result<(DeletePlan, DeleteReport)> {
+        if confirmed != selection.fingerprint {
+            bail!(
+                "the index or the selection changed since that fingerprint was printed; run the command again without --confirm to review"
+            );
+        }
+        if selection.items.is_empty() {
+            bail!("nothing matches; nothing to delete");
+        }
+        for item in &selection.items {
+            self.mark(&item.raw, item.estimate, home)?;
+        }
+        let wanted: Vec<&[u8]> = selection.items.iter().map(|i| i.raw.as_slice()).collect();
+        let ids: Vec<i64> = self
+            .marked()?
+            .into_iter()
+            .filter(|m| wanted.contains(&m.path.as_slice()))
+            .map(|m| m.id)
+            .collect();
+        let plan = self.prepare_delete(&ids, home)?;
+        if plan.items.is_empty() {
+            return Ok((plan, DeleteReport::default()));
+        }
+        let report = self.delete_permanently(&plan, &plan.fingerprint.clone(), home)?;
+        Ok((plan, report))
+    }
     pub fn mark(&self, path: &[u8], allocated: u64, home: &Path) -> Result<Gate> {
         self.upsert_marked(path, allocated, home, "user")
     }
@@ -616,17 +749,7 @@ impl Index {
         for finding in self.findings_in(1000, 0, false, home)? {
             // What its owner can recreate or does not need; never large files. Listing is not
             // deleting: every item still goes through a confirmed plan.
-            if ![
-                "package_caches",
-                "build_artifacts",
-                "app_caches",
-                "old_tool_versions",
-                "session_history",
-                "unused_clones",
-                "unused_apps",
-                "unused_toolchains",
-            ]
-            .contains(&finding.rule.category.as_str())
+            if !SUGGESTED_CATEGORIES.contains(&finding.rule.category.as_str())
                 || finding.effective_tier == "protected"
             {
                 continue;
