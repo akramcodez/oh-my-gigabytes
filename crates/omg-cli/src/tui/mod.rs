@@ -170,6 +170,9 @@ pub struct AppState {
     pub dirs: HashMap<Vec<u8>, DirView>,
     pub dir: Vec<u8>,
     pub cursor: usize,
+    /// First visible row of the current list. Kept between frames so the view scrolls only when
+    /// the cursor nears an edge (see `render::scroll_start`).
+    pub scroll: std::cell::Cell<usize>,
     pub details: bool,
     pub tier: usize,
     pub plan: Option<omg_core::planning::Plan>,
