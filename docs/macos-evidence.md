@@ -155,6 +155,24 @@ Verification on that Mac, Rust 1.95.0, Node 22, `TMPDIR` canonical, `OMG_REQUIRE
 
 Not done: a real iCloud placeholder or synced Desktop and Documents (no such files on this Mac; the flag check is a unit test on the value), a delete with the release binary in a real terminal app or from the CI-built package (`Release build` and `Install smoke test` have not run since this change), `Checks` on the hosted macOS legs, Full Disk Access, App Management denial on a real bundle, a real external drive. Freed space with clones and Time Machine snapshots was not measured.
 
+## Final check, steps 2 to 9, and the daily scan (2026-11-14)
+
+Mac17,9 (Apple silicon), macOS 27.2.1 (26B131), Terminal.app without Full Disk Access, commit `bef8a68`, release build `omg 0.1.0-beta.2`. Each step used its own private state folder under `/private/tmp`.
+
+| Step | Result |
+| --- | --- |
+| 2. Release build and `doctor` | Pass: `permanent delete: development-unqualified (macOS: APFS only; ...)` and `"cleanup": "development-unqualified"`. |
+| 5. Full Disk Access | Not run: turning it on needs System Settings and restarting the terminal. Without it, a home scan is partial: 455,850 entries, 436 unreadable folders, 19,835 links not followed, 85 mandatory exclusions. |
+| 6. iCloud placeholders | Not run: no dataless file was found outside Desktop and Documents, which are unreadable without Full Disk Access. |
+| 7. External volume | Pass on a mounted HFS+ disk image (`/Volumes/Dia`, removable, read-only): complete, 3,167 entries, 0 errors, 1,266,864,128 bytes for `Dia.app` against 1,268,744,192 bytes used by `df`. Not a USB drive; exFAT/FAT32 on real media and an SMB share not tried. |
+| 8. Interface by hand in other terminals | Not run (needs a person); the scripted parts are covered by step 8b and the PTY tests. |
+| 8b. Delete in a throwaway home | Pass, driven through a pseudo-terminal with the release binary: Esc keeps `remove-me.txt`; "Yes" deletes only it and `keep-me.txt` stays; `Desktop/note.txt` shows the iCloud warning before the question; `Tools/Thing.app` (application bundle) and `Desktop` (standard macOS folder) are refused with no "Yes"; `locked.txt` (`uchg`) is offered, and the confirmed delete removes nothing: "1 skipped: this is a locked or system-protected item". |
+| 9. CI-built binary through npm | Pass: `Release build` run 43556501699 green for all four targets; signed with a throwaway key by `sign-release.js`; the macOS manifest says `"cleanup":"development-unqualified"`; installed into a prefix with a space, `--version`, `doctor` and a home scan (455,895 entries, partial) work; no `com.apple.quarantine`; one changed byte gives "Binary integrity verification failed", and the original binary runs again. |
+
+Daily scan (`omg schedule`) with the real `launchctl`: `enable --hour 3` wrote `~/Library/LaunchAgents/dev.omg.scan.plist` (`plutil -lint` OK) and loaded it with a calendar trigger `Hour 3, Minute 0`, low priority I/O and nice 10; `launchctl kickstart` ran it and a second complete scan was recorded (exit code 0); `enable --hour 4` replaced the loaded job (trigger now `Hour 4`); `disable` unloaded it and removed the file; `status` then says not registered. A plist without omg's marker at the same path was left alone by both `enable` and `disable`. The calendar trigger itself was not waited for.
+
+Finding: a locked (`uchg`) file is refused only after "Yes", not before the question as an app bundle is. Nothing is deleted either way.
+
 ## Gates not passed
 
-No macOS older than 15, only one real Mac (Apple silicon, macOS 26), no Intel Mac, no Full Disk Access / iCloud / Time Machine behaviour, no Apple notarization or code-signing identity, and the signed packages were assembled here only with a throwaway key (no production key exists). The macOS items in `docs/release.md` stay unchecked.
+No macOS older than 15, only one real Mac (Apple silicon, macOS 26), no Intel Mac, no Full Disk Access / iCloud / Time Machine behaviour, no real USB drive or SMB share, no Apple notarization or code-signing identity, and the signed packages were assembled here only with a throwaway key (no production key exists). The macOS items in `docs/release.md` stay unchecked.
