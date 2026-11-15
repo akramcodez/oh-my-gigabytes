@@ -2,6 +2,10 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Home scope needs a real home folder (2026-11-15)
+
+Before this change an empty or `/` `HOME` (or `USERPROFILE`) made every scanned path count as inside the home folder, so `omg clean` and the interface could delete a project's `node_modules` anywhere on the volume. `platform::home` now refuses a home that is not absolute or is the filesystem root, and `cleanup::target_checks` denies every target when the home it is given fails the same check (`platform::usable_home`). Verified on macOS 27 (APFS): `HOME= omg clean ...` and `HOME=/ omg clean ...` against a fixture outside the home folder now stop with an error and delete nothing; new test `an_empty_relative_or_root_home_puts_nothing_in_scope` in `tests/cleanup.rs`.
+
 ## Delete qualification on each filesystem (2026-11-15)
 
 `scripts/qualify-delete.py --binary PATH [--root DIR] [--report FILE]` runs seven delete scenarios through the real interface with any built binary, in throwaway home folders on the filesystem that holds `DIR`. CI runs it on ext4, Btrfs, NTFS and APFS; results per platform: [Linux](linux-qualification.md), [Windows](windows-evidence.md), [macOS](macos-evidence.md). Not done: release binaries on the owner's Linux and Windows machines, and XFS, where delete is refused by design.
