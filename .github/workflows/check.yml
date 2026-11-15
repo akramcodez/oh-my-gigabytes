@@ -65,6 +65,8 @@ jobs:
       - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
         run: python -m unittest discover -s tests -p 'test_terminal_windows.py' -v
       - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
+        run: python scripts/qualify-delete.py --binary target/debug/omg.exe --root "$env:RUNNER_TEMP"
+      - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
         shell: pwsh
         run: ./scripts/win-vhd-matrix.ps1 -Omg ./target/debug/omg.exe -Optional ReFS
       - if: runner.os == 'Windows' && matrix.os != 'windows-11-arm'
@@ -72,6 +74,15 @@ jobs:
         run: ./scripts/win-schedule-check.ps1 -Omg ./target/debug/omg.exe
       - if: runner.os != 'Windows'
         run: cargo build -p omg-cli --locked && python3 -m unittest discover -s tests -p 'test_*.py' -v
+      # Permanent delete through the real interface on throwaway files: ext4 on Linux, APFS on macOS.
+      - if: runner.os != 'Windows'
+        run: python3 scripts/qualify-delete.py --binary target/debug/omg --root "${TMPDIR:-$RUNNER_TEMP}"
+      - if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get install -y -qq btrfs-progs >/dev/null
+          scripts/fs-sandbox.sh btrfs up
+          python3 scripts/qualify-delete.py --binary target/debug/omg --root /mnt/omg-btrfs-sandbox
+          scripts/fs-sandbox.sh btrfs down
       # Windows on Arm is a Rust-only leg: the launcher has no win32-arm64 target in this release.
       - if: matrix.os != 'windows-11-arm'
         run: node --test packages/oh-my-gigabytes/test/release.test.js
