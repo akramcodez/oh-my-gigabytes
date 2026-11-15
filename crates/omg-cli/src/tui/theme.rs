@@ -232,6 +232,7 @@ fn da1_done(reply: &[u8]) -> bool {
 }
 
 /// Reads `rgb:RRRR/GGGG/BBBB` (1 to 4 hex digits each) from an OSC 11 reply.
+#[cfg(any(unix, test))]
 pub fn parse_background(reply: &[u8]) -> Option<Palette> {
     let text = std::str::from_utf8(reply).ok()?;
     let rest = &text[text.find("rgb:")? + 4..];
