@@ -652,7 +652,19 @@ fn the_plan_around_protected_items_says_what_stays_and_asks_again() {
         "kept items are not reported as skipped: {body}"
     );
     let labels: Vec<&str> = menu.choices.iter().map(|c| c.label.as_str()).collect();
-    assert_eq!(labels, ["Cancel", "Yes, delete permanently"]);
+    if super::trash_available() {
+        assert_eq!(
+            labels,
+            [
+                "Cancel",
+                "Move to Trash (can be restored)",
+                "Yes, delete permanently"
+            ]
+        );
+        assert!(matches!(&menu.choices[1].action, Action::ConfirmTrash(_)));
+    } else {
+        assert_eq!(labels, ["Cancel", "Yes, delete permanently"]);
+    }
     // Cancelling takes back what the review added to OMG Trash.
     assert!(matches!(
         &menu.choices[0].action,

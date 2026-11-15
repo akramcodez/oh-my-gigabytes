@@ -40,6 +40,10 @@ pub fn delete_available() -> bool {
     omg_core::capability::platform_permanent_delete() != omg_core::capability::Support::Unsupported
 }
 
+pub fn trash_available() -> bool {
+    omg_core::capability::os_trash() != omg_core::capability::Support::Unsupported
+}
+
 /// How often the disk gauge is read again. APFS can give space back after a delete has returned,
 /// and other programs change the disk too.
 const DISK_REFRESH: Duration = Duration::from_secs(2);
@@ -127,6 +131,7 @@ pub enum Action {
     Open,
     /// The single "are you sure?" confirmation (warnings are shown in the same dialog).
     Confirm(Box<DeletePlan>),
+    ConfirmTrash(Box<DeletePlan>),
     /// Dismissed a plan that was created by "delete now": take the item back out of OMG Trash.
     /// Cancel a delete confirmation: take back items it added, and tell the backend to discard the plan.
     CancelPlan {
@@ -438,9 +443,14 @@ impl App {
         } else {
             (
                 format!(
-                    "{} item(s) · ≈ {} · this cannot be undone",
+                    "{} item(s) · ≈ {} · {}",
                     plan.items.len(),
-                    omg_core::bytes(plan.estimated)
+                    omg_core::bytes(plan.estimated),
+                    if trash_available() {
+                        "the Trash can be restored; permanent delete cannot be undone"
+                    } else {
+                        "this cannot be undone"
+                    }
                 ),
                 Tone::Danger,
             )
@@ -499,6 +509,14 @@ impl App {
             },
             tone: Tone::Danger,
         });
+        if !plan.items.is_empty() && trash_available() {
+            choices.push(Choice {
+                label: "Move to Trash (can be restored)".into(),
+                key: None,
+                action: Action::ConfirmTrash(Box::new(plan.clone())),
+                tone: Tone::Warn,
+            });
+        }
         if !plan.items.is_empty() {
             choices.push(Choice {
                 label: "Yes, delete permanently".into(),
@@ -528,6 +546,7 @@ impl App {
                 | Action::DeleteSelected
                 | Action::EmptyTrash
                 | Action::Confirm(_)
+                | Action::ConfirmTrash(_)
                 | Action::PrepareKeeping { .. }
                 | Action::DockerCheck
                 | Action::DockerConfirm(_)
@@ -642,6 +661,9 @@ impl App {
             }
             // One confirmation is enough: warnings were already shown in that dialog.
             Action::Confirm(plan) => self.request(Request::Delete(plan), Some("Deleting")),
+            Action::ConfirmTrash(plan) => {
+                self.request(Request::Trash(plan), Some("Moving to the Trash"))
+            }
             Action::PrepareKeeping { ids, undo, discard } => {
                 self.request(Request::DiscardPlan(discard), None);
                 self.request(
@@ -810,6 +832,31 @@ impl App {
             Response::DeletePlan { plan, undo } => {
                 s.busy = None;
                 self.confirm_delete(*plan, undo);
+            }
+            Response::Deleted(report) if report.to_trash => {
+                s.busy = None;
+                s.dirs.clear();
+                s.selected.clear();
+                let skipped: Vec<_> = report
+                    .skipped
+                    .iter()
+                    .filter(|(_, reason)| !reason.starts_with("kept:"))
+                    .collect();
+                s.message = format!(
+                    "Moved {} item(s), ≈ {}, to the Trash · restore them from there; the space is freed when the Trash is emptied{}{}",
+                    report.deleted.len(),
+                    omg_core::bytes(report.estimated_bytes),
+                    if report.cancelled {
+                        " · cancelled: remaining items were not started"
+                    } else {
+                        ""
+                    },
+                    if skipped.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · {} skipped: {}", skipped.len(), skipped[0].1)
+                    },
+                );
             }
             Response::Deleted(report) => {
                 s.busy = None;

@@ -103,9 +103,14 @@ pub fn permanent_delete(filesystem: Filesystem) -> Support {
     }
 }
 
-/// OS Trash (reversible) is not implemented. It stays unsupported until WP09 passes.
+/// Moving to the system Trash (reversible): Linux (freedesktop home Trash) and macOS (`~/.Trash`)
+/// in the default build. Windows has no Recycle Bin support yet.
 pub fn os_trash() -> Support {
-    Support::Unsupported
+    if crate::PERMANENT_DELETE && cfg!(any(target_os = "linux", target_os = "macos")) {
+        Support::DevelopmentUnqualified
+    } else {
+        Support::Unsupported
+    }
 }
 
 /// Permanent-delete support of this platform as reported by `omg doctor`, the status JSON and the
@@ -162,8 +167,15 @@ mod tests {
     }
 
     #[test]
-    fn os_trash_is_unsupported_and_no_profile_is_qualified() {
-        assert_eq!(os_trash(), Support::Unsupported);
+    fn os_trash_is_development_only_and_no_profile_is_qualified() {
+        let expected =
+            if crate::PERMANENT_DELETE && cfg!(any(target_os = "linux", target_os = "macos")) {
+                Support::DevelopmentUnqualified
+            } else {
+                Support::Unsupported
+            };
+        assert_eq!(os_trash(), expected);
+        assert_ne!(os_trash(), Support::Qualified);
         for filesystem in [Filesystem::Ext, Filesystem::Tmpfs, Filesystem::Btrfs] {
             assert_ne!(permanent_delete(filesystem), Support::Qualified);
         }

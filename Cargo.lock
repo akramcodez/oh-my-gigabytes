@@ -788,6 +788,7 @@ dependencies = [
  "anyhow",
  "crossbeam-channel",
  "ed25519-dalek",
+ "libc",
  "rusqlite",
  "rustix",
  "serde",

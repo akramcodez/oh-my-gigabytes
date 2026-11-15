@@ -38,6 +38,7 @@ pub enum Request {
         allocated: u64,
     },
     Delete(Box<DeletePlan>),
+    Trash(Box<DeletePlan>),
     /// The backend forgets a plan that is being replaced by another one.
     DiscardPlan(String),
     /// The user cancelled a confirmation: take back what the review added to OMG Trash (`undo`),
@@ -325,6 +326,15 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                         Request::Delete(plan) => {
                             let fingerprint = plan.fingerprint.clone();
                             send(Response::Deleted(Box::new(index.delete_permanently(
+                                &plan,
+                                &fingerprint,
+                                &home,
+                            )?)));
+                            refresh = true;
+                        }
+                        Request::Trash(plan) => {
+                            let fingerprint = plan.fingerprint.clone();
+                            send(Response::Deleted(Box::new(index.move_to_trash(
                                 &plan,
                                 &fingerprint,
                                 &home,

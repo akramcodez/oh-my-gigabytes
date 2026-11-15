@@ -1,5 +1,6 @@
 """Native Linux PTY smoke test of the built Rust CLI; no user data scanned."""
 import os
+import re
 import pty
 import fcntl
 import select
@@ -13,6 +14,15 @@ import unittest
 from pathlib import Path
 
 from terminal_screen import Screen
+
+
+def choice(ui, label):
+    """The number the open dialog gives `label`, once it is drawn."""
+    ui.until(label)
+    found = re.search(rf"(\d)\. {re.escape(label)}", ui.screen.text())
+    if not found:
+        raise AssertionError(ui.screen.text())
+    return found.group(1).encode()
 
 
 class Interface:
@@ -189,7 +199,7 @@ class TerminalSmokeTests(unittest.TestCase):
                 # Confirming removes exactly that file.
                 ui.send(b"d")
                 self.assertTrue(ui.until("Are you sure?"), ui.screen.text())
-                ui.send(b"2")
+                ui.send(choice(ui, "Yes, delete permanently"))
                 self.assertTrue(ui.until("Deleted 1 item"), ui.screen.text())
                 self.assertFalse(victim.exists())
                 self.assertEqual(keep.read_text(), "keep me")
@@ -280,7 +290,7 @@ class TerminalSmokeTests(unittest.TestCase):
                 self.assertTrue(ui.until("keeping 1 protected item"), ui.screen.text())
                 self.assertTrue(ui.until("Yes, delete permanently"), ui.screen.text())
                 self.assertTrue((cache / "aaa").exists(), "nothing is removed before the second confirmation")
-                ui.send(b"2")
+                ui.send(choice(ui, "Yes, delete permanently"))
                 self.assertTrue(ui.until("Deleted"), ui.screen.text())
                 self.assertFalse((cache / "aaa").exists())
                 self.assertFalse((cache / "ccc").exists())

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify permanent delete of a built omg on one filesystem, with throwaway files only.
+"""Qualify permanent delete (and Move to Trash) of a built omg on one filesystem, with throwaway files only.
 
     python3 scripts/qualify-delete.py --binary PATH [--root DIR] [--report FILE]
 
@@ -92,6 +92,15 @@ def select(ui, name):
         ui.settle(0.2)
 
 
+def choice(ui, label):
+    """The number the open dialog gives `label`, once it is drawn."""
+    ui.until(label, 5)
+    found = re.search(rf"(\d)\. {re.escape(label)}", ui.screen.text())
+    if not found:
+        raise AssertionError(f"no choice named {label}")
+    return found.group(1)
+
+
 class Run:
     def __init__(self, binary, root):
         self.binary, self.root = binary, root
@@ -106,7 +115,10 @@ class Run:
         if WINDOWS:
             env = dict(os.environ, USERPROFILE=str(home), LOCALAPPDATA=str(home / "AppData" / "Local"))
         else:
-            env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(base / "config"), TERM="xterm-256color")
+            env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(base / "config"),
+                       XDG_DATA_HOME=str(home / ".local" / "share"), TERM="xterm-256color")
+        if sys.platform == "darwin":
+            (home / ".Trash").mkdir()
         return base, home, state, env
 
     def omg(self, state, env, *args):
@@ -154,7 +166,7 @@ class Run:
         ui.send("d")
         if not ui.until("Are you sure?"):
             return False
-        ui.send("2")
+        ui.send(choice(ui, "Yes, delete permanently"))
         return ui.until("Deleted ") or ui.until("skipped", 5)
 
 
@@ -242,7 +254,7 @@ def link_inside_is_not_followed(run):
         ui.send("d")
         asked = ui.until("Are you sure?") or ui.until("cannot add to OMG Trash", 3)
         if "Are you sure?" in ui.screen.text():
-            ui.send("2")
+            ui.send(choice(ui, "Yes, delete permanently"))
             ui.until("Deleted ") or ui.until("skipped", 5)
         intact = (outside / "precious.txt").read_text() == "precious"
         outcome = "deleted" if not tree.exists() else "kept"
@@ -274,13 +286,31 @@ def replaced_after_the_question_is_skipped(run):
         big.unlink()
         time.sleep(1.1)
         big.write_bytes(b"n" * (3 * MB))
-        ui.send("2")
+        ui.send(choice(ui, "Yes, delete permanently"))
         ui.until("skipped") or ui.until("Deleted ", 5)
         text = ui.screen.text()
         kept = big.exists() and big.read_bytes()[:1] == b"n"
         ok = asked and kept and "skipped" in text
         return ui, ok, "" if ok else f"asked={asked} new_file_kept={kept}"
     run.scenario("A file replaced after the question is skipped, not deleted", body)
+
+
+def move_to_trash_keeps_it_restorable(run):
+    def body(base, home, state, env):
+        big = home / "q/big.bin"
+        big.write_bytes(b"t" * (3 * MB))
+        ui = run.open(home, state, env, "big.bin")
+        ui.send("d")
+        asked = ui.until("Are you sure?")
+        ui.send(choice(ui, "Move to Trash (can be restored)"))
+        said = ui.until("to the Trash")
+        trash = home / ".Trash" if sys.platform == "darwin" else home / ".local/share/Trash/files"
+        moved = trash / "big.bin"
+        kept = moved.exists() and moved.stat().st_size == 3 * MB and moved.read_bytes()[:1] == b"t"
+        info = sys.platform == "darwin" or "Path=" in (home / ".local/share/Trash/info/big.bin.trashinfo").read_text()
+        ok = asked and said and not big.exists() and kept and info
+        return ui, ok, "" if ok else f"asked={asked} said={said} gone={not big.exists()} in_trash={kept} info={info}"
+    run.scenario("Move to Trash keeps the data in the Trash", body)
 
 
 def main():
@@ -302,6 +332,8 @@ def main():
     print(f"{version} on {system}, filesystem {filesystem(root)} at {root}, permanent delete: {delete}", flush=True)
     if delete in ("unknown", "unsupported"):
         sys.exit("this build or filesystem offers no permanent delete")
+    trash = re.search(r"OS Trash: ([a-z-]+)", doctor)
+    trash = trash.group(1) if trash else "unknown"
     run = Run(binary, root)
     for scenario in (
         cancel_keeps_the_file,
@@ -311,6 +343,7 @@ def main():
         link_inside_is_not_followed,
         hard_link_keeps_the_other_name,
         replaced_after_the_question_is_skipped,
+        *([move_to_trash_keeps_it_restorable] if trash not in ("unknown", "unsupported") else []),
     ):
         scenario(run)
     failed = [r for r in run.results if r["pass"] is False]
@@ -318,7 +351,7 @@ def main():
     if args.report:
         args.report.write_text(json.dumps({
             "binary": version, "system": system, "filesystem": filesystem(root),
-            "permanent_delete": delete, "results": run.results,
+            "permanent_delete": delete, "os_trash": trash, "results": run.results,
         }, indent=2) + "\n")
     sys.exit(1 if failed else 0)
 

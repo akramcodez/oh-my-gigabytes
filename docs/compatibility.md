@@ -17,7 +17,7 @@ Removing or renaming a field raises the output schema. Scripts should ignore fie
 
 `omg scan` prints its suggestion summary to standard error. Scripts that parse its JSON must not merge standard error into it, or must pass `--no-suggest`.
 
-`omg clean` prints a selection with a `fingerprint`; only `--confirm` with that exact fingerprint deletes anything, and a changed selection gets a new fingerprint.
+`omg clean` prints a selection with a `fingerprint`; only `--confirm` with that exact fingerprint deletes anything, and a changed selection gets a new fingerprint. `--trash` moves the selection to the system Trash instead (Linux and macOS); its JSON adds `"to_trash": true`, and the delete report gains a `to_trash` field.
 
 ## Configuration
 

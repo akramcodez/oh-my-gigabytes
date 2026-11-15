@@ -25,6 +25,10 @@ permanent-delete = []
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rustix.workspace = true
 
+# Local time for the freedesktop Trash record.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 # Windows adapter (src/platform/windows.rs) and Windows removal in src/cleanup.rs: handle-based
 # reads, owner checks and delete-by-handle.
 [target.'cfg(windows)'.dependencies]

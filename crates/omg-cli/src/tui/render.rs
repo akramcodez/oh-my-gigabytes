@@ -1029,7 +1029,11 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
     if super::delete_available() {
         out.push(row(
             "d",
-            "delete permanently… (always asks; cannot be undone)",
+            if super::trash_available() {
+                "move to Trash or delete permanently… (always asks)"
+            } else {
+                "delete permanently… (always asks; cannot be undone)"
+            },
         ));
         out.push(row("D", "in OMG Trash: delete everything listed…"));
     }

@@ -1,6 +1,6 @@
 # macOS evidence
 
-Status: **native analysis-only adapter, tested only on GitHub-hosted runners.** `platform::macos` scans APFS, HFS+, exFAT and FAT volumes and never changes a file. Permanent delete, OS Trash and a background service do not exist on macOS. Hosted runners were the first test bed; one real Mac has now run the suite once (see "Real Mac" below). Nothing here is a certification. See [release.md](release.md#not-passed-yet).
+Status: **native analysis-only adapter, tested only on GitHub-hosted runners.** `platform::macos` scans APFS, HFS+, exFAT and FAT volumes and never changes a file. A background service does not exist on macOS; permanent delete and Move to Trash do (sections below). Hosted runners were the first test bed; one real Mac has now run the suite once (see "Real Mac" below). Nothing here is a certification. See [release.md](release.md#not-passed-yet).
 
 ## Test bed
 
@@ -172,6 +172,10 @@ Mac17,9 (Apple silicon), macOS 27.2.1 (26B131), Terminal.app without Full Disk A
 Daily scan (`omg schedule`) with the real `launchctl`: `enable --hour 3` wrote `~/Library/LaunchAgents/dev.omg.scan.plist` (`plutil -lint` OK) and loaded it with a calendar trigger `Hour 3, Minute 0`, low priority I/O and nice 10; `launchctl kickstart` ran it and a second complete scan was recorded (exit code 0); `enable --hour 4` replaced the loaded job (trigger now `Hour 4`); `disable` unloaded it and removed the file; `status` then says not registered. A plist without omg's marker at the same path was left alone by both `enable` and `disable`. The calendar trigger itself was not waited for.
 
 Finding, fixed the same day: a locked (`uchg`) file was refused only after "Yes". `cleanup::verdict` now reads the item's own flags on macOS, so a locked item or cloud placeholder is refused before any question, like an app bundle; one inside a folder is still caught at delete time (`a_locked_item_stops_the_whole_folder_before_anything_is_removed`).
+
+## Move to Trash (2026-11-15)
+
+Items go to `~/.Trash` by one exclusive rename (`renameatx_np` with `RENAME_EXCL`), named `name`, then `name 2.ext`, never replacing anything. A probe on the owner's Mac showed that `~/.Trash` cannot be opened for reading without Full Disk Access, but a search-only open (`O_SEARCH`) works and allows the rename, a `stat` of the moved name and a rename back, so omg uses that. Finder's "Put Back" record is not written: restore by dragging the item out of the Trash. Verified locally with `cargo test` (four new trash tests) and `scripts/qualify-delete.py` (8 of 8 on APFS). See [evidence.md](evidence.md#move-to-trash-2026-11-15).
 
 ## Delete qualification script (2026-11-15)
 

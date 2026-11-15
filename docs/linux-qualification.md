@@ -1,6 +1,6 @@
 # Linux qualification matrix
 
-Status: **no profile is qualified.** This page records what was actually run, and what is still missing. Updated 2026-10-15. A profile moves to `qualified` only when every capability's native evidence below is recorded and reproducible. Until then `capability::permanent_delete` reports `development-unqualified` for ext-family, tmpfs and Btrfs, and `os_trash` is `unsupported`.
+Status: **no profile is qualified.** This page records what was actually run, and what is still missing. Updated 2026-10-15. A profile moves to `qualified` only when every capability's native evidence below is recorded and reproducible. Until then `capability::permanent_delete` reports `development-unqualified` for ext-family, tmpfs and Btrfs, and `os_trash` is `development-unqualified` (Move to Trash, added 2026-11-15).
 
 ## Capabilities
 
@@ -8,7 +8,7 @@ Status: **no profile is qualified.** This page records what was actually run, an
 | --- | --- | --- |
 | Analysis | Metadata scan, index, TUI/CLI browsing, findings | Development; tested on tmpfs and Btrfs |
 | Permanent delete (D15) | Home-only, confirmed plan, revalidated, not recoverable | `development-unqualified` on ext-family, tmpfs, Btrfs |
-| OS Trash | Reversible move to the freedesktop Trash | `unsupported` (see `the OS Trash investigation (Git history)`) |
+| OS Trash | Reversible move to the freedesktop home Trash (`files/` plus a `.trashinfo` record) | `development-unqualified`; `tests/cleanup.rs` trash tests and the `qualify-delete.py` Trash scenario in CI |
 | Service | Optional scan-only systemd user unit | Development; Linux-only tests pass here; desktop notifications broken on this host |
 
 ## Profiles

@@ -135,6 +135,9 @@ enum Command {
         /// The fingerprint printed by the same command without --confirm
         #[arg(long)]
         confirm: Option<String>,
+        /// Move the items to the system Trash, where they can be restored, instead of deleting
+        #[arg(long)]
+        trash: bool,
     },
     /// Recorded dry-run previews
     History,
@@ -558,7 +561,8 @@ fn run() -> Result<()> {
             category,
             older_than,
             confirm,
-        }) => clean(index, &category, older_than, confirm)?,
+            trash,
+        }) => clean(index, &category, older_than, confirm, trash)?,
         Some(Command::Findings { offset }) => {
             let mut findings = serde_json::to_value(index.findings(1000, offset, false)?)?;
             // `entry.path` stays the raw bytes (the path authority); `path` is for reading only.
@@ -657,7 +661,11 @@ fn clean(
     categories: &[String],
     older_than: Option<u64>,
     confirm: Option<String>,
+    trash: bool,
 ) -> Result<()> {
+    if trash && omg_core::capability::os_trash() == omg_core::capability::Support::Unsupported {
+        bail!("moving to the Trash is not available on this platform or build");
+    }
     let home = platform::home()?;
     let selection = index.select_for_clean(&home, categories, older_than)?;
     let Some(confirm) = confirm else {
@@ -666,7 +674,8 @@ fn clean(
             eprintln!("omg: nothing matches; nothing deleted");
         } else {
             eprintln!(
-                "omg: nothing deleted yet. To delete exactly these {} item(s) ({}), run the same command with --confirm {}",
+                "omg: nothing deleted yet. To {} exactly these {} item(s) ({}), run the same command with --confirm {}",
+                if trash { "move to the Trash" } else { "delete" },
                 selection.items.len(),
                 omg_core::bytes(selection.bytes),
                 selection.fingerprint
@@ -677,7 +686,7 @@ fn clean(
     if !omg_core::PERMANENT_DELETE {
         bail!("deleting is not available in this analysis-only build");
     }
-    let (plan, report) = index.clean_selection(&home, &selection, &confirm)?;
+    let (plan, report) = index.clean_selection(&home, &selection, &confirm, trash)?;
     let denied: Vec<_> = plan
         .denied
         .iter()
@@ -701,8 +710,19 @@ fn clean(
             "refused": denied,
             "estimated_bytes": report.estimated_bytes,
             "observed_free_change": report.observed_free_change,
+            "to_trash": report.to_trash,
         }))?
     );
+    if report.to_trash {
+        eprintln!(
+            "omg: moved {} item(s), about {}, to the Trash (restore them from there; the space is freed when it is emptied); {} skipped, {} refused (see the JSON for why)",
+            report.deleted.len(),
+            omg_core::bytes(report.estimated_bytes),
+            report.skipped.len(),
+            plan.denied.len()
+        );
+        return Ok(());
+    }
     eprintln!(
         "omg: deleted {} item(s), about {}; {} skipped, {} refused (see the JSON for why)",
         report.deleted.len(),

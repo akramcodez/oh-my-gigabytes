@@ -189,6 +189,10 @@ pub struct DeleteReport {
     pub needs_reconcile: bool,
     /// Cancellation stopped the run; the remaining targets are `unattempted`.
     pub cancelled: bool,
+    /// Items were moved to the system Trash instead of removed; their space is freed when it is
+    /// emptied, and they can be put back from there.
+    #[serde(default)]
+    pub to_trash: bool,
 }
 
 /// What removing a subtree frees, from the indexed names. A hard-linked file counts only when every
@@ -317,8 +321,9 @@ fn remove_target(
     home: &Path,
     item: &Marked,
     kind: Kind,
+    bin: Option<&unix::Trash>,
 ) -> std::result::Result<(u64, u64, bool), String> {
-    unix::delete_one(root, root_path, home, item, kind)
+    unix::delete_one(root, root_path, home, item, kind, bin)
         .map(|(removed, failed)| (removed, failed, false))
 }
 #[cfg(windows)]
@@ -646,7 +651,7 @@ impl Index {
             items,
         })
     }
-    /// Delete a selection the user confirmed by its fingerprint: the items go to OMG Trash and
+    /// Delete (or move to the system Trash) a selection the user confirmed by its fingerprint: the items go to OMG Trash and
     /// through the same plan and checks as a deletion from the interface. Whole repositories and
     /// session transcripts are left for one-at-a-time review there.
     pub fn clean_selection(
@@ -654,6 +659,7 @@ impl Index {
         home: &Path,
         selection: &Selection,
         confirmed: &str,
+        to_trash: bool,
     ) -> Result<(DeletePlan, DeleteReport)> {
         if confirmed != selection.fingerprint {
             bail!(
@@ -677,7 +683,12 @@ impl Index {
         if plan.items.is_empty() {
             return Ok((plan, DeleteReport::default()));
         }
-        let report = self.delete_permanently(&plan, &plan.fingerprint.clone(), home)?;
+        let fingerprint = plan.fingerprint.clone();
+        let report = if to_trash {
+            self.move_to_trash(&plan, &fingerprint, home)?
+        } else {
+            self.delete_permanently(&plan, &fingerprint, home)?
+        };
         Ok((plan, report))
     }
     pub fn mark(&self, path: &[u8], allocated: u64, home: &Path) -> Result<Gate> {
@@ -1169,7 +1180,39 @@ impl Index {
         confirmed: &str,
         home: &Path,
         cancel: Option<&AtomicBool>,
+        before_mutate: F,
+    ) -> Result<DeleteReport> {
+        self.carry_out(plan, confirmed, home, cancel, before_mutate, false)
+    }
+    /// Move the items of a confirmed plan to the system Trash, with every check of a permanent
+    /// delete. Nothing is ever removed instead: an item that cannot be moved is skipped.
+    pub fn move_to_trash(
+        &mut self,
+        plan: &DeletePlan,
+        confirmed: &str,
+        home: &Path,
+    ) -> Result<DeleteReport> {
+        self.trash_with_control(plan, confirmed, home, None, |_| {})
+    }
+    /// `move_to_trash` with the controls of `delete_with_control`.
+    pub fn trash_with_control<F: FnMut(&[u8])>(
+        &mut self,
+        plan: &DeletePlan,
+        confirmed: &str,
+        home: &Path,
+        cancel: Option<&AtomicBool>,
+        before_mutate: F,
+    ) -> Result<DeleteReport> {
+        self.carry_out(plan, confirmed, home, cancel, before_mutate, true)
+    }
+    fn carry_out<F: FnMut(&[u8])>(
+        &mut self,
+        plan: &DeletePlan,
+        confirmed: &str,
+        home: &Path,
+        cancel: Option<&AtomicBool>,
         mut before_mutate: F,
+        trash: bool,
     ) -> Result<DeleteReport> {
         let (scan, plan) = take_issued(&mut self.issued, plan, confirmed, now())?;
         let _cleanup = crate::index::lock(&self.state, "cleanup.lock")?;
@@ -1187,11 +1230,24 @@ impl Index {
         if delete_support(&root)? == crate::capability::Support::Unsupported {
             bail!("permanent deletion is not available on this filesystem");
         }
+        if trash && crate::capability::os_trash() == crate::capability::Support::Unsupported {
+            bail!("moving to the Trash is not available on this platform; nothing was moved");
+        }
+        // Opened before the intent record, so a missing or unsafe Trash changes and logs nothing.
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let bin = if trash {
+            Some(unix::Trash::open(home).map_err(|error| {
+                anyhow::anyhow!("the Trash could not be opened safely ({error}); nothing was moved")
+            })?)
+        } else {
+            None
+        };
         // Intent and every target row are written in one transaction before anything is touched.
         // If that write fails, no file has changed and no operation exists.
         let operation = self.record_intent(&plan)?;
         let mut report = DeleteReport {
             skipped: plan.denied.clone(),
+            to_trash: trash,
             ..Default::default()
         };
         #[cfg(any(target_os = "linux", target_os = "macos", windows))]
@@ -1233,7 +1289,11 @@ impl Index {
                 // Read before anything changes: what the index attributes to this subtree.
                 let freed = self.freed(scan, &item.path)?;
                 before_mutate(&item.path);
-                match remove_target(&root_dir, &root, home, item, kind) {
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                let result = remove_target(&root_dir, &root, home, item, kind, bin.as_ref());
+                #[cfg(windows)]
+                let result = remove_target(&root_dir, &root, home, item, kind);
+                match result {
                     Ok((removed, failed, shared)) => {
                         report.removed_entries += removed;
                         report.failed_entries += failed;
@@ -1241,11 +1301,15 @@ impl Index {
                             report.deleted.push(item.path.clone());
                             report.estimated_bytes += freed.allocated;
                             // A removed name whose data has other names leaves totals to reconcile.
-                            report.needs_reconcile |= freed.survivors || shared;
+                            // The Linux Trash is scanned like any folder, so what moved there is
+                            // counted again only after a scan (`~/.Trash` is never scanned).
+                            report.needs_reconcile |=
+                                freed.survivors || shared || (trash && cfg!(target_os = "linux"));
                             // The outcome, the index update and the OMG Trash entry change together,
                             // in one commit (one flush to disk per target, not three).
                             let tx = self.db.unchecked_transaction()?;
-                            Self::set_target(&tx, operation, item.id, "deleted", "")?;
+                            let done = if trash { "trashed" } else { "deleted" };
+                            Self::set_target(&tx, operation, item.id, done, "")?;
                             self.forget_in(&tx, scan, &item.path, &freed)?;
                             tx.execute("DELETE FROM marked WHERE id=?", [item.id])?;
                             tx.commit()?;
@@ -1273,6 +1337,7 @@ impl Index {
                 _ => None,
             };
             if let Some((capacity, available)) = volume
+                && !trash
                 && (!report.deleted.is_empty() || report.removed_entries > 0)
             {
                 // Trend history is advisory: failing to record it never fails a finished delete.
@@ -1281,7 +1346,7 @@ impl Index {
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
-            let _ = (home, &root, &mut before_mutate, cancel);
+            let _ = (home, &root, &mut before_mutate, cancel, trash);
             for item in &plan.items {
                 let reason = "deletion is not supported on this platform".to_string();
                 self.record_target(operation, item.id, "skipped", &reason)?;
@@ -1294,12 +1359,19 @@ impl Index {
                 [],
             )?;
         }
+        // Trash outcomes are named apart so `freed_total` never counts space that is still in use.
         let outcome = if report.cancelled {
-            "cancelled"
+            if trash {
+                "trashed-cancelled"
+            } else {
+                "cancelled"
+            }
         } else if report.skipped.is_empty() {
-            "deleted"
+            if trash { "trashed" } else { "deleted" }
         } else if report.deleted.is_empty() && report.removed_entries == 0 {
             "skipped"
+        } else if trash {
+            "trashed-partial"
         } else {
             "partial"
         };
@@ -1547,6 +1619,7 @@ mod unix {
         home: &Path,
         item: &Marked,
         kind: Kind,
+        bin: Option<&Trash>,
     ) -> std::result::Result<(u64, u64), String> {
         let relative = platform::path(&item.path).map_err(|e| e.to_string())?;
         let (parent, cname) = open_parent(root_fd, &relative)?;
@@ -1570,7 +1643,20 @@ mod unix {
             return Err("type changed since it was added; skipped".into());
         }
         target_checks(root, home, &fresh)?;
+        if let Some(bin) = bin {
+            bin.admits(&root.join(&relative), device(&stat))?;
+        }
         if fresh.kind == "file" {
+            if let Some(bin) = bin {
+                bin.put(
+                    &parent,
+                    &cname,
+                    &item.identity,
+                    recorded,
+                    &root.join(&relative),
+                )?;
+                return Ok((1, 0));
+            }
             fs::unlinkat(&parent, &cname, AtFlags::empty()).map_err(|e| e.to_string())?;
             return Ok((1, 0));
         }
@@ -1588,6 +1674,17 @@ mod unix {
         // Fresh descendant check right before deletion: no protected names, no mounts.
         let mut seen = 0u64;
         check_tree(&dir, root, &relative, device(&opened), kind, &mut seen)?;
+        if let Some(bin) = bin {
+            drop(dir);
+            bin.put(
+                &parent,
+                &cname,
+                &item.identity,
+                recorded,
+                &root.join(&relative),
+            )?;
+            return Ok((seen + 1, 0));
+        }
         let (removed, failed) = remove_tree(&dir, device(&opened));
         if failed == 0 {
             // rmdir only removes an empty directory, so a late swap cannot take anything with it.
@@ -1595,6 +1692,271 @@ mod unix {
             return Ok((removed + 1, 0));
         }
         Ok((removed, failed))
+    }
+
+    /// The user's home Trash: freedesktop `Trash/{files,info}` on Linux, `~/.Trash` on macOS. Every
+    /// folder is opened without following links and must be owned by the user.
+    pub struct Trash {
+        files: OwnedFd,
+        #[cfg(target_os = "linux")]
+        info: OwnedFd,
+        dev: u64,
+        path: PathBuf,
+    }
+
+    const MAX_CANDIDATES: u32 = 1000;
+
+    #[cfg(target_os = "linux")]
+    fn location(home: &Path) -> PathBuf {
+        // A relative or outside XDG_DATA_HOME is ignored: the Trash stays inside the home folder.
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .and_then(|data| data.strip_prefix(home).ok().map(Path::to_path_buf))
+            .filter(|rel| {
+                !rel.as_os_str().is_empty()
+                    && rel
+                        .components()
+                        .all(|c| matches!(c, std::path::Component::Normal(_)))
+            })
+            .unwrap_or_else(|| PathBuf::from(".local/share"))
+            .join("Trash")
+    }
+    #[cfg(target_os = "macos")]
+    fn location(_: &Path) -> PathBuf {
+        PathBuf::from(".Trash")
+    }
+
+    /// Opening `~/.Trash` for reading needs Full Disk Access on macOS; a search-only open does not,
+    /// and is enough to rename into it and check the result.
+    #[cfg(target_os = "macos")]
+    fn search() -> OFlags {
+        OFlags::from_bits_retain(0x4000_0000)
+    }
+    #[cfg(target_os = "linux")]
+    fn search() -> OFlags {
+        OFlags::RDONLY
+    }
+
+    fn folder(dir: &OwnedFd, name: &std::ffi::OsStr, create: bool) -> Result<OwnedFd> {
+        if create {
+            match fs::mkdirat(dir, name, Mode::from_raw_mode(0o700)) {
+                Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let fd = fs::openat(
+            dir,
+            name,
+            search() | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?;
+        if fs::fstat(&fd)?.st_uid != rustix::process::geteuid().as_raw() {
+            bail!("a Trash folder is not owned by you");
+        }
+        Ok(fd)
+    }
+
+    impl Trash {
+        pub fn open(home: &Path) -> Result<Trash> {
+            let relative = location(home);
+            let mut dir = os::root(home)?;
+            for part in relative.components() {
+                dir = folder(&dir, part.as_os_str(), cfg!(target_os = "linux"))?;
+            }
+            #[cfg(target_os = "linux")]
+            let (files, info) = (
+                folder(&dir, "files".as_ref(), true)?,
+                folder(&dir, "info".as_ref(), true)?,
+            );
+            #[cfg(target_os = "macos")]
+            let files = dir;
+            let dev = device(&fs::fstat(&files)?);
+            Ok(Trash {
+                files,
+                #[cfg(target_os = "linux")]
+                info,
+                dev,
+                path: home.join(relative),
+            })
+        }
+
+        pub fn admits(&self, absolute: &Path, dev: u64) -> std::result::Result<(), String> {
+            if absolute.starts_with(&self.path) || self.path.starts_with(absolute) {
+                return Err("this is the Trash or inside it; nothing was moved".into());
+            }
+            if dev != self.dev {
+                return Err("the Trash is on another volume; nothing was moved".into());
+            }
+            Ok(())
+        }
+
+        /// Rename one checked item into the Trash under a free name, never replacing anything,
+        /// then confirm the moved object is the one that was checked; if not, put it back.
+        pub fn put(
+            &self,
+            parent: &OwnedFd,
+            name: &CString,
+            identity_: &str,
+            birth: &str,
+            absolute: &Path,
+        ) -> std::result::Result<(), String> {
+            for n in 1..=MAX_CANDIDATES {
+                let candidate = candidate(name.as_bytes(), n);
+                #[cfg(target_os = "linux")]
+                let ticket = match self.reserve(&candidate, absolute) {
+                    Ok(ticket) => ticket,
+                    Err(rustix::io::Errno::EXIST) => continue,
+                    Err(error) => {
+                        return Err(format!(
+                            "the Trash record could not be written ({error}); nothing was moved"
+                        ));
+                    }
+                };
+                #[cfg(target_os = "macos")]
+                let _ = absolute;
+                let discard = || {
+                    #[cfg(target_os = "linux")]
+                    let _ = fs::unlinkat(&self.info, &ticket, AtFlags::empty());
+                };
+                match fs::renameat_with(
+                    parent,
+                    name,
+                    &self.files,
+                    &candidate,
+                    fs::RenameFlags::NOREPLACE,
+                ) {
+                    Ok(()) => {}
+                    Err(rustix::io::Errno::EXIST) => {
+                        discard();
+                        continue;
+                    }
+                    Err(rustix::io::Errno::XDEV) => {
+                        discard();
+                        return Err("the Trash is on another volume; nothing was moved".into());
+                    }
+                    Err(error) => {
+                        discard();
+                        return Err(format!(
+                            "could not be moved to the Trash ({error}); nothing was moved"
+                        ));
+                    }
+                }
+                let same = fs::statat(&self.files, &candidate, AtFlags::SYMLINK_NOFOLLOW)
+                    .is_ok_and(|stat| identity(&stat) == identity_)
+                    && birth_of(&self.files, &candidate).as_deref() == Some(birth);
+                if same {
+                    return Ok(());
+                }
+                return match fs::renameat_with(
+                    &self.files,
+                    &candidate,
+                    parent,
+                    name,
+                    fs::RenameFlags::NOREPLACE,
+                ) {
+                    Ok(()) => {
+                        discard();
+                        Err("replaced by a different file during the move; it was put back".into())
+                    }
+                    Err(_) => Err(format!(
+                        "replaced by a different file during the move; it is in the Trash as {}",
+                        String::from_utf8_lossy(candidate.as_bytes())
+                    )),
+                };
+            }
+            Err("the Trash already holds too many items with this name; nothing was moved".into())
+        }
+
+        /// Create `info/<candidate>.trashinfo` exclusively; the name is taken once it exists.
+        #[cfg(target_os = "linux")]
+        fn reserve(
+            &self,
+            candidate: &CString,
+            absolute: &Path,
+        ) -> std::result::Result<CString, rustix::io::Errno> {
+            let mut file = candidate.as_bytes().to_vec();
+            file.extend_from_slice(b".trashinfo");
+            let file = CString::new(file).map_err(|_| rustix::io::Errno::INVAL)?;
+            let fd = fs::openat(
+                &self.info,
+                &file,
+                OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                Mode::from_raw_mode(0o600),
+            )?;
+            let body = trash_info(
+                &platform::raw(absolute).map_err(|_| rustix::io::Errno::INVAL)?,
+                &local_now(),
+            );
+            let written = (|| {
+                let mut rest = body.as_bytes();
+                while !rest.is_empty() {
+                    let n = rustix::io::write(&fd, rest)?;
+                    if n == 0 {
+                        return Err(rustix::io::Errno::IO);
+                    }
+                    rest = &rest[n..];
+                }
+                fs::fsync(&fd)
+            })();
+            if let Err(error) = written {
+                let _ = fs::unlinkat(&self.info, &file, AtFlags::empty());
+                return Err(error);
+            }
+            Ok(file)
+        }
+    }
+
+    /// The n-th name tried in the Trash: the name itself, then a number before the extension
+    /// (`a.2.txt` on Linux, `a 2.txt` on macOS, as the file managers there do).
+    pub fn candidate(name: &[u8], n: u32) -> CString {
+        if n == 1 {
+            return CString::new(name).expect("names have no NUL");
+        }
+        let split = name
+            .iter()
+            .rposition(|&b| b == b'.')
+            .filter(|&at| at > 0)
+            .unwrap_or(name.len());
+        let (stem, extension) = name.split_at(split);
+        let separator = if cfg!(target_os = "macos") { " " } else { "." };
+        let mut out = stem.to_vec();
+        out.extend_from_slice(format!("{separator}{n}").as_bytes());
+        out.extend_from_slice(extension);
+        CString::new(out).expect("names have no NUL")
+    }
+
+    /// A freedesktop `.trashinfo` body: the original absolute path, percent-encoded, and the time.
+    #[cfg(target_os = "linux")]
+    pub fn trash_info(path: &[u8], when: &str) -> String {
+        let mut encoded = String::new();
+        for &byte in path {
+            if byte.is_ascii_alphanumeric() || b"/-_.~".contains(&byte) {
+                encoded.push(byte as char);
+            } else {
+                encoded.push_str(&format!("%{byte:02X}"));
+            }
+        }
+        format!("[Trash Info]\nPath={encoded}\nDeletionDate={when}\n")
+    }
+
+    /// Local time as the Trash specification asks, `YYYY-MM-DDThh:mm:ss`.
+    #[cfg(target_os = "linux")]
+    fn local_now() -> String {
+        let now = crate::now() as libc::time_t;
+        // SAFETY: localtime_r writes only into the provided struct and returns null on failure.
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+            return "1970-01-01T00:00:00".into();
+        }
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min,
+            tm.tm_sec
+        )
     }
 
     fn entries(dir: &OwnedFd) -> std::result::Result<Vec<(CString, fs::Stat)>, String> {

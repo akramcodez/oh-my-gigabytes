@@ -1879,16 +1879,176 @@ fn scripted_clean_selects_by_category_and_age_and_deletes_only_a_confirmed_selec
         "large files are never scripted"
     );
     assert!(index.select_for_clean(h, &[], None).is_err());
-    assert!(index.clean_selection(h, &selection, "wrong").is_err());
+    assert!(
+        index
+            .clean_selection(h, &selection, "wrong", false)
+            .is_err()
+    );
     assert!(h.join(".cache/uv").exists());
     let again = index.select_for_clean(h, &caches, None).unwrap();
     assert_eq!(again.fingerprint, selection.fingerprint, "deterministic");
     let (plan, report) = index
-        .clean_selection(h, &again, &selection.fingerprint)
+        .clean_selection(h, &again, &selection.fingerprint, false)
         .unwrap();
     assert!(plan.denied.is_empty(), "{:?}", plan.denied);
     assert_eq!(report.deleted, vec![b".cache/uv".to_vec()]);
     assert!(!h.join(".cache/uv").exists());
     assert!(h.join("movie.mkv").exists());
     assert!(h.join(".nvm/versions/node/v18.1.0").exists());
+}
+
+fn trash_files(h: &Path) -> std::path::PathBuf {
+    if cfg!(target_os = "macos") {
+        h.join(".Trash")
+    } else {
+        h.join(".local/share/Trash/files")
+    }
+}
+
+fn trash_setup() -> (tempfile::TempDir, tempfile::TempDir) {
+    let (home, state) = setup();
+    if cfg!(target_os = "macos") {
+        fs::create_dir(home.path().join(".Trash")).unwrap();
+    }
+    (home, state)
+}
+
+#[test]
+fn move_to_trash_keeps_the_data_under_a_free_name_and_frees_nothing_yet() {
+    let (home, state) = trash_setup();
+    let h = home.path();
+    fs::create_dir_all(h.join("cache/deep")).unwrap();
+    fs::write(h.join("cache/deep/blob"), vec![1u8; 300_000]).unwrap();
+    fs::write(h.join("notes 1%.txt"), b"mine").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    fs::create_dir_all(trash_files(h)).unwrap();
+    fs::write(trash_files(h).join("notes 1%.txt"), b"already there").unwrap();
+    index.mark(b"cache", 300_000, h).unwrap();
+    index.mark(b"notes 1%.txt", 4096, h).unwrap();
+    let ids: Vec<i64> = index.marked().unwrap().iter().map(|m| m.id).collect();
+    let plan = index.prepare_delete(&ids, h).unwrap();
+    assert!(index.move_to_trash(&plan, "wrong", h).is_err());
+
+    let report = index
+        .move_to_trash(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert!(report.to_trash, "{report:?}");
+    assert_eq!(report.needs_reconcile, cfg!(target_os = "linux"));
+    assert_eq!(report.deleted.len(), 2, "{report:?}");
+    assert!(!h.join("cache").exists() && !h.join("notes 1%.txt").exists());
+    assert_eq!(
+        fs::read(trash_files(h).join("cache/deep/blob"))
+            .unwrap()
+            .len(),
+        300_000
+    );
+    assert_eq!(
+        fs::read(trash_files(h).join("notes 1%.txt")).unwrap(),
+        b"already there",
+        "nothing in the Trash is replaced"
+    );
+    let second = if cfg!(target_os = "macos") {
+        "notes 1% 2.txt"
+    } else {
+        "notes 1%.2.txt"
+    };
+    assert_eq!(fs::read(trash_files(h).join(second)).unwrap(), b"mine");
+    #[cfg(target_os = "linux")]
+    {
+        let info =
+            fs::read_to_string(h.join(format!(".local/share/Trash/info/{second}.trashinfo")))
+                .unwrap();
+        let path = h
+            .join("notes 1%.txt")
+            .to_string_lossy()
+            .replace(' ', "%20")
+            .replace("%.", "%25.");
+        assert!(info.starts_with("[Trash Info]\nPath="), "{info}");
+        assert!(info.contains(&format!("Path={path}\n")), "{info}");
+        assert!(info.contains("\nDeletionDate=20"), "{info}");
+        assert!(h.join(".local/share/Trash/info/cache.trashinfo").exists());
+    }
+    assert!(index.marked().unwrap().is_empty());
+    assert_eq!(index.freed_total().unwrap(), 0, "moved data is not freed");
+    let targets = history_targets(&index, "trashed");
+    assert_eq!(targets.len(), 2, "{targets:?}");
+    assert!(targets.iter().all(|(_, outcome)| outcome == "trashed"));
+}
+
+#[test]
+fn a_trash_that_is_a_link_is_refused_and_nothing_is_moved_or_recorded() {
+    let (home, state) = setup();
+    let h = home.path();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(h.join("big.bin"), vec![0u8; 50_000]).unwrap();
+    let link = if cfg!(target_os = "macos") {
+        h.join(".Trash")
+    } else {
+        fs::create_dir_all(h.join(".local/share")).unwrap();
+        h.join(".local/share/Trash")
+    };
+    symlink(outside.path(), &link).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"big.bin", 50_000, h).unwrap();
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"big.bin")], h)
+        .unwrap();
+    let error = index
+        .move_to_trash(&plan, &plan.fingerprint.clone(), h)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("nothing was moved"), "{error}");
+    assert!(h.join("big.bin").exists());
+    assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
+    assert!(index.history().unwrap().iter().all(|h| h.kind != "delete"));
+}
+
+#[test]
+fn an_item_replaced_before_the_move_stays_where_it_is() {
+    let (home, state) = trash_setup();
+    let h = home.path();
+    fs::write(h.join("old.log"), b"old").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"old.log", 4096, h).unwrap();
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"old.log")], h)
+        .unwrap();
+    let report = index
+        .trash_with_control(&plan, &plan.fingerprint, h, None, |_| {
+            fs::remove_file(h.join("old.log")).unwrap();
+            fs::write(h.join("old.log"), b"new important data").unwrap();
+        })
+        .unwrap();
+    assert!(report.deleted.is_empty(), "{report:?}");
+    assert_eq!(fs::read(h.join("old.log")).unwrap(), b"new important data");
+    assert!(!trash_files(h).join("old.log").exists());
+}
+
+#[test]
+fn the_trash_itself_is_never_moved_into_the_trash() {
+    let (home, state) = trash_setup();
+    let h = home.path();
+    fs::create_dir_all(trash_files(h)).unwrap();
+    fs::write(trash_files(h).join("kept.bin"), vec![0u8; 10_000]).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    let relative = trash_files(h).strip_prefix(h).unwrap().join("kept.bin");
+    let raw = relative.to_string_lossy().into_owned().into_bytes();
+    // The Trash is excluded from scans, so normally it cannot even be added.
+    if !matches!(index.mark(&raw, 10_000, h), Ok(Gate::Allowed)) {
+        assert!(trash_files(h).join("kept.bin").exists());
+        return;
+    }
+    let plan = index.prepare_delete(&[id_of(&index, &raw)], h).unwrap();
+    if plan.items.is_empty() {
+        return;
+    }
+    let report = index
+        .move_to_trash(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert!(report.deleted.is_empty(), "{report:?}");
+    assert!(trash_files(h).join("kept.bin").exists());
 }
