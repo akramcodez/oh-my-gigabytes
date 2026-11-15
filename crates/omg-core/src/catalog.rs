@@ -573,6 +573,44 @@ pub fn signed_message(payload: &str) -> Vec<u8> {
     message.extend_from_slice(payload.as_bytes());
     message
 }
+/// The one category each discovery kind belongs to. Categories decide what scans suggest and what
+/// `omg clean --category` selects, so a catalog must not move a kind into another category.
+pub fn category_of(discovery: &str) -> Option<&'static str> {
+    Some(match discovery {
+        "npm_content_cache"
+        | "pip_cache"
+        | "uv_cache"
+        | "pnpm_store"
+        | "yarn_cache"
+        | "cargo_registry"
+        | "go_build_cache"
+        | "gradle_caches"
+        | "homebrew_cache"
+        | "bun_cache"
+        | "deno_cache"
+        | "maven_repository"
+        | "cocoapods_cache"
+        | "composer_cache"
+        | "playwright_browsers"
+        | "puppeteer_browsers" => "package_caches",
+        "stale_dependencies" | "project_build_output" | "xcode_derived_data" => "build_artifacts",
+        "large_file" => "large_files",
+        "app_caches" | "xcode_device_support" | "simulator_caches" | "jetbrains_caches" => {
+            "app_caches"
+        }
+        "ai_tool_old_versions" | "editor_old_extensions" | "toolchain_old_versions" => {
+            "old_tool_versions"
+        }
+        "ai_tool_sessions" => "session_history",
+        "colima_vm" | "docker_desktop_vm" => "container_storage",
+        "unused_clone" => "unused_clones",
+        "unused_app_data" => "unused_apps",
+        "unused_toolchain" => "unused_toolchains",
+        "huggingface_hub" | "ollama_models" | "lm_studio_models" => "ml_models",
+        "home_logs_and_temp" => "logs_and_temp",
+        _ => return None,
+    })
+}
 pub fn parse(payload: &str) -> Result<Catalog> {
     if payload.len() > MAX_CATALOG {
         bail!("catalog exceeds byte budget");
@@ -633,23 +671,8 @@ pub fn parse(payload: &str) -> Result<Catalog> {
         {
             bail!("unsupported evidence/policy predicate");
         }
-        if ![
-            "package_caches",
-            "build_artifacts",
-            "large_files",
-            "app_caches",
-            "old_tool_versions",
-            "session_history",
-            "container_storage",
-            "unused_clones",
-            "unused_apps",
-            "unused_toolchains",
-            "ml_models",
-            "logs_and_temp",
-        ]
-        .contains(&rule.category.as_str())
-        {
-            bail!("unsupported category");
+        if category_of(&rule.discovery) != Some(rule.category.as_str()) {
+            bail!("category does not match the discovery kind");
         }
         for text in [
             &rule.name,
@@ -1825,6 +1848,15 @@ mod tests {
         assert!(parse(&payload.replace("tier = \"info\"", "tier = \"safe\"")).is_err());
         assert!(parse(&format!("{payload}\ncommand = 'rm -rf /'")).is_err());
         assert!(parse(&"x".repeat(MAX_CATALOG + 1)).is_err());
+        assert_eq!(payload.matches("category = \"large_files\"").count(), 1);
+        for category in ["package_caches", "build_artifacts", "logs_and_temp"] {
+            let moved = payload.replace(
+                "category = \"large_files\"",
+                &format!("category = \"{category}\""),
+            );
+            assert!(parse(&moved).is_err(), "large files moved to {category}");
+        }
+        assert!(DISCOVERIES.iter().all(|d| category_of(d).is_some()));
     }
     #[test]
     #[cfg(target_os = "linux")]

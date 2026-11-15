@@ -15,9 +15,17 @@ pub fn supported() -> bool {
 /// totals there find hard-linked names after the walk (see `rollup::Aggregator::finish`).
 pub const LINKS_KNOWN: bool = cfg!(not(windows));
 pub fn home() -> Result<PathBuf> {
-    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("home directory unavailable"))
+        .ok_or_else(|| anyhow::anyhow!("home directory unavailable"))?;
+    if !usable_home(&home) {
+        bail!("home directory must be an absolute path below the filesystem root");
+    }
+    Ok(home)
+}
+/// An empty, relative or root home would put every path in scope for cleanup.
+pub fn usable_home(home: &Path) -> bool {
+    home.is_absolute() && home.parent().is_some()
 }
 /// `%LOCALAPPDATA%` on Windows (per-user, not roamed). Used for state and configuration.
 fn local_app_data() -> Result<PathBuf> {

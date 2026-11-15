@@ -2,6 +2,14 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Home scope needs a real home folder (2026-11-15)
+
+Before this change an empty or `/` `HOME` (or `USERPROFILE`) made every scanned path count as inside the home folder, so `omg clean` and the interface could delete a project's `node_modules` anywhere on the volume. `platform::home` now refuses a home that is not absolute or is the filesystem root, and `cleanup::target_checks` denies every target when the home it is given fails the same check (`platform::usable_home`). Verified on macOS 27 (APFS): `HOME= omg clean ...` and `HOME=/ omg clean ...` against a fixture outside the home folder now stop with an error and delete nothing; new test `an_empty_relative_or_root_home_puts_nothing_in_scope` in `tests/cleanup.rs`.
+
+## Catalog categories are fixed per discovery kind (2026-11-15)
+
+`catalog::parse` used to accept any listed category for any discovery kind, so a signed catalog (or an edited `catalog_releases` row, which `Index::catalog` parses again without the signature) could file `large_file` or `huggingface_hub` under `package_caches`. Scans would then add those items to OMG Trash and `omg clean --category package_caches` would select them. `catalog::category_of` now gives the one category of each kind, and `parse` rejects a rule whose category differs. Verified on macOS 27: `strict_catalog_and_tier_contract` rejects the bundled catalog with `large_file` moved to `package_caches`, `build_artifacts` or `logs_and_temp`, and checks that every kind in `DISCOVERIES` has a category; the bundled catalog still parses.
+
 ## Delete qualification on each filesystem (2026-11-15)
 
 `scripts/qualify-delete.py --binary PATH [--root DIR] [--report FILE]` runs seven delete scenarios through the real interface with any built binary, in throwaway home folders on the filesystem that holds `DIR`. CI runs it on ext4, Btrfs, NTFS and APFS; results per platform: [Linux](linux-qualification.md), [Windows](windows-evidence.md), [macOS](macos-evidence.md). Not done: release binaries on the owner's Linux and Windows machines, and XFS, where delete is refused by design.
