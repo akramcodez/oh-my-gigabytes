@@ -168,8 +168,7 @@ impl Scheduler {
             .with_context(|| format!("cannot run {}", self.tool.display()))?;
         let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
         text.push_str(&String::from_utf8_lossy(&output.stderr));
-        text.truncate(2000);
-        Ok((output.status.success(), text.trim().to_string()))
+        Ok((output.status.success(), clip(text)))
     }
     #[cfg(unix)]
     fn domain() -> String {
@@ -272,9 +271,26 @@ impl Scheduler {
     }
 }
 
+/// The first 2000 bytes of a tool's output, cut on a character boundary.
+fn clip(mut text: String) -> String {
+    let mut end = text.len().min(2000);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+    text.trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_tool_output_is_cut_on_a_character_boundary() {
+        let text = format!("{}\u{e9}{}", "a".repeat(1999), "b".repeat(10));
+        assert_eq!(clip(text), "a".repeat(1999));
+        assert_eq!(clip(" ok \n".into()), "ok");
+    }
 
     fn spec() -> Spec {
         Spec {

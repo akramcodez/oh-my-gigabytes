@@ -81,8 +81,7 @@ impl Report {
         self.items
             .iter()
             .filter(|i| kinds.contains(&i.kind))
-            .map(|i| i.bytes)
-            .sum()
+            .fold(0u64, |sum, i| sum.saturating_add(i.bytes))
     }
 }
 
@@ -272,7 +271,9 @@ impl Engine {
             )?;
             if status == 200 {
                 let pruned: BuildPrune = serde_json::from_slice(&body).unwrap_or_default();
-                outcome.reclaimed += pruned.space_reclaimed.max(0) as u64;
+                outcome.reclaimed = outcome
+                    .reclaimed
+                    .saturating_add(pruned.space_reclaimed.max(0) as u64);
                 for cache in caches {
                     if pruned.caches_deleted.iter().any(|d| d == &cache.id) {
                         outcome.removed.push(cache);
@@ -305,7 +306,7 @@ impl Engine {
 #[cfg(feature = "permanent-delete")]
 fn record(outcome: &mut Outcome, item: &Item, status: u16, body: &[u8]) {
     if (200..300).contains(&status) {
-        outcome.reclaimed += item.bytes;
+        outcome.reclaimed = outcome.reclaimed.saturating_add(item.bytes);
         outcome.removed.push(item.clone());
     } else {
         let message: ApiError = serde_json::from_slice(body).unwrap_or_default();
@@ -623,7 +624,8 @@ fn rfc3339(text: &str) -> Option<i64> {
     let offset = match rest.as_bytes().first() {
         Some(b'Z' | b'z') => 0,
         Some(sign @ (b'+' | b'-')) if rest.len() >= 6 => {
-            let o = rest[1..3].parse::<i64>().ok()? * 3600 + rest[4..6].parse::<i64>().ok()? * 60;
+            let o = rest.get(1..3)?.parse::<i64>().ok()? * 3600
+                + rest.get(4..6)?.parse::<i64>().ok()? * 60;
             if *sign == b'+' { o } else { -o }
         }
         _ => return None,
@@ -676,7 +678,7 @@ fn classify_at(endpoint: &str, df: SystemDf, now: i64) -> Report {
             .into_iter()
             .filter(|t| t != "<none>:<none>")
             .collect();
-        let bytes = (image.size - image.shared_size.max(0)).max(0) as u64;
+        let bytes = image.size.saturating_sub(image.shared_size.max(0)).max(0) as u64;
         let short = &image.id[7..19];
         let age = if tags.is_empty() {
             DANGLING_DAYS
@@ -762,8 +764,7 @@ fn classify_at(endpoint: &str, df: SystemDf, now: i64) -> Report {
         volume_bytes: volumes
             .iter()
             .filter_map(|v| v.usage_data.as_ref())
-            .map(|u| u.size.max(0) as u64)
-            .sum(),
+            .fold(0u64, |sum, u| sum.saturating_add(u.size.max(0) as u64)),
         volumes: volumes.len() as u64,
         running_containers: running,
         items,
@@ -788,7 +789,9 @@ pub fn make_plan(report: &Report, kinds: &[Kind]) -> Plan {
     }
     Plan {
         endpoint: report.endpoint.clone(),
-        bytes: items.iter().map(|i| i.bytes).sum(),
+        bytes: items
+            .iter()
+            .fold(0u64, |sum, i| sum.saturating_add(i.bytes)),
         kinds,
         items,
         created: crate::now(),
@@ -923,6 +926,8 @@ mod tests {
             "2026-13-01T00:00:00Z",
             "2026-11-12",
             "2026-11-12T00:00:00",
+            "2020-01-01T00:00:00+0\u{e9}:00",
+            "2020-01-01T00:00:00+\u{e9}\u{e9}",
         ] {
             assert_eq!(rfc3339(bad), None, "{bad}");
         }
@@ -985,5 +990,21 @@ mod tests {
             make_plan(&report, &[Kind::BuildCache, Kind::DanglingImage]).fingerprint
         );
         assert_ne!(plan.fingerprint, make_plan(&report, &Kind::ALL).fingerprint);
+    }
+
+    #[test]
+    fn extreme_sizes_from_an_engine_saturate_instead_of_overflowing() {
+        let image = |n: u8, size: i64| serde_json::json!({ "Id": format!("sha256:{}", n.to_string().repeat(64)), "Size": size, "SharedSize": 5, "Containers": 0, "Created": OLD });
+        let df: SystemDf = serde_json::from_value(serde_json::json!({
+            "Images": [image(1, i64::MIN), image(2, i64::MAX), image(3, i64::MAX), image(4, i64::MAX)],
+            "Volumes": [{ "UsageData": { "Size": i64::MAX } }, { "UsageData": { "Size": i64::MAX } }, { "UsageData": { "Size": i64::MAX } }]
+        }))
+        .unwrap();
+        let report = classify_at("/tmp/docker.sock", df, NOW);
+        assert_eq!(report.items.len(), 4);
+        assert!(report.items.iter().any(|i| i.bytes == 0));
+        assert_eq!(report.volume_bytes, u64::MAX);
+        assert_eq!(report.total(&Kind::ALL), u64::MAX);
+        assert_eq!(make_plan(&report, &Kind::ALL).bytes, u64::MAX);
     }
 }
