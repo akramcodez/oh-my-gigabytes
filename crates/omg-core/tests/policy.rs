@@ -102,3 +102,24 @@ fn macos_personal_data_is_protected_but_ordinary_folders_are_not() {
         );
     }
 }
+
+#[test]
+fn names_the_filesystem_folds_to_a_protected_name_are_protected() {
+    let root = tempfile::tempdir().unwrap();
+    for path in [
+        ".\u{17f}sh/id_ed25519",
+        ".SSH/id_ed25519",
+        "Library/\u{212a}eychains/login.keychain-db",
+        "Library/MAIL/V10/INBOX",
+        "data.\u{17f}qlite",
+        "\u{17f}ecret.PEM",
+    ] {
+        assert!(
+            policy::hard_protection(root.path(), &entry(path)).is_some(),
+            "{path}"
+        );
+    }
+    assert!(policy::always_sensitive(".\u{17f}sh"));
+    assert_eq!(policy::fold("Node_Modules"), "node_modules");
+    assert!(policy::hard_protection(root.path(), &entry("cache/\u{e9}t\u{e9}.bin")).is_none());
+}

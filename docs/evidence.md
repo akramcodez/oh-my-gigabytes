@@ -66,6 +66,8 @@ Owner request. Docker's disk is never deleted (one file holds every image, conta
 
 Verification on the development Mac (macOS 27.2, Rust 1.95.0): unit tests (request allowlist, remote hosts refused, HTTP chunked and sized bodies, RFC 3339 dates, classification and ages) and `crates/omg-core/tests/docker.rs` against a fake engine on a Unix socket (only planned items removed and without force; nothing removed when Docker changed or the confirmation is wrong; an item that comes into use mid-removal is skipped; opt-in kinds never include running containers). `cargo test --workspace` in both builds and clippy `-D warnings` pass.
 
+Hostile engine replies (2026-11-15): a local socket answering `/system/df` with a build cache date of `2020-01-01T00:00:00+0é:00` made `omg docker` panic on a string slice, and image or volume sizes of `i64::MIN` or `i64::MAX` overflowed the size arithmetic (a panic in debug builds, a wrapped total in release). Dates are now read with checked slices, and sizes subtract and add with saturation. A tool output of more than 2000 bytes from `launchctl` or `schtasks` is also cut on a character boundary instead of panicking. Verified on macOS 27 against a fake engine on a Unix socket with all three replies (no panic, sizes saturate), and by the unit tests `dates_from_docker_are_read_exactly`, `extreme_sizes_from_an_engine_saturate_instead_of_overflowing` and `long_tool_output_is_cut_on_a_character_boundary`.
+
 Not passed yet: a real Docker engine on any platform (no Docker was running on the development Mac), the Windows named pipe (compiled in CI only), and Podman's compatibility API.
 
 ## Unused applications and toolchains (2026-11-08)

@@ -173,11 +173,19 @@ Daily scan (`omg schedule`) with the real `launchctl`: `enable --hour 3` wrote `
 
 Finding, fixed the same day: a locked (`uchg`) file was refused only after "Yes". `cleanup::verdict` now reads the item's own flags on macOS, so a locked item or cloud placeholder is refused before any question, like an app bundle; one inside a folder is still caught at delete time (`a_locked_item_stops_the_whole_folder_before_anything_is_removed`).
 
+## Doctor text (2026-11-15)
+
+`omg doctor` described macOS scanning as "...; no deletion" in every build, while `permanent_delete` reported `development-unqualified` in the default build. The scanning text no longer mentions deletion; `permanent_delete` and `cleanup` remain the only fields that state it. Checked on this Mac with `omg doctor --json` on a private state directory, and in the CLI output contract test.
+
 ## Delete qualification script (2026-11-15)
 
 `scripts/qualify-delete.py --binary PATH --root DIR` drives the real interface with a given binary in throwaway home folders under `DIR`, seven scenarios: Esc keeps the file; "Yes" deletes only the confirmed file (a sibling and a file outside home stay); a `.pem` is refused with no question; a folder of 220 items is deleted whole and its sibling stays; links inside a deleted folder are removed as links and their targets outside home keep their content; deleting one name of a hard-linked file keeps the other name and its data; a file replaced between the question and "Yes" is skipped and the new file stays.
 
 On this Mac (Mac17,9, macOS 27.2.1, APFS `/private/tmp`): 7 of 7 passed with the debug build of this branch, and 7 of 7 with the CI-built `omg-darwin-arm64` release binary from `Release build` run 43556501699. CI runs it on every macOS leg; run 43678086940 passed 7 of 7 on `macos-26` (Darwin 25.6, arm64) and `macos-15-intel` (Darwin 24.6, x86_64).
+
+## Names APFS folds beyond ASCII (2026-11-15)
+
+APFS compares names with Unicode case folding, so on this Mac a folder created as `.ſsh` (long s) answers lookups for `~/.ssh`, and `Library/\u{212a}eychains` (Kelvin sign) for `Library/Keychains`; a scan records the name as created. The protection checks lowered names with ASCII rules only, so such a name was not protected. `policy::fold` now lowers non-ASCII names with full Unicode case mapping (ASCII names keep the fast path), and `policy::hard_protection`, `always_sensitive`, the standard-folder check and the iCloud warning use it. Folding more only ever protects more. Test: `names_the_filesystem_folds_to_a_protected_name_are_protected` in `tests/policy.rs`.
 
 ## Gates not passed
 

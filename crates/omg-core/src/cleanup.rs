@@ -364,7 +364,7 @@ fn standard_mac_folder(home: &Path, absolute: &Path) -> bool {
     let Ok(below) = absolute.strip_prefix(home) else {
         return false;
     };
-    let below = below.to_string_lossy().to_ascii_lowercase();
+    let below = policy::fold(&below.to_string_lossy());
     [
         "applications",
         "desktop",
@@ -391,7 +391,7 @@ fn may_sync_with_icloud(home: &Path, absolute: &Path) -> bool {
             .ok()
             .and_then(|below| below.components().next())
             .is_some_and(|first| {
-                let first = first.as_os_str().to_string_lossy().to_ascii_lowercase();
+                let first = policy::fold(&first.as_os_str().to_string_lossy());
                 first == "desktop" || first == "documents"
             })
 }
