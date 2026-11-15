@@ -32,7 +32,7 @@ fn native_analysis() -> &'static str {
     if cfg!(windows) {
         "development Windows only (NTFS and ReFS scanning; FAT32/exFAT refused)"
     } else if cfg!(target_os = "macos") {
-        "development macOS only (APFS, HFS+, exFAT, FAT scanning; no deletion)"
+        "development macOS only (APFS, HFS+, exFAT, FAT scanning)"
     } else {
         "development Linux only"
     }

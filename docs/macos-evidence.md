@@ -173,6 +173,10 @@ Daily scan (`omg schedule`) with the real `launchctl`: `enable --hour 3` wrote `
 
 Finding, fixed the same day: a locked (`uchg`) file was refused only after "Yes". `cleanup::verdict` now reads the item's own flags on macOS, so a locked item or cloud placeholder is refused before any question, like an app bundle; one inside a folder is still caught at delete time (`a_locked_item_stops_the_whole_folder_before_anything_is_removed`).
 
+## Doctor text (2026-11-15)
+
+`omg doctor` described macOS scanning as "...; no deletion" in every build, while `permanent_delete` reported `development-unqualified` in the default build. The scanning text no longer mentions deletion; `permanent_delete` and `cleanup` remain the only fields that state it. Checked on this Mac with `omg doctor --json` on a private state directory, and in the CLI output contract test.
+
 ## Delete qualification script (2026-11-15)
 
 `scripts/qualify-delete.py --binary PATH --root DIR` drives the real interface with a given binary in throwaway home folders under `DIR`, seven scenarios: Esc keeps the file; "Yes" deletes only the confirmed file (a sibling and a file outside home stay); a `.pem` is refused with no question; a folder of 220 items is deleted whole and its sibling stays; links inside a deleted folder are removed as links and their targets outside home keep their content; deleting one name of a hard-linked file keeps the other name and its data; a file replaced between the question and "Yes" is skipped and the new file stays.
