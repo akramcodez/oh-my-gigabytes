@@ -179,6 +179,10 @@ Finding, fixed the same day: a locked (`uchg`) file was refused only after "Yes"
 
 On this Mac (Mac17,9, macOS 27.2.1, APFS `/private/tmp`): 7 of 7 passed with the debug build of this branch, and 7 of 7 with the CI-built `omg-darwin-arm64` release binary from `Release build` run 43556501699. CI runs it on every macOS leg; run 43678086940 passed 7 of 7 on `macos-26` (Darwin 25.6, arm64) and `macos-15-intel` (Darwin 24.6, x86_64).
 
+## Names APFS folds beyond ASCII (2026-11-15)
+
+APFS compares names with Unicode case folding, so on this Mac a folder created as `.ſsh` (long s) answers lookups for `~/.ssh`, and `Library/\u{212a}eychains` (Kelvin sign) for `Library/Keychains`; a scan records the name as created. The protection checks lowered names with ASCII rules only, so such a name was not protected. `policy::fold` now lowers non-ASCII names with full Unicode case mapping (ASCII names keep the fast path), and `policy::hard_protection`, `always_sensitive`, the standard-folder check and the iCloud warning use it. Folding more only ever protects more. Test: `names_the_filesystem_folds_to_a_protected_name_are_protected` in `tests/policy.rs`.
+
 ## Gates not passed
 
 No macOS older than 15, only one real Mac (Apple silicon, macOS 26), no Intel Mac, no Full Disk Access / iCloud / Time Machine behaviour, no real USB drive or SMB share, no Apple notarization or code-signing identity, and the signed packages were assembled here only with a throwaway key (no production key exists). The macOS items in `docs/release.md` stay unchecked.

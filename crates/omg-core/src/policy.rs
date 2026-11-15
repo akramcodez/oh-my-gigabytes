@@ -53,7 +53,17 @@ pub const ALWAYS_SENSITIVE: [&str; 14] = [
 ];
 
 pub fn always_sensitive(name: &str) -> bool {
-    ALWAYS_SENSITIVE.contains(&name.to_ascii_lowercase().as_str())
+    ALWAYS_SENSITIVE.contains(&fold(name).as_str())
+}
+
+/// Lowercase for comparing names. APFS also folds letters such as `ſ` and the Kelvin sign, so
+/// `.ſsh` names the same folder as `.ssh`; folding more than ASCII only ever protects more.
+pub fn fold(name: &str) -> String {
+    if name.is_ascii() {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_uppercase().to_lowercase()
+    }
 }
 
 /// Newest modification time (Unix seconds) inside a directory, when known.
@@ -332,7 +342,7 @@ pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
     }
     let parts: Vec<String> = absolute
         .components()
-        .map(|part| part.as_os_str().to_string_lossy().to_ascii_lowercase())
+        .map(|part| fold(&part.as_os_str().to_string_lossy()))
         .collect();
     if private_library(&parts) {
         return Some("personal data folder".into());
@@ -386,11 +396,7 @@ pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
             return Some("sensitive, repository, managed or cloud path".into());
         }
     }
-    let name = relative
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_ascii_lowercase();
+    let name = fold(&relative.file_name().unwrap_or_default().to_string_lossy());
     if [
         ".db",
         ".sqlite",
