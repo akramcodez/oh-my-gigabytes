@@ -2,6 +2,10 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Delete qualification on each filesystem (2026-11-15)
+
+`scripts/qualify-delete.py --binary PATH [--root DIR] [--report FILE]` runs seven delete scenarios through the real interface with any built binary, in throwaway home folders on the filesystem that holds `DIR`. CI runs it on ext4, Btrfs, NTFS and APFS; results per platform: [Linux](linux-qualification.md), [Windows](windows-evidence.md), [macOS](macos-evidence.md). Not done: release binaries on the owner's Linux and Windows machines, and XFS, where delete is refused by design.
+
 ## Old toolchain versions, logs and temp files, scripted clean, what grew, daily scans (2026-11-14)
 
 Owner request (1.0 list items 5 to 12, without a release). Implemented:

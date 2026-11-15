@@ -45,6 +45,7 @@ cargo test -p omg-cli --test cli service::                 # CLI end-to-end test
 cargo test -p omg-core --test migrations                   # schema 1..13 upgrade and recovery
 cargo test -p omg-core --test macos                        # macOS only: hdiutil disk images (APFS, HFS+, exFAT, FAT32)
 scripts/fs-sandbox.sh ext4|xfs|btrfs up|test|down          # loop-image filesystem sandbox (needs sudo and mkfs tools)
+python3 scripts/qualify-delete.py --binary target/debug/omg --root DIR   # delete scenarios through the interface on DIR's filesystem (any built binary; Windows needs pywinpty)
 cargo run --release -p omg-core --example benchmark        # synthetic scan benchmark
 cargo test -p omg-core --test windows                     # Windows only: native scan and delete tests
 python -m unittest discover -s tests -p 'test_terminal_windows.py' -v   # Windows only: ConPTY tests, including delete (pip install pywinpty==2.0.15; uses target/debug/omg.exe or OMG_BINARY)
