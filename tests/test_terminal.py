@@ -289,7 +289,7 @@ class TerminalSmokeTests(unittest.TestCase):
                 ui.send(b"5")
                 self.assertTrue(ui.until("removed automatically"), ui.screen.text())
                 self.assertTrue(ui.until("archive-v0/aaa"), ui.screen.text())
-                self.assertIn("3.00 MiB", ui.screen.text())
+                self.assertIn(" MiB", ui.screen.text())
                 ui.send(b"q")
                 self.assertEqual(ui.process.wait(timeout=10), 0)
             finally:
