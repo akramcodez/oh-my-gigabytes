@@ -81,6 +81,8 @@ pub struct Summary {
     pub freed: u64,
     /// Folders that grew between the last two complete scans, largest growth first.
     pub grew: Vec<omg_core::service::trend::Grown>,
+    /// What omg deleted in the last 20 days, newest first.
+    pub deleted: Vec<omg_core::index::DeletedRecord>,
 }
 
 pub enum Response {
@@ -132,6 +134,7 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
         auto_trash: index.auto_trash()?,
         freed: index.freed_total()?,
         grew: index.grew(3).map(|g| g.items).unwrap_or_default(),
+        deleted: index.deleted_log()?,
         volume: status
             .root
             .as_deref()

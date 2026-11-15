@@ -825,6 +825,11 @@ impl crate::Index {
             "UPDATE operations SET outcome=?,detail=? WHERE id=? AND kind='docker'",
             rusqlite::params![state, serde_json::to_string(outcome)?, operation],
         )?;
+        let at = crate::now();
+        for item in &outcome.removed {
+            let name = format!("{}: {}", item.kind.label(), item.name);
+            crate::index::log_deleted(&self.db, at, "docker", name.as_bytes(), item.bytes)?;
+        }
         Ok(())
     }
 }

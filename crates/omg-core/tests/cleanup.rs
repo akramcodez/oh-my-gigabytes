@@ -1922,3 +1922,47 @@ fn an_empty_relative_or_root_home_puts_nothing_in_scope() {
     assert!(omg_core::platform::usable_home(h));
     assert!(!omg_core::platform::usable_home(Path::new("/")));
 }
+
+#[test]
+fn deleted_items_are_logged_with_size_and_dropped_after_twenty_days() {
+    use std::os::unix::ffi::OsStrExt;
+    let (home, state) = setup();
+    let h = home.path();
+    fs::write(h.join("big.iso"), vec![2u8; 200_000]).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    assert!(index.deleted_log().unwrap().is_empty());
+    assert_eq!(index.mark(b"big.iso", 200_000, h).unwrap(), Gate::Allowed);
+    let plan = index
+        .prepare_delete(&[id_of(&index, b"big.iso")], h)
+        .unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    let log = index.deleted_log().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].source, "files");
+    assert_eq!(
+        log[0].path,
+        [h.as_os_str().as_bytes(), b"/big.iso"].concat()
+    );
+    assert_eq!(log[0].bytes, report.estimated_bytes);
+
+    let now = omg_core::now();
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    db.execute(
+        "INSERT INTO deleted_log(at,source,path,bytes) VALUES(?,'files',x'6f6c64',1),(?,'files',x'6e6577',2)",
+        [now - 21 * 86_400, now - 19 * 86_400],
+    )
+    .unwrap();
+    let log = index.deleted_log().unwrap();
+    assert_eq!(
+        log.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
+        vec![log[0].path.clone(), b"new".to_vec()],
+        "newest first; the 21-day-old line is gone"
+    );
+    let left: i64 = db
+        .query_row("SELECT count(*) FROM deleted_log", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(left, 2, "the expired line is removed from the index too");
+}

@@ -42,7 +42,7 @@ Running a subset of tests:
 cargo test -p omg-core --test service                      # one integration-test file (scanner, policy, planning, service)
 cargo test -p omg-core --test service ipc_is_a_closed      # one test by name substring
 cargo test -p omg-cli --test cli service::                 # CLI end-to-end tests (use the built binary via CARGO_BIN_EXE_omg)
-cargo test -p omg-core --test migrations                   # schema 1..13 upgrade and recovery
+cargo test -p omg-core --test migrations                   # schema 1..14 upgrade and recovery
 cargo test -p omg-core --test macos                        # macOS only: hdiutil disk images (APFS, HFS+, exFAT, FAT32)
 scripts/fs-sandbox.sh ext4|xfs|btrfs up|test|down          # loop-image filesystem sandbox (needs sudo and mkfs tools)
 python3 scripts/qualify-delete.py --binary target/debug/omg --root DIR   # delete scenarios through the interface on DIR's filesystem (any built binary; Windows needs pywinpty)
@@ -100,7 +100,7 @@ Find functionality by grepping for `impl Index`.
 
 ### Schema migrations
 
-Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/0NN.sql` (currently up to 013) requires three edits in `index.rs`:
+Migrations are applied in `Index::open` with a `PRAGMA user_version` gate per file. Adding `migrations/0NN.sql` (currently up to 014) requires three edits in `index.rs`:
 1. Add the `include_str!` step.
 2. Bump the "schema is newer than this omg build" check (`version > N`).
 3. Bump `schema_supported` in `diagnose`.

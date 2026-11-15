@@ -224,3 +224,29 @@ fn opt_in_kinds_include_unused_images_and_stopped_containers_but_never_running_o
     let report = engine.report().unwrap();
     assert_eq!((report.volumes, report.running_containers), (1, 1));
 }
+
+#[test]
+fn removed_docker_items_go_in_the_deleted_log_and_skipped_ones_do_not() {
+    use std::os::unix::fs::PermissionsExt;
+    let state = tempfile::tempdir().unwrap();
+    std::fs::set_permissions(state.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let index = omg_core::Index::open(state.path()).unwrap();
+    let item = |kind, name: &str, bytes| omg_core::docker::Item {
+        kind,
+        id: name.into(),
+        name: name.into(),
+        bytes,
+    };
+    let outcome = omg_core::docker::Outcome {
+        removed: vec![item(Kind::BuildCache, "cache-1", 4096)],
+        skipped: vec![(item(Kind::UnusedImage, "kept", 1), "in use".into())],
+        reclaimed: 4096,
+    };
+    index.docker_outcome(1, &outcome).unwrap();
+    let log = index.deleted_log().unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(
+        (log[0].source.as_str(), log[0].path.as_slice(), log[0].bytes),
+        ("docker", &b"build cache: cache-1"[..], 4096)
+    );
+}

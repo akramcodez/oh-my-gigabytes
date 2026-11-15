@@ -409,7 +409,49 @@ fn summary_with_marked(path: &[u8]) -> worker::Summary {
         volume: None,
         freed: 0,
         grew: vec![],
+        deleted: vec![],
     }
+}
+
+#[test]
+fn deleted_log_lists_date_size_and_escaped_path() {
+    let mut summary = summary_with_marked(b"x");
+    summary.deleted = vec![
+        omg_core::index::DeletedRecord {
+            at: 1_763_164_800,
+            source: "files".into(),
+            path: b"/home/u/evil\x1b[31mcache".to_vec(),
+            bytes: 3 * 1024 * 1024,
+        },
+        omg_core::index::DeletedRecord {
+            at: 1_763_164_800,
+            source: "docker".into(),
+            path: b"build cache: abc".to_vec(),
+            bytes: 1024,
+        },
+    ];
+    let state = AppState {
+        tab: Tab::Deleted,
+        now: 1_763_164_800 + 2 * 86_400,
+        summary: Some(Box::new(summary)),
+        ..Default::default()
+    };
+    let text = draw(&state, 120, 30);
+    assert!(text.contains("2 deleted"), "{text}");
+    assert!(text.contains("2025-11-15"), "{text}");
+    assert!(text.contains("2d ago"), "{text}");
+    assert!(text.contains("3.00 MiB"), "{text}");
+    assert!(text.contains("Docker build cache: abc"), "{text}");
+    assert!(text.contains("removed automatically"), "{text}");
+    assert!(!text.contains('\x1b'), "terminal escapes are shown escaped");
+}
+
+#[test]
+fn key_five_opens_the_deleted_log() {
+    let (mut app, _rx) = test_app();
+    app.handle_key(event::KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(app.state.tab, Tab::Deleted);
 }
 
 fn test_app() -> (App, std::sync::mpsc::Receiver<Request>) {

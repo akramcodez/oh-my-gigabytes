@@ -70,15 +70,23 @@ pub enum Tab {
     Browse,
     Findings,
     Trash,
+    Deleted,
 }
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Overview, Tab::Browse, Tab::Findings, Tab::Trash];
+    pub const ALL: [Tab; 5] = [
+        Tab::Overview,
+        Tab::Browse,
+        Tab::Findings,
+        Tab::Trash,
+        Tab::Deleted,
+    ];
     pub fn name(self) -> &'static str {
         match self {
             Tab::Overview => "Overview",
             Tab::Browse => "Browse",
             Tab::Findings => "Findings",
             Tab::Trash => "OMG Trash",
+            Tab::Deleted => "Deleted",
         }
     }
 }
@@ -977,7 +985,7 @@ impl App {
                     self.go_up();
                 }
             }
-            KeyCode::Char(c @ '1'..='4') => self
+            KeyCode::Char(c @ '1'..='5') => self
                 .run_action(Action::Go(Tab::ALL[c as usize - '1' as usize]))
                 .map(|_| ())?,
             KeyCode::Tab => {

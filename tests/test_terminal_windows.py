@@ -213,7 +213,7 @@ class ConPtyDeleteTests(unittest.TestCase):
                 self.assertTrue(ui.until("Yes, delete permanently"), ui.screen.text())
                 self.assertTrue((cache / "aaa").exists(), "nothing is removed before the second confirmation")
                 ui.send("2")
-                self.assertTrue(ui.until("Deleted"), ui.screen.text())
+                self.assertTrue(ui.until("item(s), ≈"), ui.screen.text())
                 self.assertFalse((cache / "aaa").exists())
                 self.assertFalse((cache / "ccc").exists())
                 self.assertFalse((cache / "bbb" / "pkg" / "__init__.py").exists())

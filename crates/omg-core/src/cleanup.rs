@@ -44,6 +44,15 @@ const FORGET_TOTAL: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path=?2"
 #[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
 const FORGET_TOTALS_BELOW: &str = "DELETE FROM dir_totals WHERE scan_id=?1 AND path>?2 AND path<?3";
 
+/// The full stored form of a root-relative path, for the deleted log.
+#[cfg(any(target_os = "linux", target_os = "macos", windows, test))]
+fn joined(root: &[u8], path: &[u8]) -> Vec<u8> {
+    let mut out = root.strip_suffix(b"/").unwrap_or(root).to_vec();
+    out.push(b'/');
+    out.extend_from_slice(path.strip_prefix(b"/").unwrap_or(path));
+    out
+}
+
 /// A path or name for a message: lossy, with control characters (terminal escapes) replaced.
 fn printable(raw: &[u8]) -> String {
     String::from_utf8_lossy(raw)
@@ -1182,7 +1191,7 @@ impl Index {
             .map_err(|_| {
                 anyhow::anyhow!("a scan is running; wait for it to finish, then delete")
             })?;
-        let (current, root, _) = self.scope()?;
+        let (current, root, root_raw) = self.scope()?;
         if current != scan {
             bail!("the scan changed after review; review it again");
         }
@@ -1250,6 +1259,13 @@ impl Index {
                             let tx = self.db.unchecked_transaction()?;
                             Self::set_target(&tx, operation, item.id, "deleted", "")?;
                             self.forget_in(&tx, scan, &item.path, &freed)?;
+                            crate::index::log_deleted(
+                                &tx,
+                                now(),
+                                "files",
+                                &joined(&root_raw, &item.path),
+                                freed.allocated,
+                            )?;
                             tx.execute("DELETE FROM marked WHERE id=?", [item.id])?;
                             tx.commit()?;
                         } else {

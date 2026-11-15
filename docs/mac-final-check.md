@@ -124,7 +124,7 @@ Run it in Terminal.app, and again in any other terminal you use (iTerm2, Ghostty
 "$OMG" --state-dir "$S"
 ```
 
-- [ ] `1`–`4` switch between Overview, Browse, Findings and OMG Trash.
+- [ ] `1`–`5` switch between Overview, Browse, Findings, OMG Trash and Deleted (the log of what omg deleted in the last 20 days).
 - [ ] In Browse, `⏎` opens a folder and `⌫` goes back. Inside a nested folder the rows show plain names (`victim.bin`, not `work/victim.bin`) and the path bar shows one piece per folder (`~ › Library › Caches`).
 - [ ] Unreadable folders (step 4 index) say `unknown · unreadable`, not `0.00 B`.
 - [ ] The footer, the `m` options menu and the `?` help list delete. Do not press `d` here; step 8b tests it.

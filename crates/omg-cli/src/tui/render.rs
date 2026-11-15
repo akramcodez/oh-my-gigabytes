@@ -55,6 +55,7 @@ pub fn row_count(state: &AppState) -> usize {
         Tab::Browse => visible_children(state).len(),
         Tab::Findings => visible_findings(state).len(),
         Tab::Trash => state.summary.as_ref().map_or(0, |s| s.marked.len()),
+        Tab::Deleted => state.summary.as_ref().map_or(0, |s| s.deleted.len()),
     }
 }
 
@@ -120,6 +121,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
             Tab::Browse => browse(state, theme, width, height),
             Tab::Findings => findings(state, theme, width, height),
             Tab::Trash => trash(state, theme, width, height),
+            Tab::Deleted => deleted(state, theme, width, height),
         }
     };
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), rows[2]);
@@ -127,7 +129,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
     options_bar(frame, rows[4], state, theme);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "  m options · ? shortcuts · 1-4 views · q quit",
+            "  m options · ? shortcuts · 1-5 views · q quit",
             theme.dim(),
         ))),
         rows[5],
@@ -406,6 +408,7 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
                 ("D", "empty all…"),
                 ("u", "remove from list"),
             ],
+            Tab::Deleted => &[("j k", "move"), ("1", "overview"), ("m", "options")],
         }
     };
     let mut spans = vec![Span::raw(" ")];
@@ -980,6 +983,70 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
     out
 }
 
+fn deleted(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines {
+    let Some(summary) = &state.summary else {
+        return vec![
+            Line::from(""),
+            Line::from(Span::styled("  Loading…", theme.dim())),
+        ];
+    };
+    let total: u64 = summary.deleted.iter().map(|d| d.bytes).sum();
+    let mut out: Lines = vec![
+        Line::from(vec![
+            Span::styled(
+                format!("  {} deleted · ≈ {}", summary.deleted.len(), bytes(total)),
+                theme.bold(),
+            ),
+            Span::styled(
+                format!(
+                    "   a text record only; lines older than {} days are removed automatically",
+                    omg_core::index::DELETED_LOG_DAYS
+                ),
+                theme.dim(),
+            ),
+        ]),
+        Line::from(""),
+    ];
+    if summary.deleted.is_empty() {
+        out.push(Line::from(Span::styled(
+            "  Nothing deleted in the last 20 days.",
+            theme.dim(),
+        )));
+        return out;
+    }
+    let visible = height.saturating_sub(2).max(1);
+    let start = scroll_start(state, summary.deleted.len(), visible);
+    for (n, record) in summary.deleted.iter().enumerate().skip(start).take(visible) {
+        let selected = n == state.cursor;
+        let name = if record.source == "docker" {
+            format!("Docker {}", clean(&record.path))
+        } else {
+            state.shorten_home(&clean(&record.path))
+        };
+        out.push(Line::from(vec![
+            Span::styled(if selected { "❯ " } else { "  " }, theme.selected()),
+            Span::styled(
+                format!(
+                    "{}  {:<9}",
+                    date(record.at),
+                    ago(state.now, Some(record.at))
+                ),
+                theme.dim(),
+            ),
+            Span::styled(format!("{:>10}  ", bytes(record.bytes)), theme.bold()),
+            Span::styled(
+                truncate_middle(&name, width.saturating_sub(42)),
+                if selected {
+                    theme.selected()
+                } else {
+                    Style::new()
+                },
+            ),
+        ]));
+    }
+    out
+}
+
 fn plan_view(plan: &Plan, theme: &Theme) -> Lines {
     let mut out: Lines = vec![
         Line::from(""),
@@ -1018,7 +1085,10 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
         Line::from(""),
         Line::from(Span::styled("  Shortcuts (any key closes)", theme.bold())),
         row("m", "options menu for the selected item and the app"),
-        row("1-4  Tab", "Overview · Browse · Findings · OMG Trash"),
+        row(
+            "1-5  Tab",
+            "Overview · Browse · Findings · OMG Trash · Deleted",
+        ),
         row("j k ↑ ↓", "move        PgUp/PgDn jump"),
         row("⏎ →  ⌫ ←", "open folder / details  ·  up one folder"),
         row(
