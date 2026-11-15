@@ -1892,3 +1892,33 @@ fn scripted_clean_selects_by_category_and_age_and_deletes_only_a_confirmed_selec
     assert!(h.join("movie.mkv").exists());
     assert!(h.join(".nvm/versions/node/v18.1.0").exists());
 }
+
+#[test]
+fn an_empty_relative_or_root_home_puts_nothing_in_scope() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir_all(h.join("cache/deep")).unwrap();
+    fs::write(h.join("cache/deep/blob"), vec![1u8; 300_000]).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    for bad in ["", "/", "relative", "."] {
+        let error = index.mark(b"cache", 300_000, Path::new(bad)).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("no usable home"),
+            "home {bad:?}"
+        );
+    }
+    assert!(index.marked().unwrap().is_empty());
+    assert_eq!(index.mark(b"cache", 300_000, h).unwrap(), Gate::Allowed);
+    let id = id_of(&index, b"cache");
+    for bad in ["", "/"] {
+        let plan = index.prepare_delete(&[id], Path::new(bad));
+        assert!(
+            plan.is_err() || plan.unwrap().items.is_empty(),
+            "home {bad:?}"
+        );
+    }
+    assert!(h.join("cache/deep/blob").exists());
+    assert!(omg_core::platform::usable_home(h));
+    assert!(!omg_core::platform::usable_home(Path::new("/")));
+}

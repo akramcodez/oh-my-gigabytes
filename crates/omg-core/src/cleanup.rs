@@ -404,6 +404,9 @@ fn target_checks(root: &Path, home: &Path, entry: &Entry) -> std::result::Result
         return Err("the scan root itself or an unsafe path".into());
     }
     let absolute = root.join(&relative);
+    if !platform::usable_home(home) {
+        return Err("no usable home folder; OMG deletes only inside your home".into());
+    }
     if !absolute.starts_with(home) || absolute == home {
         return Err("outside your home folder; OMG never deletes system data".into());
     }
