@@ -33,6 +33,7 @@ omg status                               # totals, and how much space omg itself
 omg findings                             # what can be cleaned, with explanations
 omg grew                                 # which folders grew between the last two scans
 omg doctor                               # read-only health check
+omg theme light                          # interface colours: auto (follows the terminal), dark or light
 omg schedule enable --hour 12            # macOS and Windows: a daily scan-only job (Linux: omg start)
 ```
 

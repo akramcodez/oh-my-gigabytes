@@ -218,6 +218,8 @@ pub fn lock_held(state: &Path, name: &str) -> bool {
     }
 }
 
+pub const THEMES: [&str; 3] = ["auto", "dark", "light"];
+
 impl Index {
     pub fn open(state: &Path) -> Result<Self> {
         if !platform::supported() {
@@ -589,6 +591,29 @@ impl Index {
     }
     /// Space omg has freed so far, as recorded with each permanent deletion and Docker removal: the
     /// indexed size of what was deleted, and what the engine reported freeing. An estimate.
+    /// The interface colour theme: `auto` follows the terminal background.
+    pub fn theme(&self) -> Result<&'static str> {
+        let value: Option<Vec<u8>> = self
+            .db
+            .query_row("SELECT value FROM settings WHERE key='theme'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        Ok(THEMES
+            .into_iter()
+            .find(|t| value.as_deref() == Some(t.as_bytes()))
+            .unwrap_or("auto"))
+    }
+    pub fn set_theme(&self, name: &str) -> Result<()> {
+        if !THEMES.contains(&name) {
+            bail!("unknown theme {name:?}; choose auto, dark or light");
+        }
+        self.db.execute(
+            "INSERT INTO settings VALUES('theme',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [name.as_bytes().to_vec()],
+        )?;
+        Ok(())
+    }
     pub fn freed_total(&self) -> Result<u64> {
         let mut statement = self.db.prepare(
             "SELECT kind,detail FROM operations WHERE kind IN ('delete','docker') AND outcome IN ('deleted','partial','cancelled','removed')",

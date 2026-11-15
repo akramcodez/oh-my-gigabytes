@@ -11,6 +11,8 @@ fn draw(state: &AppState, width: u16, height: u16) -> String {
                 state,
                 &theme::Theme {
                     mode: theme::Mode::Mono,
+                    palette: theme::Palette::Dark,
+                    paint: false,
                 },
             )
         })
@@ -340,6 +342,8 @@ fn paths_saved_in_omg_trash_are_red_and_underlined() {
                 &state,
                 &theme::Theme {
                     mode: theme::Mode::TrueColor,
+                    palette: theme::Palette::Dark,
+                    paint: false,
                 },
             )
         })
@@ -406,6 +410,7 @@ fn summary_with_marked(path: &[u8]) -> worker::Summary {
         root: None,
         home: None,
         auto_trash: true,
+        theme: "auto",
         volume: None,
         freed: 0,
         grew: vec![],
@@ -850,4 +855,57 @@ fn lists_scroll_with_a_margin_and_stop_at_the_end() {
     // A short list never scrolls.
     state.cursor = 3;
     assert_eq!(render::scroll_start(&state, 4, 20), 0);
+}
+
+#[test]
+fn background_reply_picks_the_palette() {
+    use theme::{Palette, parse_background};
+    assert_eq!(
+        parse_background(b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\\x1b[?62;22c"),
+        Some(Palette::Light)
+    );
+    assert_eq!(
+        parse_background(b"\x1b]11;rgb:1e1e/1e1e/2e2e\x07"),
+        Some(Palette::Dark)
+    );
+    assert_eq!(
+        parse_background(b"\x1b]11;rgb:f4/f2/ec\x07"),
+        Some(Palette::Light)
+    );
+    assert_eq!(parse_background(b"\x1b[?62;22c"), None);
+    assert_eq!(parse_background(b"\x1b]11;rgb:zz/00/00\x07"), None);
+}
+
+#[test]
+fn theme_cycles_and_a_chosen_light_theme_paints_the_screen() {
+    assert_eq!(next_theme("auto"), "dark");
+    assert_eq!(next_theme("dark"), "light");
+    assert_eq!(next_theme("light"), "auto");
+    let light = theme::Theme::resolve(theme::Mode::TrueColor, "light", theme::Palette::Dark);
+    assert_eq!(light.palette, theme::Palette::Light);
+    assert!(light.base().is_some());
+    let auto = theme::Theme::resolve(theme::Mode::TrueColor, "auto", theme::Palette::Light);
+    assert_eq!(auto.palette, theme::Palette::Light);
+    assert!(
+        auto.base().is_none(),
+        "auto keeps the terminal's own background"
+    );
+    let basic = theme::Theme::resolve(theme::Mode::Basic, "light", theme::Palette::Dark);
+    assert!(
+        basic.base().is_none(),
+        "only true colour paints a background"
+    );
+
+    let state = AppState::default();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|f| render(f, &state, &light)).unwrap();
+    let buffer = terminal.backend().buffer().clone();
+    assert_eq!(
+        buffer[(0, 29)].bg,
+        ratatui::style::Color::Rgb(244, 242, 236)
+    );
+    assert_eq!(
+        buffer[(99, 0)].bg,
+        ratatui::style::Color::Rgb(244, 242, 236)
+    );
 }

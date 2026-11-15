@@ -47,6 +47,7 @@ pub enum Request {
         undo: Vec<i64>,
     },
     SetAutoTrash(bool),
+    SetTheme(&'static str),
     /// Progress of a scan run by another process.
     PollRunning,
     /// Ask Docker what is unused and plan its removal (the safe kinds only).
@@ -76,6 +77,7 @@ pub struct Summary {
     pub root: Option<PathBuf>,
     pub home: Option<PathBuf>,
     pub auto_trash: bool,
+    pub theme: &'static str,
     /// (capacity, used) bytes read from the filesystem now, not from the scan record.
     pub volume: Option<(u64, u64)>,
     pub freed: u64,
@@ -132,6 +134,7 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
             .ok()
             .and_then(|t| t.indexed_allocated_change),
         auto_trash: index.auto_trash()?,
+        theme: index.theme()?,
         freed: index.freed_total()?,
         grew: index.grew(3).map(|g| g.items).unwrap_or_default(),
         deleted: index.deleted_log()?,
@@ -285,6 +288,11 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                             } else {
                                 "Scans will no longer add anything to OMG Trash.".into()
                             }));
+                            refresh = true;
+                        }
+                        Request::SetTheme(name) => {
+                            index.set_theme(name)?;
+                            send(Response::Info(format!("Theme set to {name}.")));
                             refresh = true;
                         }
                         Request::DiscardPlan(fingerprint) => index.discard_plan(&fingerprint),

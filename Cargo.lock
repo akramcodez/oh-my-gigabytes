@@ -761,6 +761,7 @@ dependencies = [
  "ctrlc",
  "omg-core",
  "ratatui",
+ "rustix",
  "serde_json",
  "tempfile",
 ]

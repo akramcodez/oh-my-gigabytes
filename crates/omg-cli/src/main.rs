@@ -62,6 +62,11 @@ enum Command {
     },
     /// Finish removing rows of superseded scans (housekeeping; scans only prune for a few seconds)
     Prune,
+    /// Show or set the interface colours: auto (follows the terminal), dark or light
+    Theme {
+        #[arg(value_parser = ["auto", "dark", "light"])]
+        name: Option<String>,
+    },
     /// Read-only check of this build, platform capabilities and the state directory
     Doctor {
         /// Print only JSON (for scripts)
@@ -463,6 +468,12 @@ fn run() -> Result<()> {
                     "more stale data remains; run `omg prune` again"
                 }
             );
+        }
+        Some(Command::Theme { name }) => {
+            if let Some(name) = name {
+                index.set_theme(&name)?;
+            }
+            println!("{}", index.theme()?);
         }
         Some(Command::Tree {
             path,

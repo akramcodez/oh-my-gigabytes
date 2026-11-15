@@ -92,6 +92,9 @@ fn tone(theme: &Theme, tone: Tone) -> Style {
 
 pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
     let area = frame.area();
+    if let Some(base) = theme.base() {
+        frame.render_widget(Block::new().style(base), area);
+    }
     if area.width < 50 || area.height < 16 {
         frame.render_widget(
             Paragraph::new("OMG! Terminal too small — resize to at least 50×16 (q quits)."),
@@ -515,6 +518,9 @@ fn menu_overlay(frame: &mut Frame<'_>, area: Rect, menu: &Menu, theme: &Theme) {
         ));
     let inner = block.inner(rect);
     frame.render_widget(Clear, rect);
+    if let Some(base) = theme.base() {
+        frame.render_widget(Block::new().style(base), rect);
+    }
     frame.render_widget(block, rect);
     let [body_area, choice_area] = Layout::vertical([
         Constraint::Min(0),
@@ -1084,7 +1090,10 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
     let mut out = vec![
         Line::from(""),
         Line::from(Span::styled("  Shortcuts (any key closes)", theme.bold())),
-        row("m", "options menu for the selected item and the app"),
+        row(
+            "m",
+            "options menu for the selected item and the app (also: theme auto, dark or light)",
+        ),
         row(
             "1-5  Tab",
             "Overview · Browse · Findings · OMG Trash · Deleted",

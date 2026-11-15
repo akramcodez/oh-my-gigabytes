@@ -8,9 +8,17 @@ pub enum Mode {
     Basic,
     Mono,
 }
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Palette {
+    Dark,
+    Light,
+}
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub mode: Mode,
+    pub palette: Palette,
+    /// Paint the palette's own background, so a chosen theme reads the same in any terminal.
+    pub paint: bool,
 }
 
 pub const FRAMES: [&str; 6] = ["·", "✢", "✳", "✶", "✻", "✽"];
@@ -22,11 +30,41 @@ pub const VERBS: [&str; 5] = [
     "Gobbling inodes",
 ];
 
+struct Colors {
+    brand: ((u8, u8, u8), Color),
+    good: ((u8, u8, u8), Color),
+    warn: ((u8, u8, u8), Color),
+    danger: ((u8, u8, u8), Color),
+    dim: ((u8, u8, u8), Color),
+    ink: (u8, u8, u8),
+    paper: (u8, u8, u8),
+}
+
+const DARK: Colors = Colors {
+    brand: ((139, 124, 255), Color::LightMagenta),
+    good: ((92, 242, 138), Color::Green),
+    warn: ((255, 181, 71), Color::Yellow),
+    danger: ((255, 107, 87), Color::Red),
+    dim: ((122, 127, 140), Color::DarkGray),
+    ink: (230, 229, 238),
+    paper: (11, 11, 14),
+};
+
+const LIGHT: Colors = Colors {
+    brand: ((194, 65, 28), Color::Red),
+    good: ((31, 122, 61), Color::Green),
+    warn: ((150, 88, 0), Color::Yellow),
+    danger: ((179, 38, 30), Color::Magenta),
+    dim: ((122, 118, 108), Color::DarkGray),
+    ink: (27, 26, 23),
+    paper: (244, 242, 236),
+};
+
 impl Theme {
-    pub fn detect() -> Self {
+    pub fn detect_mode() -> Mode {
         let var = |k: &str| std::env::var(k).unwrap_or_default();
         let (term, program, colorterm) = (var("TERM"), var("TERM_PROGRAM"), var("COLORTERM"));
-        let mode = if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
             Mode::Mono
         } else if colorterm.contains("truecolor")
             || colorterm.contains("24bit")
@@ -38,8 +76,36 @@ impl Theme {
             Mode::TrueColor
         } else {
             Mode::Basic
+        }
+    }
+    /// The palette `auto` uses. It asks the terminal, so call it before the interface starts.
+    pub fn auto_palette() -> Palette {
+        background().unwrap_or(Palette::Dark)
+    }
+    /// `choice` is the saved setting (`auto`, `dark` or `light`); `OMG_THEME` overrides it.
+    pub fn resolve(mode: Mode, choice: &str, auto: Palette) -> Self {
+        let env = std::env::var("OMG_THEME").unwrap_or_default();
+        let choice = if omg_core::index::THEMES.contains(&env.as_str()) {
+            env.as_str()
+        } else {
+            choice
         };
-        Self { mode }
+        let (palette, paint) = match choice {
+            "dark" => (Palette::Dark, true),
+            "light" => (Palette::Light, true),
+            _ => (auto, false),
+        };
+        Self {
+            mode,
+            palette,
+            paint: paint && mode == Mode::TrueColor,
+        }
+    }
+    fn colors(&self) -> &'static Colors {
+        match self.palette {
+            Palette::Dark => &DARK,
+            Palette::Light => &LIGHT,
+        }
     }
     fn pick(&self, rgb: (u8, u8, u8), basic: Color) -> Option<Color> {
         match self.mode {
@@ -48,30 +114,39 @@ impl Theme {
             Mode::Mono => None,
         }
     }
-    fn style(&self, rgb: (u8, u8, u8), basic: Color) -> Style {
+    fn style(&self, (rgb, basic): ((u8, u8, u8), Color)) -> Style {
         self.pick(rgb, basic)
             .map_or_else(Style::new, |c| Style::new().fg(c))
     }
-    /// The one signature colour (electric violet) used for brand, selection, bars and key hints.
+    /// The whole-screen style when the theme paints its own background.
+    pub fn base(&self) -> Option<Style> {
+        let c = self.colors();
+        self.paint.then(|| {
+            Style::new()
+                .fg(Color::Rgb(c.ink.0, c.ink.1, c.ink.2))
+                .bg(Color::Rgb(c.paper.0, c.paper.1, c.paper.2))
+        })
+    }
+    /// The one signature colour (violet in dark, orange in light) for brand, selection, bars and keys.
     pub fn brand(&self) -> Style {
-        self.style((139, 124, 255), Color::LightMagenta)
+        self.style(self.colors().brand)
     }
     pub fn accent(&self) -> Style {
         self.brand()
     }
     pub fn good(&self) -> Style {
-        self.style((92, 242, 138), Color::Green)
+        self.style(self.colors().good)
     }
     pub fn warn(&self) -> Style {
-        self.style((255, 181, 71), Color::Yellow)
+        self.style(self.colors().warn)
     }
     pub fn danger(&self) -> Style {
-        self.style((255, 107, 87), Color::Red)
+        self.style(self.colors().danger)
     }
     pub fn dim(&self) -> Style {
         match self.mode {
             Mode::Mono => Style::new().add_modifier(Modifier::DIM),
-            _ => self.style((122, 127, 140), Color::DarkGray),
+            _ => self.style(self.colors().dim),
         }
     }
     pub fn bold(&self) -> Style {
@@ -90,6 +165,91 @@ impl Theme {
             _ => self.brand(),
         }
     }
+}
+
+/// The terminal's background, from `COLORFGBG` or, on Unix, by asking the terminal itself.
+fn background() -> Option<Palette> {
+    if let Ok(value) = std::env::var("COLORFGBG")
+        && let Some(bg) = value.rsplit(';').next().and_then(|b| b.parse::<u8>().ok())
+    {
+        return Some(if matches!(bg, 7 | 15) {
+            Palette::Light
+        } else {
+            Palette::Dark
+        });
+    }
+    #[cfg(unix)]
+    {
+        query_background()
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// Sends OSC 11 (background colour) followed by DA1, which every terminal answers, and reads
+/// until the DA1 reply, so a terminal that ignores OSC 11 leaves nothing behind as keystrokes.
+#[cfg(unix)]
+fn query_background() -> Option<Palette> {
+    use rustix::fs::{Mode as FileMode, OFlags, open};
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    if !std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        return None;
+    }
+    let tty = open(
+        "/dev/tty",
+        OFlags::RDWR | OFlags::NONBLOCK | OFlags::NOCTTY | OFlags::CLOEXEC,
+        FileMode::empty(),
+    )
+    .ok()?;
+    crossterm::terminal::enable_raw_mode().ok()?;
+    let mut file = std::fs::File::from(tty);
+    let mut reply = Vec::new();
+    if file.write_all(b"\x1b]11;?\x1b\\\x1b[c").is_ok() {
+        let deadline = Instant::now() + Duration::from_millis(400);
+        let mut buf = [0u8; 256];
+        while Instant::now() < deadline && reply.len() < 1024 && !da1_done(&reply) {
+            match rustix::io::read(&file, &mut buf) {
+                Ok(0) => break,
+                Ok(n) => reply.extend_from_slice(&buf[..n]),
+                Err(rustix::io::Errno::AGAIN) => std::thread::sleep(Duration::from_millis(5)),
+                Err(_) => break,
+            }
+        }
+    }
+    let _ = crossterm::terminal::disable_raw_mode();
+    parse_background(&reply)
+}
+
+#[cfg(unix)]
+fn da1_done(reply: &[u8]) -> bool {
+    reply
+        .windows(3)
+        .position(|w| w == b"\x1b[?")
+        .is_some_and(|at| reply[at..].contains(&b'c'))
+}
+
+/// Reads `rgb:RRRR/GGGG/BBBB` (1 to 4 hex digits each) from an OSC 11 reply.
+pub fn parse_background(reply: &[u8]) -> Option<Palette> {
+    let text = std::str::from_utf8(reply).ok()?;
+    let rest = &text[text.find("rgb:")? + 4..];
+    let mut channels = rest.split('/').take(3).map(|part| {
+        let hex: String = part.chars().take_while(char::is_ascii_hexdigit).collect();
+        let max = 16f64.powi(hex.len() as i32) - 1.0;
+        u32::from_str_radix(&hex, 16)
+            .ok()
+            .filter(|_| !hex.is_empty())
+            .map(|v| v as f64 / max)
+    });
+    let (r, g, b) = (channels.next()??, channels.next()??, channels.next()??);
+    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    Some(if luminance > 0.5 {
+        Palette::Light
+    } else {
+        Palette::Dark
+    })
 }
 
 /// Horizontal bar of `width` cells for `fraction` (0..=1) with eighth-block precision.

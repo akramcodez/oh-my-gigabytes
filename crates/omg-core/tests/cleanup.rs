@@ -267,6 +267,11 @@ fn scans_suggest_regenerable_caches_but_never_large_files_and_respect_dismissal(
     assert!(!index.auto_trash().unwrap());
     index.set_auto_trash(true).unwrap();
     assert!(index.auto_trash().unwrap());
+    assert_eq!(index.theme().unwrap(), "auto");
+    index.set_theme("light").unwrap();
+    assert_eq!(index.theme().unwrap(), "light");
+    assert!(index.set_theme("blue").is_err());
+    assert_eq!(index.theme().unwrap(), "light");
 }
 
 #[test]

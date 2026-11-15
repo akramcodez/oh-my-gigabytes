@@ -150,6 +150,7 @@ pub enum Action {
     },
     AcknowledgePreview,
     ToggleAutoTrash,
+    CycleTheme,
     /// Ask Docker what it can safely remove.
     DockerCheck,
     /// The confirmation of a reviewed Docker plan.
@@ -409,6 +410,13 @@ impl App {
             Action::ToggleAutoTrash,
             Tone::Normal,
         );
+        let current = s.summary.as_ref().map_or("auto", |x| x.theme);
+        push(
+            &format!("Theme: {current} (change to {})", next_theme(current)),
+            None,
+            Action::CycleTheme,
+            Tone::Normal,
+        );
         push("Full rescan", Some('R'), Action::Scan(true), Tone::Normal);
         for tab in Tab::ALL {
             if tab != s.tab {
@@ -660,6 +668,10 @@ impl App {
             Action::ToggleAutoTrash => {
                 let on = !self.state.summary.as_ref().is_some_and(|x| x.auto_trash);
                 self.request(Request::SetAutoTrash(on), None);
+            }
+            Action::CycleTheme => {
+                let current = self.state.summary.as_ref().map_or("auto", |x| x.theme);
+                self.request(Request::SetTheme(next_theme(current)), None);
             }
             Action::DockerCheck => self.request(Request::DockerPlan, Some("Asking Docker")),
             Action::DockerConfirm(plan) => {
@@ -1075,8 +1087,18 @@ impl App {
     }
 }
 
+fn next_theme(current: &str) -> &'static str {
+    let at = omg_core::index::THEMES
+        .iter()
+        .position(|t| *t == current)
+        .unwrap_or(0);
+    omg_core::index::THEMES[(at + 1) % omg_core::index::THEMES.len()]
+}
+
 pub fn run(index: Index) -> Result<()> {
-    let theme = theme::Theme::detect();
+    let (mode, auto) = (theme::Theme::detect_mode(), theme::Theme::auto_palette());
+    let mut choice = index.theme()?;
+    let mut theme = theme::Theme::resolve(mode, choice, auto);
     let state_path = index.state.clone();
     let has_scan = index.status()?.root.is_some();
     drop(index);
@@ -1185,6 +1207,13 @@ pub fn run(index: Index) -> Result<()> {
                 let tick = (started.elapsed().as_millis() / 100) as usize;
                 if animating && tick != app.state.tick {
                     app.state.tick = tick;
+                    dirty = true;
+                }
+                if let Some(saved) = app.state.summary.as_ref().map(|x| x.theme)
+                    && saved != choice
+                {
+                    choice = saved;
+                    theme = theme::Theme::resolve(mode, choice, auto);
                     dirty = true;
                 }
                 if dirty {
