@@ -1,5 +1,5 @@
-import { LuArrowUpRight, LuPlus } from "react-icons/lu";
-import { REPO, SPONSORS, SPONSOR_CONTACT, SPONSOR_PRICE, SPONSOR_SLOTS, X_URL } from "@/lib/site";
+import { LuArrowRight, LuLock, LuPlus } from "react-icons/lu";
+import { REPO, SPONSORS, SPONSOR_CHECKOUT, SPONSOR_PRICE, SPONSOR_SLOTS, X_URL } from "@/lib/site";
 
 export default function Sponsors() {
   const empty = Math.max(SPONSOR_SLOTS - SPONSORS.length, 1);
@@ -15,12 +15,18 @@ export default function Sponsors() {
         <p className="section-lead">
           Showcase your product to developers on OMG and get a dedicated shoutout on X.
         </p>
-        <div className="sponsor-price">
-          <span className="sponsor-amount">{SPONSOR_PRICE}</span>
+        <div className="sponsor-offer">
+          <div>
+            <span className="sponsor-amount">{SPONSOR_PRICE}</span>
+            <span className="sponsor-terms">lifetime slot + shoutout on X</span>
+          </div>
+          <a className="sponsor-cta" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener">
+            Get a slot <LuArrowRight aria-hidden="true" />
+          </a>
         </div>
-        <a className="button sponsor-cta" href={SPONSOR_CONTACT} target="_blank" rel="noopener">
-          Claim a slot <LuArrowUpRight aria-hidden="true" />
-        </a>
+        <p className="sponsor-secure">
+          <LuLock aria-hidden="true" /> Secure checkout by Dodo Payments
+        </p>
         <p className="sponsor-ask">
           Have questions?
           <a href={X_URL} target="_blank" rel="noopener">
@@ -49,7 +55,7 @@ export default function Sponsors() {
           ))}
           {Array.from({ length: empty }, (_, i) => (
             <li key={`open-${i}`}>
-              <a className="tile is-open" href={SPONSOR_CONTACT} target="_blank" rel="noopener" aria-label={`Add your brand for ${SPONSOR_PRICE}`}>
+              <a className="tile is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" aria-label={`Add your brand for ${SPONSOR_PRICE}`}>
                 <span className="tile-plus" aria-hidden="true">
                   <LuPlus />
                 </span>
