@@ -269,10 +269,14 @@ main:focus {
 }
 
 .nav-sponsors {
+  position: fixed;
+  top: 14px;
+  right: 16px;
+  z-index: 30;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  margin: 0 6px 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
@@ -307,7 +311,7 @@ main:focus {
 .nav-sponsor.is-open {
   color: var(--ink-3);
   border: 1.5px dashed var(--rule);
-  background: transparent;
+  background: var(--paper);
 }
 
 .nav-sponsor:hover {
@@ -1324,8 +1328,7 @@ main:focus {
     gap: 14px;
   }
 
-  .topbar-actions .nav-label,
-  .nav-sponsors {
+  .topbar-actions .nav-label {
     display: none;
   }
 
@@ -1665,6 +1668,12 @@ main:focus {
   }
 
   :root:not([data-theme="light"]) .logo-light {
+    display: none;
+  }
+}
+
+@media (max-width: 1247px) {
+  .nav-sponsors {
     display: none;
   }
 }
