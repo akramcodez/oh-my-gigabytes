@@ -62,6 +62,14 @@ const HINT: Line[] = [
   [],
 ];
 
+// Glyphs missing from the web font fall back to fonts of other widths, so each one gets a fixed cell.
+function cells(text: string) {
+  const parts = text.split(/([^\x00-\x7f])/u);
+  return parts.length === 1
+    ? text
+    : parts.map((p, i) => (i % 2 ? <span key={i} className="cell">{p}</span> : p));
+}
+
 function LineView({ line }: { line: Line }) {
   return (
     <div className="t-line">
@@ -69,7 +77,7 @@ function LineView({ line }: { line: Line }) {
         ? " "
         : line.map((seg, i) => (
             <span key={i} className={seg.c ? seg.c.split(" ").map((x) => `t-${x}`).join(" ") : undefined}>
-              {seg.t}
+              {cells(seg.t)}
             </span>
           ))}
     </div>

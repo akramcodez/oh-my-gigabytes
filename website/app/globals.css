@@ -630,6 +630,14 @@ main:focus {
   overflow: hidden;
 }
 
+.cell {
+  display: inline-block;
+  width: 1ch;
+  overflow: hidden;
+  text-align: center;
+  vertical-align: top;
+}
+
 .terminal-screen.is-tui .t-line {
   min-height: 1.25em;
 }
