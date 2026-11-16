@@ -497,6 +497,7 @@ export default async function Home() {
         <footer className="footer">
           <div className="footer-top">
             <div className="footer-brand">
+              <SponsorLogo sponsor={SPONSORS[0]} size={40} alt="" className="footer-icon" />
               <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
               <p className="footer-line">Your disk, explained.</p>
             </div>

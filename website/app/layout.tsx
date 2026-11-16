@@ -50,7 +50,7 @@ export const metadata: Metadata = {
     title: NAME,
     description: TAGLINE,
   },
-  icons: { icon: "/icon.svg", apple: "/apple-icon" },
+  icons: { icon: "/logo.svg", apple: "/apple-icon" },
   formatDetection: { telephone: false, email: false, address: false },
 };
 
@@ -61,7 +61,7 @@ export const viewport: Viewport = {
 };
 
 const themeScript = `try{var t=localStorage.getItem("omg-theme");document.documentElement.dataset.theme=t==="dark"?"dark":"light"}catch(e){document.documentElement.dataset.theme="light"}
-(function(){var d=document.documentElement,m=matchMedia("(prefers-color-scheme: dark)");function f(){var t=d.dataset.theme==="light"||d.dataset.theme==="dark"?d.dataset.theme:m.matches?"dark":"light";document.querySelectorAll('link[rel="icon"]').forEach(function(l){l.href="/icon-"+t+".svg"})}new MutationObserver(f).observe(d,{attributes:true,attributeFilter:["data-theme"]});m.addEventListener("change",f);document.addEventListener("DOMContentLoaded",f)})();`;
+(function(){var d=document.documentElement,m=matchMedia("(prefers-color-scheme: dark)");function f(){var t=d.dataset.theme==="light"||d.dataset.theme==="dark"?d.dataset.theme:m.matches?"dark":"light";document.querySelectorAll('link[rel="icon"]').forEach(function(l){l.href="/logo-"+t+".svg"})}new MutationObserver(f).observe(d,{attributes:true,attributeFilter:["data-theme"]});m.addEventListener("change",f);document.addEventListener("DOMContentLoaded",f)})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
