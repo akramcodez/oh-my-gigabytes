@@ -1404,6 +1404,10 @@ main:focus {
   padding: clamp(48px, 6vw, 80px) var(--pad);
 }
 
+.sponsor-pitch h2 em {
+  color: var(--t-brand);
+}
+
 .sponsor-pitch h2 {
   font-family: var(--serif);
   font-size: clamp(1.5rem, 2.6vw, 2rem);
@@ -1426,16 +1430,16 @@ main:focus {
 }
 
 .sponsor-cta {
-  color: var(--paper);
-  background: var(--ink);
-  border-color: var(--ink);
+  color: var(--t-on-accent);
+  background: var(--t-brand);
+  border-color: var(--t-brand);
   padding: 0 18px;
 }
 
 .sponsor-cta:hover {
-  color: var(--paper);
-  background: var(--ink-2);
-  border-color: var(--ink-2);
+  color: var(--t-on-accent);
+  background: color-mix(in srgb, var(--t-brand) 85%, var(--ink));
+  border-color: color-mix(in srgb, var(--t-brand) 85%, var(--ink));
 }
 
 .sponsor-ask {
@@ -1500,8 +1504,8 @@ main:focus {
 }
 
 .tile:hover {
-  border-color: var(--ink-3);
-  background: var(--raised);
+  border-color: var(--t-brand);
+  background: color-mix(in srgb, var(--t-brand) 6%, var(--raised));
   transform: translateY(-2px);
 }
 
@@ -1519,9 +1523,9 @@ main:focus {
 }
 
 .tile:hover .tile-plus {
-  color: var(--paper);
-  background: var(--ink);
-  border-color: var(--ink);
+  color: var(--t-on-accent);
+  background: var(--t-brand);
+  border-color: var(--t-brand);
 }
 
 .tile-logo {
