@@ -1,9 +1,8 @@
 import { LuPlus } from "react-icons/lu";
 import SponsorLogo from "@/components/SponsorLogo";
-import { REPO, SPONSORS, SPONSOR_CHECKOUT, SPONSOR_PRICE, SPONSOR_SLOTS, X_URL } from "@/lib/site";
+import { REPO, SPONSORS, SPONSOR_CHECKOUT, SPONSOR_PRICE, X_URL } from "@/lib/site";
 
 export default function Sponsors() {
-  const empty = Math.max(SPONSOR_SLOTS - SPONSORS.length, 1);
   return (
     <>
       <div className="section-head">
@@ -40,16 +39,14 @@ export default function Sponsors() {
               </a>
             </li>
           ))}
-          {Array.from({ length: empty }, (_, i) => (
-            <li key={`open-${i}`}>
-              <a className="icon-slot is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" aria-label={`Add your brand for ${SPONSOR_PRICE}`}>
-                <span className="icon-box" aria-hidden="true">
-                  <LuPlus />
-                </span>
-                <span className="icon-name">Add yours</span>
-              </a>
-            </li>
-          ))}
+          <li>
+            <a className="icon-slot is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" aria-label={`Add your brand for ${SPONSOR_PRICE}`}>
+              <span className="icon-box" aria-hidden="true">
+                <LuPlus />
+              </span>
+              <span className="icon-name">Add yours</span>
+            </a>
+          </li>
         </ul>
       </div>
     </>
