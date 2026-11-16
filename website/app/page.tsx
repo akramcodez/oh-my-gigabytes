@@ -331,7 +331,7 @@ export default async function Home() {
           </ul>
 
           <section id="how" className="section" tabIndex={-1} aria-labelledby="how-title">
-            <SectionHead index={1} id="how-title" title="How it works" lead="Four steps. The last one is always yours." />
+            <SectionHead id="how-title" title="How it works" lead="Four steps. The last one is always yours." />
             <ol className="steps">
               {STEPS.map((step, i) => (
                 <li key={step.title}>
@@ -346,7 +346,6 @@ export default async function Home() {
 
           <section id="finds" className="section" tabIndex={-1} aria-labelledby="finds-title">
             <SectionHead
-              index={2}
               id="finds-title"
               title="What it finds"
               lead="Each finding is a fixed, reviewed rule with the evidence attached. Most are suggested after a scan; you can turn that off."
@@ -365,7 +364,6 @@ export default async function Home() {
 
           <section id="keys" className="section" tabIndex={-1} aria-labelledby="keys-title">
             <SectionHead
-              index={3}
               id="keys-title"
               title="Keyboard first"
               lead="Four views and a handful of keys. Everything also works as a command that prints JSON."
@@ -401,7 +399,6 @@ export default async function Home() {
 
           <section id="safety" className="section" tabIndex={-1} aria-labelledby="safety-title">
             <SectionHead
-              index={4}
               id="safety-title"
               title="What it never deletes"
               lead="These refusals live in the deletion code itself. No flag, setting or catalog rule turns them off."
@@ -431,7 +428,6 @@ export default async function Home() {
 
           <section id="platforms" className="section" tabIndex={-1} aria-labelledby="platforms-title">
             <SectionHead
-              index={5}
               id="platforms-title"
               title="Platforms"
               lead="Native scanning on all three. No platform is certified; the test records are in the repository."
@@ -470,7 +466,7 @@ export default async function Home() {
           </section>
 
           <section id="faq" className="section" tabIndex={-1} aria-labelledby="faq-title">
-            <SectionHead index={6} id="faq-title" title="Questions" />
+            <SectionHead id="faq-title" title="Questions" />
             <div className="faq">
               {FAQ.map((item) => (
                 <details key={item.q}>
@@ -483,7 +479,6 @@ export default async function Home() {
 
           <section id="sponsors" className="section" tabIndex={-1} aria-labelledby="sponsors-title">
             <SectionHead
-              index={7}
               id="sponsors-title"
               title="Sponsors"
               lead={`Put your brand in front of developers who care about their tools. Your logo and link stay on this page for the life of the site, for ${SPONSOR_PRICE} once. Click an empty slot to claim it.`}
@@ -534,12 +529,9 @@ export default async function Home() {
   );
 }
 
-function SectionHead({ index, id, title, lead }: { index: number; id: string; title: string; lead?: string }) {
+function SectionHead({ id, title, lead }: { id: string; title: string; lead?: string }) {
   return (
     <div className="section-head">
-      <p className="label" aria-hidden="true">
-        {String(index).padStart(2, "0")}
-      </p>
       <h2 id={id}>{title}</h2>
       {lead && <p className="section-lead">{lead}</p>}
     </div>
