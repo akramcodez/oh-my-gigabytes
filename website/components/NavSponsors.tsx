@@ -1,5 +1,5 @@
 import { LuPlus } from "react-icons/lu";
-import { SPONSORS } from "@/lib/site";
+import { SPONSORS, SPONSOR_CHECKOUT } from "@/lib/site";
 
 export default function NavSponsors() {
   return (
@@ -17,7 +17,7 @@ export default function NavSponsors() {
         </li>
       ))}
       <li>
-        <a className="nav-sponsor is-open" href="#sponsors" title="Sponsor OMG" aria-label="Sponsor OMG">
+        <a className="nav-sponsor is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" title="Sponsor OMG" aria-label="Sponsor OMG">
           <LuPlus aria-hidden="true" />
         </a>
       </li>

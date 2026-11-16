@@ -1,4 +1,4 @@
-import { LuArrowRight, LuLock, LuPlus } from "react-icons/lu";
+import { LuLock, LuPlus } from "react-icons/lu";
 import { REPO, SPONSORS, SPONSOR_CHECKOUT, SPONSOR_PRICE, SPONSOR_SLOTS, X_URL } from "@/lib/site";
 
 export default function Sponsors() {
@@ -15,15 +15,10 @@ export default function Sponsors() {
         <p className="section-lead">
           Showcase your product to developers on OMG and get a dedicated shoutout on X.
         </p>
-        <div className="sponsor-offer">
-          <div>
-            <span className="sponsor-amount">{SPONSOR_PRICE}</span>
-            <span className="sponsor-terms">lifetime slot + shoutout on X</span>
-          </div>
-          <a className="sponsor-cta" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener">
-            Get a slot <LuArrowRight aria-hidden="true" />
-          </a>
-        </div>
+        <p className="sponsor-price">
+          <span className="sponsor-amount">{SPONSOR_PRICE}</span>
+          <span className="sponsor-terms">one-time, for a lifetime slot and a shoutout on X</span>
+        </p>
         <p className="sponsor-secure">
           <LuLock aria-hidden="true" /> Secure checkout by Dodo Payments
         </p>
