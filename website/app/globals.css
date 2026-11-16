@@ -263,7 +263,7 @@ main:focus {
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 10px;
   margin-left: auto;
   font-size: 0.85rem;
 }
@@ -272,7 +272,7 @@ main:focus {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 6px 0 0;
+  margin: 0 4px 0 0;
   padding: 0;
   list-style: none;
 }
