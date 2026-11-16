@@ -1,5 +1,6 @@
 import CopyCommand from "@/components/CopyCommand";
 import Downloads from "@/components/Downloads";
+import Sponsors from "@/components/Sponsors";
 import Stars from "@/components/Stars";
 import { starCount } from "@/lib/github";
 import { totalDownloads } from "@/lib/npm";
@@ -9,7 +10,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { banner } from "@/lib/banner";
 import { LuBookOpen, LuGithub } from "react-icons/lu";
 import { SiNpm } from "react-icons/si";
-import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, VERSION, doc } from "@/lib/site";
+import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, SPONSOR_PRICE, VERSION, doc } from "@/lib/site";
 
 const SCHEMA = {
   "@context": "https://schema.org",
@@ -38,6 +39,7 @@ const FOOTER: { title: string; links: [string, string][] }[] = [
       ["Safety", "#safety"],
       ["Platforms", "#platforms"],
       ["FAQ", "#faq"],
+      ["Sponsors", "#sponsors"],
     ],
   },
   {
@@ -477,6 +479,16 @@ export default async function Home() {
                 </details>
               ))}
             </div>
+          </section>
+
+          <section id="sponsors" className="section" tabIndex={-1} aria-labelledby="sponsors-title">
+            <SectionHead
+              index={7}
+              id="sponsors-title"
+              title="Sponsors"
+              lead={`Put your brand in front of developers who care about their tools. Your logo and link stay on this page for the life of the site, for ${SPONSOR_PRICE} once. Click an empty slot to claim it.`}
+            />
+            <Sponsors />
           </section>
 
           <section className="cta" aria-label="Install">

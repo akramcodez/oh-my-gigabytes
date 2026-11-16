@@ -12,3 +12,10 @@ export const NAME = "OMG (Oh My Gigabytes)";
 export const TAGLINE = "See where your disk space went and take it back, from the terminal.";
 export const DESCRIPTION =
   "OMG is a free, open source, keyboard-first disk space analyzer for developers on macOS, Linux and Windows. It finds tool caches, build folders, old toolchains, Docker leftovers and large files, explains each one, and deletes only what you confirm.";
+
+export const SPONSOR_PRICE = "$49.99";
+export const SPONSOR_SLOTS = 6;
+export const SPONSOR_CONTACT = `${REPO}/issues/new?title=${encodeURIComponent("Sponsor slot")}&body=${encodeURIComponent("Brand:\nWebsite:\nOne-line description:\nLogo (SVG or PNG link):")}`;
+
+export type Sponsor = { name: string; tagline: string; url: string; logo?: string };
+export const SPONSORS: Sponsor[] = [];
