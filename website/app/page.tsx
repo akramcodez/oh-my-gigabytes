@@ -10,7 +10,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { banner } from "@/lib/banner";
 import { LuBookOpen, LuGithub } from "react-icons/lu";
 import { SiNpm } from "react-icons/si";
-import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, SPONSOR_PRICE, VERSION, doc } from "@/lib/site";
+import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, VERSION, doc } from "@/lib/site";
 
 const SCHEMA = {
   "@context": "https://schema.org",
@@ -478,12 +478,6 @@ export default async function Home() {
           </section>
 
           <section id="sponsors" className="section" tabIndex={-1} aria-labelledby="sponsors-title">
-            <SectionHead
-              id="sponsors-title"
-              kicker="Sponsors"
-              title={`Get lifetime brand exposure for just ${SPONSOR_PRICE}`}
-              lead="Showcase your product on OMG and get a dedicated shoutout on X."
-            />
             <Sponsors />
           </section>
 
