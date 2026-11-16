@@ -1,4 +1,5 @@
-import { LuLock, LuPlus } from "react-icons/lu";
+import { LuPlus } from "react-icons/lu";
+import SponsorLogo from "@/components/SponsorLogo";
 import { REPO, SPONSORS, SPONSOR_CHECKOUT, SPONSOR_PRICE, SPONSOR_SLOTS, X_URL } from "@/lib/site";
 
 export default function Sponsors() {
@@ -19,9 +20,6 @@ export default function Sponsors() {
           <span className="sponsor-amount">{SPONSOR_PRICE}</span>
           <span className="sponsor-terms">one-time, for a lifetime slot and a shoutout on X</span>
         </p>
-        <p className="sponsor-secure">
-          <LuLock aria-hidden="true" /> Secure checkout by Dodo Payments
-        </p>
         <p className="sponsor-ask">
           Have questions?
           <a href={X_URL} target="_blank" rel="noopener">
@@ -40,9 +38,8 @@ export default function Sponsors() {
         <ul className="sponsors">
           {SPONSORS.map((s) => (
             <li key={s.name}>
-              <a className="tile" href={s.url} target="_blank" rel="sponsored noopener">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                {s.logo && <img className="tile-logo" src={s.logo} alt="" width={28} height={28} />}
+              <a className="tile" href={s.url} target="_blank" rel={s.house ? "noopener" : "sponsored noopener"}>
+                <SponsorLogo sponsor={s} className="tile-logo" size={28} alt="" />
                 <span className="tile-name">{s.name}</span>
                 <span className="tile-sub">{s.tagline}</span>
               </a>

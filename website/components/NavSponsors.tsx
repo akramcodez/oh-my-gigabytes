@@ -1,4 +1,5 @@
 import { LuPlus } from "react-icons/lu";
+import SponsorLogo from "@/components/SponsorLogo";
 import { SPONSORS, SPONSOR_CHECKOUT } from "@/lib/site";
 
 export default function NavSponsors() {
@@ -6,10 +7,9 @@ export default function NavSponsors() {
     <ul className="nav-sponsors" aria-label="Sponsors">
       {SPONSORS.map((s) => (
         <li key={s.url}>
-          <a className="nav-sponsor" href={s.url} target="_blank" rel="sponsored noopener" title={s.name}>
+          <a className="nav-sponsor" href={s.url} target="_blank" rel={s.house ? "noopener" : "sponsored noopener"} title={s.name}>
             {s.logo ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={s.logo} alt={s.name} width={32} height={32} />
+              <SponsorLogo sponsor={s} size={32} alt={s.name} />
             ) : (
               <span aria-label={s.name}>{s.name.slice(0, 1)}</span>
             )}

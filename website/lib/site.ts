@@ -24,5 +24,7 @@ export const SPONSOR_CHECKOUT = DODO_PRODUCT
   ? `${DODO_CHECKOUT}/buy/${DODO_PRODUCT}?quantity=1&redirect_url=${encodeURIComponent(`${SITE}/sponsor/thanks`)}`
   : SPONSOR_CONTACT;
 
-export type Sponsor = { name: string; tagline: string; url: string; logo?: string };
-export const SPONSORS: Sponsor[] = [];
+export type Sponsor = { name: string; tagline: string; url: string; logo?: string; logoDark?: string; house?: boolean };
+export const SPONSORS: Sponsor[] = [
+  { name: "OMG", tagline: "Oh My Gigabytes", url: REPO, logo: "/icon-light.svg", logoDark: "/icon-dark.svg", house: true },
+];

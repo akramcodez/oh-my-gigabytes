@@ -277,6 +277,11 @@ main:focus {
   list-style: none;
 }
 
+.nav-sponsors li {
+  display: flex;
+  flex: none;
+}
+
 .nav-sponsor {
   display: grid;
   place-items: center;
@@ -287,14 +292,15 @@ main:focus {
   font-family: var(--serif);
   color: var(--ink);
   text-decoration: none;
+  border: 1px solid var(--rule);
   border-radius: 8px;
   background: var(--raised);
   transition: border-color 0.15s, color 0.15s;
 }
 
 .nav-sponsor img {
-  width: 100%;
-  height: 100%;
+  width: 30px;
+  height: 30px;
   object-fit: cover;
 }
 
@@ -302,6 +308,10 @@ main:focus {
   color: var(--ink-3);
   border: 1.5px dashed var(--rule);
   background: transparent;
+}
+
+.nav-sponsor:hover {
+  border-color: var(--ink-3);
 }
 
 .nav-sponsor.is-open:hover {
@@ -1476,16 +1486,6 @@ main:focus {
   color: var(--ink-2);
 }
 
-.sponsor-secure {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  color: var(--ink-3);
-}
-
 .sponsor-ask {
   display: flex;
   flex-wrap: wrap;
@@ -1645,4 +1645,26 @@ main:focus {
 
 .thanks code {
   font-size: 0.88em;
+}
+
+.logo-dark {
+  display: none;
+}
+
+:root[data-theme="dark"] .logo-dark {
+  display: block;
+}
+
+:root[data-theme="dark"] .logo-light {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .logo-dark {
+    display: block;
+  }
+
+  :root:not([data-theme="light"]) .logo-light {
+    display: none;
+  }
 }
