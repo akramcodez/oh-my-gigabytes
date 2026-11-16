@@ -267,13 +267,13 @@ export default async function Home() {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
       <KeyNav targets={NAV.map((n) => n.id)} />
 
-      <NavSponsors />
       <div className="frame">
         <header className="topbar">
           <a href="#top" className="brand" aria-label="OMG home">
             <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
           </a>
           <nav aria-label="Project" className="topbar-actions">
+            <NavSponsors />
             <a href={doc("README.md")} className="text-link" aria-label="Docs">
               <LuBookOpen aria-hidden="true" />
               <span className="nav-label">Docs</span>
