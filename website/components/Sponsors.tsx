@@ -5,16 +5,14 @@ import { REPO, SPONSORS, SPONSOR_CHECKOUT, SPONSOR_PRICE, SPONSOR_SLOTS, X_URL }
 export default function Sponsors() {
   const empty = Math.max(SPONSOR_SLOTS - SPONSORS.length, 1);
   return (
-    <div className="sponsor-wrap">
-      <div className="sponsor-pitch">
-        <p className="kicker">Sponsors</p>
+    <>
+      <div className="section-head">
         <h2 id="sponsors-title">
-          Lifetime brand exposure,
-          <br />
-          <em>one payment.</em>
+          Lifetime brand exposure, <em>one payment.</em>
         </h2>
         <p className="section-lead">
-          Showcase your product to developers on OMG and get a dedicated shoutout on X.
+          Showcase your product to developers on OMG and get a dedicated shoutout on X. Click an empty slot to add
+          your logo.
         </p>
         <p className="sponsor-price">
           <span className="sponsor-amount">{SPONSOR_PRICE}</span>
@@ -30,34 +28,28 @@ export default function Sponsors() {
           </a>
         </p>
       </div>
-
-      <div>
-        <p className="sponsor-hint">
-          {SPONSORS.length ? "Click an empty slot to add your logo" : "Slots are empty, click any slot to add your logo"}
-        </p>
-        <ul className="sponsors">
-          {SPONSORS.map((s) => (
-            <li key={s.name}>
-              <a className="tile" href={s.url} target="_blank" rel={s.house ? "noopener" : "sponsored noopener"}>
-                <SponsorLogo sponsor={s} className="tile-logo" size={28} alt="" />
-                <span className="tile-name">{s.name}</span>
-                <span className="tile-sub">{s.tagline}</span>
-              </a>
-            </li>
-          ))}
-          {Array.from({ length: empty }, (_, i) => (
-            <li key={`open-${i}`}>
-              <a className="tile is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" aria-label={`Add your brand for ${SPONSOR_PRICE}`}>
-                <span className="tile-plus" aria-hidden="true">
-                  <LuPlus />
-                </span>
-                <span className="tile-name">Your brand here</span>
-                <span className="tile-sub">Add yours &middot; {SPONSOR_PRICE}</span>
-              </a>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
+      <ul className="grid sponsor-grid">
+        {SPONSORS.map((s) => (
+          <li key={s.name}>
+            <a className="slot" href={s.url} target="_blank" rel={s.house ? "noopener" : "sponsored noopener"}>
+              <SponsorLogo sponsor={s} className="slot-logo" size={48} alt="" />
+              <h3>{s.name}</h3>
+              <p>{s.tagline}</p>
+            </a>
+          </li>
+        ))}
+        {Array.from({ length: empty }, (_, i) => (
+          <li key={`open-${i}`}>
+            <a className="slot is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" aria-label={`Add your brand for ${SPONSOR_PRICE}`}>
+              <span className="slot-plus" aria-hidden="true">
+                <LuPlus />
+              </span>
+              <h3>Your brand here</h3>
+              <p>Add yours &middot; {SPONSOR_PRICE}</p>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }
