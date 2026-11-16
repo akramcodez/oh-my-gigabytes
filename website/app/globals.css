@@ -248,6 +248,12 @@ main:focus {
   text-decoration: none;
 }
 
+.brand-icon {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+
 .mark {
   margin: 0;
   font-size: 8px;

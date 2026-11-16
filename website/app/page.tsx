@@ -1,6 +1,7 @@
 import CopyCommand from "@/components/CopyCommand";
 import Downloads from "@/components/Downloads";
 import Sponsors from "@/components/Sponsors";
+import SponsorLogo from "@/components/SponsorLogo";
 import NavSponsors from "@/components/NavSponsors";
 import Stars from "@/components/Stars";
 import { starCount } from "@/lib/github";
@@ -11,7 +12,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { banner } from "@/lib/banner";
 import { LuBookOpen, LuGithub } from "react-icons/lu";
 import { SiNpm } from "react-icons/si";
-import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, VERSION, X_URL, doc } from "@/lib/site";
+import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, SPONSORS, VERSION, X_URL, doc } from "@/lib/site";
 
 const SCHEMA = {
   "@context": "https://schema.org",
@@ -271,6 +272,7 @@ export default async function Home() {
       <div className="frame">
         <header className="topbar">
           <a href="#top" className="brand" aria-label="OMG home">
+            <SponsorLogo sponsor={SPONSORS[0]} size={32} alt="" className="brand-icon" />
             <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
           </a>
           <nav aria-label="Project" className="topbar-actions">

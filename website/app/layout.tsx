@@ -50,7 +50,7 @@ export const metadata: Metadata = {
     title: NAME,
     description: TAGLINE,
   },
-  icons: { icon: "/icon.svg", apple: "/apple-icon.png" },
+  icons: { icon: "/icon.svg", apple: "/apple-icon" },
   formatDetection: { telephone: false, email: false, address: false },
 };
 
