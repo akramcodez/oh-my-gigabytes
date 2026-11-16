@@ -26,5 +26,5 @@ export const SPONSOR_CHECKOUT = DODO_PRODUCT
 
 export type Sponsor = { name: string; tagline: string; url: string; logo?: string; logoDark?: string; house?: boolean };
 export const SPONSORS: Sponsor[] = [
-  { name: "OMG", tagline: "Oh My Gigabytes", url: REPO, logo: "/icon-light.svg", logoDark: "/icon-dark.svg", house: true },
+  { name: "Oh My Gigabytes", tagline: "", url: REPO, logo: "/icon-light.svg", logoDark: "/icon-dark.svg", house: true },
 ];

@@ -34,7 +34,7 @@ export default function Sponsors() {
             <a className="slot" href={s.url} target="_blank" rel={s.house ? "noopener" : "sponsored noopener"}>
               <SponsorLogo sponsor={s} className="slot-logo" size={48} alt="" />
               <h3>{s.name}</h3>
-              <p>{s.tagline}</p>
+              {s.tagline && <p>{s.tagline}</p>}
             </a>
           </li>
         ))}
