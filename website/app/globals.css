@@ -8,9 +8,9 @@
   --rule: #d9d5ca;
   --rule-strong: #bdb8aa;
   --accent: #c2411c;
-  --copy-bg: var(--ink);
-  --copy-fg: var(--paper);
-  --copy-rule: transparent;
+  --copy-bg: var(--raised);
+  --copy-fg: var(--ink);
+  --copy-rule: var(--rule);
   --accent-soft: rgb(194 65 28 / 0.08);
   --serif: var(--font-serif), "Iowan Old Style", Georgia, serif;
   --sans: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
