@@ -17,7 +17,6 @@ export default function Sponsors() {
         </p>
         <div className="sponsor-price">
           <span className="sponsor-amount">{SPONSOR_PRICE}</span>
-          <span className="sponsor-terms">one time &middot; your slot stays for life</span>
         </div>
         <a className="button sponsor-cta" href={SPONSOR_CONTACT} target="_blank" rel="noopener">
           Claim a slot <LuArrowUpRight aria-hidden="true" />

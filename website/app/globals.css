@@ -1425,12 +1425,6 @@ main:focus {
   color: var(--ink);
 }
 
-.sponsor-terms {
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  color: var(--ink-3);
-}
-
 .sponsor-cta {
   color: var(--paper);
   background: var(--ink);
