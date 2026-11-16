@@ -1499,8 +1499,12 @@ main:focus {
   text-decoration: none;
 }
 
+.sponsor-ask a {
+  transition: color 0.15s;
+}
+
 .sponsor-ask a:hover {
-  color: var(--ink);
+  color: var(--t-brand);
 }
 
 .slot {
