@@ -1,10 +1,12 @@
 import { LuPlus } from "react-icons/lu";
-import { SPONSORS, SPONSOR_CONTACT, SPONSOR_PRICE, SPONSOR_SLOTS } from "@/lib/site";
+import { SiX } from "react-icons/si";
+import { REPO, SPONSORS, SPONSOR_CONTACT, SPONSOR_PRICE, SPONSOR_SLOTS, X_URL } from "@/lib/site";
 
 export default function Sponsors() {
   const empty = Math.max(SPONSOR_SLOTS - SPONSORS.length, 1);
   return (
     <>
+      <p className="sponsor-hint">{SPONSORS.length ? "Click an empty slot to add your logo" : "Slots are empty, click any slot to add your logo"}</p>
       <ul className="sponsors">
         {SPONSORS.map((s) => (
           <li key={s.name}>
@@ -21,13 +23,19 @@ export default function Sponsors() {
             <a className="sponsor is-open" href={SPONSOR_CONTACT} target="_blank" rel="noopener">
               <LuPlus aria-hidden="true" />
               <span className="sponsor-name">Your brand here</span>
-              <span className="sponsor-tagline">{SPONSOR_PRICE}, one time</span>
+              <span className="sponsor-tagline">Add yours &middot; {SPONSOR_PRICE}</span>
             </a>
           </li>
         ))}
       </ul>
       <p className="sponsor-foot">
-        Have questions? <a href={SPONSOR_CONTACT} target="_blank" rel="noopener">Open an issue on GitHub</a>.
+        Have questions?
+        <a href={X_URL} target="_blank" rel="noopener">
+          <SiX aria-hidden="true" /> X / Twitter
+        </a>
+        <a href={`${REPO}/issues/new?title=${encodeURIComponent("Sponsor slot")}`} target="_blank" rel="noopener">
+          GitHub
+        </a>
       </p>
     </>
   );

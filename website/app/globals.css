@@ -792,6 +792,15 @@ main:focus {
   line-height: 1.1;
 }
 
+.kicker {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+}
+
 .section-lead {
   max-width: 60ch;
   margin: 12px 0 0;
@@ -1464,8 +1473,30 @@ main:focus {
   color: var(--ink-3);
 }
 
+.sponsor-hint {
+  margin: 0;
+  padding: 0 var(--pad) 20px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+.sponsor-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+}
+
 .sponsor-foot a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--ink-2);
+}
+
+.sponsor-foot a:hover {
+  color: var(--ink);
 }
 
 @media (max-width: 900px) {

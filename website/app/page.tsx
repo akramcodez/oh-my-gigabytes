@@ -480,8 +480,9 @@ export default async function Home() {
           <section id="sponsors" className="section" tabIndex={-1} aria-labelledby="sponsors-title">
             <SectionHead
               id="sponsors-title"
-              title="Sponsors"
-              lead={`Put your brand in front of developers who care about their tools. Your logo and link stay on this page for the life of the site, for ${SPONSOR_PRICE} once. Click an empty slot to claim it.`}
+              kicker="Sponsors"
+              title={`Get lifetime brand exposure for just ${SPONSOR_PRICE}`}
+              lead="Showcase your product on OMG and get a dedicated shoutout on X."
             />
             <Sponsors />
           </section>
@@ -529,9 +530,10 @@ export default async function Home() {
   );
 }
 
-function SectionHead({ id, title, lead }: { id: string; title: string; lead?: string }) {
+function SectionHead({ id, title, lead, kicker }: { id: string; title: string; lead?: string; kicker?: string }) {
   return (
     <div className="section-head">
+      {kicker && <p className="kicker">{kicker}</p>}
       <h2 id={id}>{title}</h2>
       {lead && <p className="section-lead">{lead}</p>}
     </div>

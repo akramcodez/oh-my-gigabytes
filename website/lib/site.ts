@@ -15,7 +15,8 @@ export const DESCRIPTION =
 
 export const SPONSOR_PRICE = "$49.99";
 export const SPONSOR_SLOTS = 6;
-export const SPONSOR_CONTACT = `${REPO}/issues/new?title=${encodeURIComponent("Sponsor slot")}&body=${encodeURIComponent("Brand:\nWebsite:\nOne-line description:\nLogo (SVG or PNG link):")}`;
+export const X_URL = "https://x.com/akramcodez";
+export const SPONSOR_CONTACT = X_URL;
 
 export type Sponsor = { name: string; tagline: string; url: string; logo?: string };
 export const SPONSORS: Sponsor[] = [];
