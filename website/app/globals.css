@@ -1457,10 +1457,6 @@ main:focus {
   }
 }
 
-.sponsor-grid li {
-  padding: 0;
-}
-
 #sponsors-title em {
   color: var(--t-brand);
 }
@@ -1507,65 +1503,87 @@ main:focus {
   color: var(--t-brand);
 }
 
-.slot {
+.sponsor-shelf {
+  padding: 0 var(--pad) clamp(48px, 7vw, 88px);
+}
+
+.sponsor-hint {
+  margin: 0 0 24px;
+  color: var(--ink-3);
+}
+
+.sponsor-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 28px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.icon-slot {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  height: 100%;
-  box-sizing: border-box;
-  min-height: 200px;
-  padding: 28px var(--pad) 32px;
-  color: inherit;
-  text-decoration: none;
-  transition: background 0.15s;
-}
-
-.slot:hover {
-  background: color-mix(in srgb, var(--t-brand) 6%, transparent);
-}
-
-.slot h3 {
-  font-family: var(--serif);
-  font-size: 1.4rem;
-}
-
-.slot p {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  color: var(--ink-3);
-}
-
-.slot.is-open h3 {
+  align-items: center;
+  gap: 12px;
   color: var(--ink-2);
+  text-decoration: none;
 }
 
-.slot-logo {
-  width: 48px;
-  height: 48px;
-  margin-bottom: 14px;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-}
-
-.slot-plus {
+.icon-box {
   display: grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
+  width: 96px;
+  height: 96px;
   box-sizing: border-box;
-  margin-bottom: 14px;
-  font-size: 1.1rem;
-  color: var(--ink-3);
-  border: 1.5px dashed var(--rule-strong);
-  border-radius: 10px;
-  transition: color 0.15s, border-color 0.15s;
+  overflow: hidden;
+  border-radius: 24px;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 12%, transparent),
+    0 6px 18px color-mix(in srgb, var(--ink) 10%, transparent);
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.slot:hover .slot-plus {
+.icon-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.icon-slot:hover .icon-box {
+  transform: translateY(-3px);
+}
+
+.icon-slot.is-open .icon-box {
+  font-size: 1.8rem;
+  color: var(--ink-3);
+  border: 2px dashed var(--rule-strong);
+  box-shadow: none;
+  background: var(--raised);
+}
+
+.icon-slot.is-open:hover .icon-box {
   color: var(--t-brand);
   border-color: var(--t-brand);
+}
+
+.icon-name {
+  font-size: 0.95rem;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.icon-slot.is-open .icon-name {
+  color: var(--ink-3);
+}
+
+.icon-slot:hover .icon-name {
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-slot:hover .icon-box {
+    transform: none;
+  }
 }
 
 .thanks {
