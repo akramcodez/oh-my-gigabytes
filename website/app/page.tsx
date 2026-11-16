@@ -1,6 +1,7 @@
 import CopyCommand from "@/components/CopyCommand";
 import Downloads from "@/components/Downloads";
 import Sponsors from "@/components/Sponsors";
+import NavSponsors from "@/components/NavSponsors";
 import Stars from "@/components/Stars";
 import { starCount } from "@/lib/github";
 import { totalDownloads } from "@/lib/npm";
@@ -272,6 +273,7 @@ export default async function Home() {
             <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
           </a>
           <nav aria-label="Project" className="topbar-actions">
+            <NavSponsors />
             <a href={doc("README.md")} className="text-link" aria-label="Docs">
               <LuBookOpen aria-hidden="true" />
               <span className="nav-label">Docs</span>
