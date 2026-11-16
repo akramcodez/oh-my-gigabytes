@@ -252,7 +252,7 @@ main:focus {
   margin: 0;
   font-size: 8px;
   line-height: 1.05;
-  color: var(--ink);
+  color: var(--t-brand);
 }
 
 .brand-name {
@@ -260,14 +260,15 @@ main:focus {
   font-size: 1.05rem;
 }
 
-.nav {
+.topbar-actions {
   display: flex;
+  align-items: center;
   gap: 18px;
   margin-left: auto;
   font-size: 0.85rem;
 }
 
-.nav a {
+.text-link {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -275,43 +276,72 @@ main:focus {
   text-decoration: none;
 }
 
-.nav a:hover {
+.text-link:hover {
   color: var(--ink);
 }
 
-.nav kbd {
-  font-size: 0.65rem;
-  min-width: 1.4em;
-}
-
-.topbar-actions {
-  display: flex;
+.star-link {
+  display: inline-flex;
   align-items: center;
-  gap: 14px;
-  font-size: 0.85rem;
-}
-
-.text-link {
+  gap: 6px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 4px 0 10px;
   color: var(--ink-2);
   text-decoration: none;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--raised);
+}
+
+.star-link:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.star-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 2px 7px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink);
 }
 
 .theme-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 4px 0 10px;
   font: inherit;
-  font-size: 0.85rem;
   color: var(--ink-2);
-  background: none;
+  background: var(--raised);
   border: 1px solid var(--rule);
   border-radius: 6px;
   cursor: pointer;
 }
 
 .theme-toggle:hover {
-  border-color: var(--rule-strong);
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.theme-toggle kbd {
+  min-width: 0;
+  margin-left: 2px;
+  padding: 2px 7px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: normal;
+  border: 0;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
   color: var(--ink);
 }
 
@@ -329,11 +359,8 @@ main:focus {
   color: var(--ink-3);
 }
 
-.pulse {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--accent);
+.downloads {
+  color: var(--t-brand);
 }
 
 .hero h1 {
@@ -360,17 +387,20 @@ main:focus {
 .button {
   display: inline-flex;
   align-items: center;
-  padding: 0 18px;
+  gap: 8px;
+  padding: 0 12px;
   min-height: 46px;
   font-size: 0.95rem;
+  color: var(--ink-2);
   text-decoration: none;
-  border: 1px solid var(--rule-strong);
-  border-radius: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
   background: var(--raised);
 }
 
 .button:hover {
-  border-color: var(--ink);
+  color: var(--ink);
+  border-color: var(--ink-3);
 }
 
 .fine {
@@ -405,7 +435,9 @@ main:focus {
 }
 
 .copy-button {
-  padding: 6px 10px;
+  display: grid;
+  place-items: center;
+  padding: 8px;
   font: inherit;
   font-size: 0.78rem;
   color: inherit;
@@ -436,7 +468,7 @@ main:focus {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 38px;
+  height: 46px;
   padding: 0 14px;
   border-bottom: 1px solid var(--t-line);
   background: var(--t-bar);
@@ -463,9 +495,9 @@ main:focus {
 
 .modes {
   display: flex;
-  gap: 2px;
+  gap: 4px;
   margin-left: 0;
-  padding: 2px;
+  padding: 4px;
   border: 1px solid var(--t-rule);
   border-radius: 0;
 }
@@ -495,7 +527,7 @@ main:focus {
   text-align: center;
   font: inherit;
   color: var(--t-on-accent);
-  background: var(--t-warn);
+  background: var(--t-brand);
   border-radius: 0;
 }
 
@@ -631,10 +663,9 @@ main:focus {
 }
 
 .cell {
-  display: inline-block;
+  display: inline-flex;
+  justify-content: center;
   width: 1ch;
-  overflow: hidden;
-  text-align: center;
   vertical-align: top;
 }
 
@@ -1123,57 +1154,87 @@ main:focus {
 }
 
 .footer {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 20px 32px;
-  padding: 36px var(--pad) 48px;
-  font-size: 0.85rem;
+  padding: 48px var(--pad) 40px;
+  font-size: 0.88rem;
   color: var(--ink-3);
+  border-top: 1px solid var(--rule);
+}
+
+.footer a {
+  text-decoration: none;
+}
+
+.footer a:hover {
+  color: var(--ink);
+}
+
+.footer-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  gap: 40px 32px;
 }
 
 .footer-brand {
   display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.footer-brand p {
-  margin: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
 }
 
 .footer-brand .mark {
-  font-size: 6px;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--t-brand);
+}
+
+.footer-line {
+  margin: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 1.25rem;
   color: var(--ink-2);
 }
 
-.footer-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 18px;
-}
-
-.footer-links a {
-  text-decoration: none;
-}
-
-.footer-links a:hover {
+.footer-title {
+  margin: 0 0 14px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--ink);
 }
 
-.footer-keys {
-  grid-column: 1 / -1;
+.footer-col ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.footer-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 24px;
+  margin-top: 40px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+  font-size: 0.8rem;
+}
+
+.footer-bottom p {
   margin: 0;
 }
 
+.footer-bottom a {
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
+}
+
 @media (max-width: 960px) {
-  .nav {
-    display: none;
-  }
-
-  .topbar-actions {
-    margin-left: auto;
-  }
-
   .steps {
     grid-template-columns: 1fr 1fr;
   }
@@ -1209,6 +1270,14 @@ main:focus {
 }
 
 @media (max-width: 640px) {
+  .topbar-actions {
+    gap: 14px;
+  }
+
+  .topbar-actions .nav-label {
+    display: none;
+  }
+
   .frame {
     border: 0;
   }
@@ -1328,7 +1397,11 @@ main:focus {
     color: var(--ink-3);
   }
 
-  .footer {
-    grid-template-columns: 1fr;
+  .footer-top {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .footer-brand {
+    grid-column: 1 / -1;
   }
 }

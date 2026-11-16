@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { finishNow, initial as initialSim, key, render, run, tick, type Line, type Sim, type Theme } from "@/lib/sim";
 
 function siteTheme(): Theme {
@@ -70,7 +70,16 @@ function cells(text: string) {
     : parts.map((p, i) => (i % 2 ? <span key={i} className="cell">{p}</span> : p));
 }
 
-function LineView({ line }: { line: Line }) {
+function sameLine(a: { line: Line }, b: { line: Line }) {
+  const x = a.line;
+  const y = b.line;
+  if (x === y) return true;
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) if (x[i].t !== y[i].t || x[i].c !== y[i].c) return false;
+  return true;
+}
+
+const LineView = memo(function LineView({ line }: { line: Line }) {
   return (
     <div className="t-line">
       {line.length === 0
@@ -82,7 +91,7 @@ function LineView({ line }: { line: Line }) {
           ))}
     </div>
   );
-}
+}, sameLine);
 
 function replay(acts: Act[], start: Sim): Sim {
   let sim = start;
@@ -113,6 +122,8 @@ export default function Terminal() {
   const measure = useRef<HTMLSpanElement>(null);
   const [cols, setCols] = useState(96);
   const history = useRef<string[]>([]);
+  const visible = useRef(true);
+  const resume = useRef<(() => void) | null>(null);
   const historyAt = useRef(0);
 
   useEffect(() => {
@@ -153,7 +164,7 @@ export default function Terminal() {
   const scanning = sim.scan !== null;
   useEffect(() => {
     if (!scanning) return;
-    const id = setInterval(() => setSim((s) => (s.scan ? tick(s) : s)), 90);
+    const id = setInterval(() => visible.current && setSim((s) => (s.scan ? tick(s) : s)), 90);
     return () => clearInterval(id);
   }, [scanning]);
 
@@ -162,7 +173,7 @@ export default function Terminal() {
     const controller = new AbortController();
     run$.current = controller;
     const { signal } = controller;
-    const wait = (ms: number) =>
+    const sleep = (ms: number) =>
       new Promise<void>((resolve, reject) => {
         const id = setTimeout(resolve, ms);
         signal.addEventListener("abort", () => {
@@ -170,11 +181,24 @@ export default function Terminal() {
           reject(new DOMException("aborted", "AbortError"));
         });
       });
-    let base = initial();
-    for (let i = 0; i < from; i++) base = replay(STEPS[i].acts, base);
-    setSim(base);
-    setDraft("");
-    setPressed(null);
+    const wait = async (ms: number) => {
+      await sleep(ms);
+      while (!visible.current) {
+        await new Promise<void>((resolve) => {
+          resume.current = resolve;
+          signal.addEventListener("abort", () => resolve());
+        });
+        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+      }
+    };
+    const reset = (upTo: number) => {
+      let base = initial();
+      for (let i = 0; i < upTo; i++) base = replay(STEPS[i].acts, base);
+      setSim(base);
+      setDraft("");
+      setPressed(null);
+    };
+    reset(from);
     try {
       for (let i = from; i < STEPS.length; i++) {
         setStep(i);
@@ -206,6 +230,11 @@ export default function Terminal() {
         }
         if (!all) break;
         await wait(1600);
+        if (i === STEPS.length - 1) {
+          await wait(1400);
+          reset(0);
+          i = -1;
+        }
       }
     } catch {
       /* stopped */
@@ -225,18 +254,34 @@ export default function Terminal() {
       });
       return;
     }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          observer.disconnect();
+    let started = false;
+    let onScreen = false;
+    const update = () => {
+      visible.current = onScreen && !document.hidden;
+      if (visible.current) {
+        resume.current?.();
+        resume.current = null;
+        if (!started) {
+          started = true;
           play(0, true);
         }
+      }
+    };
+    const observer = new IntersectionObserver(
+      (entries) => {
+        onScreen = entries[entries.length - 1].isIntersecting;
+        update();
       },
-      { threshold: 0.3 },
+      { threshold: 0.15 },
     );
     observer.observe(node);
+    document.addEventListener("visibilitychange", update);
     return () => {
       observer.disconnect();
+      document.removeEventListener("visibilitychange", update);
+      visible.current = true;
+      resume.current?.();
+      resume.current = null;
       run$.current?.abort();
     };
   }, [mode, play]);
@@ -311,7 +356,7 @@ export default function Terminal() {
     }
   };
 
-  const lines = render(sim, cols, ROWS);
+  const lines = useMemo(() => render(sim, cols, ROWS), [sim, cols]);
   const tui = sim.screen === "tui";
   const showPrompt = !tui && !(sim.scan && sim.scan.inShell);
 

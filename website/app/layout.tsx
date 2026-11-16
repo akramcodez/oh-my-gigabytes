@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Newsreader } from "next/font/google";
+import { DESCRIPTION, NAME, REPO, SITE, TAGLINE } from "@/lib/site";
 import "./globals.css";
 
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
@@ -7,16 +8,50 @@ const sans = Geist({ subsets: ["latin"], variable: "--font-sans", display: "swap
 const serif = Newsreader({ subsets: ["latin"], style: ["normal", "italic"], variable: "--font-serif", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "OMG (Oh My Gigabytes): see where your disk space went",
-  description:
-    "A local-first, keyboard-first storage analyzer for developers. Finds tool caches, build folders, old toolchains and leftovers, explains each one, and deletes only what you confirm. Development preview beta.",
-  applicationName: "OMG",
-  openGraph: {
-    title: "OMG (Oh My Gigabytes)",
-    description: "See where your disk space went and take it back, from the terminal.",
-    type: "website",
+  metadataBase: new URL(SITE),
+  title: {
+    default: "OMG (Oh My Gigabytes): see where your disk space went",
+    template: "%s | OMG",
   },
-  icons: { icon: "/icon.svg" },
+  description: DESCRIPTION,
+  applicationName: "OMG",
+  keywords: [
+    "disk space analyzer",
+    "disk usage",
+    "free up disk space",
+    "storage cleaner",
+    "developer tools",
+    "terminal",
+    "TUI",
+    "CLI",
+    "node_modules",
+    "Xcode DerivedData",
+    "Docker cleanup",
+    "cache cleanup",
+    "macOS",
+    "Linux",
+    "Windows",
+  ],
+  authors: [{ name: "OMG contributors", url: REPO }],
+  creator: "OMG contributors",
+  category: "developer tools",
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true, googleBot: { index: true, follow: true, "max-image-preview": "large" } },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: "OMG",
+    title: NAME,
+    description: TAGLINE,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: NAME,
+    description: TAGLINE,
+  },
+  icons: { icon: "/icon.svg", apple: "/apple-icon.png" },
+  formatDetection: { telephone: false, email: false, address: false },
 };
 
 export const viewport: Viewport = {
@@ -28,7 +63,8 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-const themeScript = `try{var t=localStorage.getItem("omg-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
+const themeScript = `try{var t=localStorage.getItem("omg-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}
+(function(){var d=document.documentElement,m=matchMedia("(prefers-color-scheme: dark)");function f(){var t=d.dataset.theme==="light"||d.dataset.theme==="dark"?d.dataset.theme:m.matches?"dark":"light";document.querySelectorAll('link[rel="icon"]').forEach(function(l){l.href="/icon-"+t+".svg"})}new MutationObserver(f).observe(d,{attributes:true,attributeFilter:["data-theme"]});m.addEventListener("change",f);document.addEventListener("DOMContentLoaded",f)})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

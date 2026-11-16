@@ -1,9 +1,65 @@
 import CopyCommand from "@/components/CopyCommand";
+import Downloads from "@/components/Downloads";
+import Stars from "@/components/Stars";
+import { starCount } from "@/lib/github";
+import { totalDownloads } from "@/lib/npm";
 import KeyNav from "@/components/KeyNav";
 import Terminal from "@/components/Terminal";
 import ThemeToggle from "@/components/ThemeToggle";
 import { banner } from "@/lib/banner";
-import { INSTALL, NPM, REPO, VERSION, doc } from "@/lib/site";
+import { LuBookOpen, LuGithub } from "react-icons/lu";
+import { SiNpm } from "react-icons/si";
+import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, VERSION, doc } from "@/lib/site";
+
+const SCHEMA = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: NAME,
+  alternateName: "OMG",
+  description: DESCRIPTION,
+  url: SITE,
+  downloadUrl: NPM,
+  codeRepository: REPO,
+  softwareVersion: VERSION,
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "macOS, Linux, Windows",
+  license: ["https://spdx.org/licenses/MIT.html", "https://spdx.org/licenses/Apache-2.0.html"],
+  isAccessibleForFree: true,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+};
+
+const FOOTER: { title: string; links: [string, string][] }[] = [
+  {
+    title: "Product",
+    links: [
+      ["How it works", "#how"],
+      ["What it finds", "#finds"],
+      ["Keys", "#keys"],
+      ["Safety", "#safety"],
+      ["Platforms", "#platforms"],
+      ["FAQ", "#faq"],
+    ],
+  },
+  {
+    title: "Docs",
+    links: [
+      ["Readme", doc("README.md")],
+      ["Safety rules", doc("docs/safety.md")],
+      ["Compatibility", doc("docs/compatibility.md")],
+      ["Security policy", doc("SECURITY.md")],
+    ],
+  },
+  {
+    title: "Community",
+    links: [
+      ["GitHub", REPO],
+      ["npm package", NPM],
+      ["Releases", `${REPO}/releases`],
+      ["Report an issue", `${REPO}/issues/new`],
+      ["Contribute", `${REPO}/pulls`],
+    ],
+  },
+];
 
 const NAV = [
   { id: "how", label: "how it works" },
@@ -196,7 +252,8 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
   },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const [stars, downloads] = await Promise.all([starCount(), totalDownloads()]);
   const [mark1, mark2] = banner(["OMG"]);
 
   return (
@@ -204,6 +261,7 @@ export default function Home() {
       <a className="skip" href="#main">
         Skip to content
       </a>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
       <KeyNav targets={NAV.map((n) => n.id)} />
 
       <div className="frame">
@@ -211,27 +269,24 @@ export default function Home() {
           <a href="#top" className="brand" aria-label="OMG home">
             <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
           </a>
-          <nav aria-label="Sections" className="nav">
-            {NAV.map((item, i) => (
-              <a key={item.id} href={`#${item.id}`}>
-                <kbd aria-hidden="true">{i + 1}</kbd>
-                {item.label}
-              </a>
-            ))}
-          </nav>
-          <div className="topbar-actions">
-            <a href={REPO} className="text-link">
-              GitHub
+          <nav aria-label="Project" className="topbar-actions">
+            <a href={doc("README.md")} className="text-link" aria-label="Docs">
+              <LuBookOpen aria-hidden="true" />
+              <span className="nav-label">Docs</span>
             </a>
+            <a href={NPM} className="text-link" aria-label="npm package">
+              <SiNpm aria-hidden="true" />
+              <span className="nav-label">npm</span>
+            </a>
+            <Stars initial={stars} />
             <ThemeToggle />
-          </div>
+          </nav>
         </header>
 
         <main id="main" tabIndex={-1}>
           <section id="top" className="hero">
             <p className="eyebrow">
-              <span className="pulse" aria-hidden="true" />
-              {VERSION} &middot; development preview
+              v{VERSION} &middot; macOS, Linux and Windows <Downloads initial={downloads} />
             </p>
             <h1>
               See where your disk went.
@@ -239,14 +294,14 @@ export default function Home() {
               <em>Take it back on your terms.</em>
             </h1>
             <p className="lede">
-              OMG is a keyboard-first storage analyzer for developers. It indexes file metadata on your machine, explains
-              which caches, build folders and old toolchains hold your space, and permanently deletes only what you
-              confirm.
+              A keyboard-first disk analyzer for developers. It finds the caches, build folders and old toolchains filling
+              your disk, and deletes only what you confirm.
             </p>
             <div className="hero-actions">
               <CopyCommand command={INSTALL} />
               <a href={REPO} className="button">
-                Source on GitHub
+                <LuGithub aria-hidden="true" />
+                Source code
               </a>
             </div>
             <p className="fine">
@@ -359,8 +414,7 @@ export default function Home() {
                 <div className="warning" role="note">
                   <p className="warning-title">Delete is permanent</p>
                   <p>
-                    OMG does not move files to the system trash and there is no undo. The delete code is a development
-                    implementation that has not been qualified. Freed space can be less than shown, because hard links,
+                    OMG does not move files to the system trash and there is no undo. Freed space can be less than shown, because hard links,
                     APFS clones and snapshots share data.
                   </p>
                 </div>
@@ -434,20 +488,34 @@ export default function Home() {
         </main>
 
         <footer className="footer">
-          <div className="footer-brand">
-            <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
-            <p>OMG contributors &middot; MIT OR Apache-2.0</p>
+          <div className="footer-top">
+            <div className="footer-brand">
+              <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
+              <p className="footer-line">Your disk, explained.</p>
+            </div>
+            {FOOTER.map((col) => (
+              <nav key={col.title} aria-label={col.title} className="footer-col">
+                <p className="footer-title">{col.title}</p>
+                <ul>
+                  {col.links.map(([label, href]) => (
+                    <li key={label}>
+                      <a href={href}>{label}</a>
+                    </li>
+                  ))}
+                </ul>
+              </nav>
+            ))}
           </div>
-          <nav aria-label="Project links" className="footer-links">
-            <a href={REPO}>GitHub</a>
-            <a href={NPM}>npm</a>
-            <a href={doc("SECURITY.md")}>Security</a>
-            <a href={doc("docs/compatibility.md")}>Compatibility</a>
-            <a href={`${REPO}/issues`}>Issues</a>
-          </nav>
-          <p className="footer-keys">
-            <kbd>1</kbd>&ndash;<kbd>6</kbd> jump to a section &middot; <kbd>t</kbd> theme
-          </p>
+          <div className="footer-bottom">
+            <p>
+              &copy; {new Date().getFullYear()} OMG contributors &middot; Built by{" "}
+              <a href={CREATOR_URL}>{CREATOR}</a> &middot; Licensed under{" "}
+              <a href={doc("LICENSE-MIT")}>MIT</a> or <a href={doc("LICENSE-APACHE")}>Apache-2.0</a>
+            </p>
+            <p>
+              v{VERSION} &middot; Runs locally. No account, no telemetry.
+            </p>
+          </div>
         </footer>
       </div>
     </>
