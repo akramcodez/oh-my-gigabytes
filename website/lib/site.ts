@@ -7,7 +7,7 @@ export const INSTALL = "npm install -g oh-my-gigabytes";
 
 export const doc = (path: string) => `${REPO}/blob/main/${path}`;
 
-export const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://oh-my-gigabytes.com").replace(/\/$/, "");
+export const SITE = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://www.oh-my-gigabytes.com").replace(/\/$/, "");
 export const NAME = "OMG (Oh My Gigabytes)";
 export const TAGLINE = "See where your disk space went and take it back, from the terminal.";
 export const DESCRIPTION =

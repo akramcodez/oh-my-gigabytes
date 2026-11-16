@@ -4,7 +4,7 @@
   "private": true,
   "description": "See where your disk space went and take it back: a local-first, keyboard-first storage analyzer for developers",
   "keywords": ["disk", "disk-usage", "storage", "cleanup", "cache", "node_modules", "developer-tools", "cli", "tui"],
-  "homepage": "https://github.com/akramcodez/oh-my-gigabytes#readme",
+  "homepage": "https://www.oh-my-gigabytes.com",
   "repository": { "type": "git", "url": "git+https://github.com/akramcodez/oh-my-gigabytes.git" },
   "bugs": { "url": "https://github.com/akramcodez/oh-my-gigabytes/issues" },
   "license": "MIT OR Apache-2.0",

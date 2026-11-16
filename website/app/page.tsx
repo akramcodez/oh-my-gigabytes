@@ -11,7 +11,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { banner } from "@/lib/banner";
 import { LuBookOpen, LuGithub } from "react-icons/lu";
 import { SiNpm } from "react-icons/si";
-import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, VERSION, doc } from "@/lib/site";
+import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, VERSION, X_URL, doc } from "@/lib/site";
 
 const SCHEMA = {
   "@context": "https://schema.org",
@@ -22,6 +22,7 @@ const SCHEMA = {
   url: SITE,
   downloadUrl: NPM,
   codeRepository: REPO,
+  sameAs: [REPO, NPM, X_URL],
   softwareVersion: VERSION,
   applicationCategory: "DeveloperApplication",
   operatingSystem: "macOS, Linux, Windows",

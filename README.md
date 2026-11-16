@@ -1,5 +1,7 @@
 # oh-my-gigabytes
 
+Website: [oh-my-gigabytes.com](https://www.oh-my-gigabytes.com)
+
 OMG (Oh My Gigabytes) shows where your disk space went and helps you take it back. A Rust engine scans file metadata into a local index, and a terminal interface lets you browse folder sizes, see which developer caches and build folders take space and why, and delete what you choose.
 
 > **Beta (`0.1.0-beta.2`), a development preview.** Scanning reads names, sizes and times, not the contents of your files. The one exception: to tell whether an old Git clone has nothing local to lose, it reads Git's own config and branch references. Nothing is uploaded. Delete is permanent and not qualified: read [Deleting files](#deleting-files) first.
