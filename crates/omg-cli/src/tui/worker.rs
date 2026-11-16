@@ -219,7 +219,7 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                             let gate = index.mark(&path, allocated, &home)?;
                             let note = match gate {
                                 omg_core::cleanup::Gate::Warn(_) => {
-                                    " (inside a Git repository — review before deleting)"
+                                    " (inside a Git repository; review before deleting)"
                                 }
                                 _ => "",
                             };

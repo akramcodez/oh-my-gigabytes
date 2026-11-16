@@ -1115,7 +1115,7 @@ pub fn run(index: Index) -> Result<()> {
     let mut app = App {
         state: AppState {
             message:
-                "Welcome to OMG — it finds it, explains it, and you decide. Press m for options."
+                "Welcome to OMG: it finds it, explains it, and you decide. Press m for options."
                     .into(),
             busy: Some("Loading".into()),
             wsl: std::fs::read_to_string("/proc/sys/kernel/osrelease")

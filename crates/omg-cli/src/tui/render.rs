@@ -97,7 +97,7 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
     }
     if area.width < 50 || area.height < 16 {
         frame.render_widget(
-            Paragraph::new("OMG! Terminal too small — resize to at least 50×16 (q quits)."),
+            Paragraph::new("OMG! Terminal too small: resize to at least 50×16 (q quits)."),
             area,
         );
         return;
@@ -172,7 +172,7 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
         }
         Some(status) if status.root.is_none() => {
             lines.push(Line::from(Span::styled(
-                "  Nothing scanned yet — press r to count your gigabytes.",
+                "  Nothing scanned yet. Press r to count your gigabytes.",
                 theme.dim(),
             )));
             lines.push(Line::from(""));
@@ -539,7 +539,7 @@ fn overview(state: &AppState, theme: &Theme, width: usize) -> Lines {
     };
     if summary.status.root.is_none() {
         out.push(Line::from(Span::styled(
-            "  No index yet. Press r — scanning only reads metadata and never changes a file.",
+            "  No index yet. Press r: scanning only reads metadata and never changes a file.",
             theme.dim(),
         )));
         return out;
@@ -937,7 +937,7 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
                 theme.bold(),
             ),
             Span::styled(
-                "   saved paths only — nothing has been moved or deleted",
+                "   saved paths only; nothing has been moved or deleted",
                 theme.dim(),
             ),
         ]),
@@ -1057,7 +1057,7 @@ fn plan_view(plan: &Plan, theme: &Theme) -> Lines {
     let mut out: Lines = vec![
         Line::from(""),
         Line::from(Span::styled(
-            "  Dry-run preview — nothing will change",
+            "  Dry-run preview: nothing will change",
             theme.accent().patch(theme.bold()),
         )),
         Line::from(format!(
