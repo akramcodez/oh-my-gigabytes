@@ -22,7 +22,6 @@ export default function Stars({ initial }: { initial: number | null }) {
   return (
     <a href={REPO} className="star-link" aria-label={stars === null ? "GitHub" : `GitHub, ${stars} stars`}>
       <LuGithub aria-hidden="true" />
-      <span className="nav-label">GitHub</span>
       {stars !== null && (
         <span className="star-count" aria-hidden="true">
           <LuStar />

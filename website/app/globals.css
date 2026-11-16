@@ -366,10 +366,11 @@ main:focus {
 .theme-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 32px;
   height: 32px;
   box-sizing: border-box;
-  padding: 0 4px 0 10px;
+  padding: 0;
   font: inherit;
   color: var(--ink-2);
   background: var(--raised);
@@ -378,26 +379,9 @@ main:focus {
   cursor: pointer;
 }
 
-.theme-icon {
-  display: none;
-}
-
 .theme-toggle:hover {
   color: var(--ink);
   border-color: var(--ink-3);
-}
-
-.theme-toggle kbd {
-  min-width: 0;
-  margin-left: 2px;
-  padding: 2px 7px;
-  font-family: var(--mono);
-  font-size: 0.78rem;
-  line-height: normal;
-  border: 0;
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
-  color: var(--ink);
 }
 
 .hero {
@@ -1336,8 +1320,7 @@ main:focus {
     gap: 8px;
   }
 
-  .topbar-actions .nav-label,
-  .theme-toggle kbd {
+  .topbar-actions .nav-label {
     display: none;
   }
 
@@ -1353,16 +1336,6 @@ main:focus {
   .nav-sponsor img {
     width: 26px;
     height: 26px;
-  }
-
-  .theme-toggle {
-    justify-content: center;
-    width: 32px;
-    padding: 0;
-  }
-
-  .theme-icon {
-    display: block;
   }
 
   .frame {

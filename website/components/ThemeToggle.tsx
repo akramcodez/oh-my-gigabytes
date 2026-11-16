@@ -1,6 +1,6 @@
 "use client";
 
-import { LuSunMoon } from "react-icons/lu";
+import { LuMoon, LuSun } from "react-icons/lu";
 
 export function toggleTheme() {
   const root = document.documentElement;
@@ -14,9 +14,9 @@ export function toggleTheme() {
 
 export default function ThemeToggle() {
   return (
-    <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label="Switch between dark and light theme">
-      <LuSunMoon className="theme-icon" aria-hidden="true" />
-      <span className="nav-label">Theme</span> <kbd aria-hidden="true">t</kbd>
+    <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label="Switch between dark and light theme" title="Switch theme (t)">
+      <LuSun className="logo-dark" aria-hidden="true" />
+      <LuMoon className="logo-light" aria-hidden="true" />
     </button>
   );
 }
