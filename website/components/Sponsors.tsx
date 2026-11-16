@@ -8,7 +8,9 @@ export default function Sponsors() {
       <div className="sponsor-pitch">
         <p className="kicker">Sponsors</p>
         <h2 id="sponsors-title">
-          Lifetime brand exposure, <em>one payment.</em>
+          Lifetime brand exposure,
+          <br />
+          <em>one payment.</em>
         </h2>
         <p className="section-lead">
           Showcase your product to developers on OMG and get a dedicated shoutout on X.
