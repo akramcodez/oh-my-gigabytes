@@ -4,8 +4,7 @@ import { LuMoon, LuSun } from "react-icons/lu";
 
 export function toggleTheme() {
   const root = document.documentElement;
-  const current = root.dataset.theme ?? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  const next = current === "light" ? "dark" : "light";
+  const next = root.dataset.theme === "dark" ? "light" : "dark";
   root.dataset.theme = next;
   try {
     localStorage.setItem("omg-theme", next);
