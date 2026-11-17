@@ -1,6 +1,8 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { LuArrowRight, LuImagePlus, LuLock, LuX } from "react-icons/lu";
 import { OPEN_SPONSOR, writePending } from "@/lib/pending";
 import { SPONSOR_PRICE, sponsorCheckout } from "@/lib/site";
 
@@ -20,12 +22,21 @@ export default function SponsorDialog() {
   const ref = useRef<HTMLDialogElement>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [logo, setLogo] = useState<{ src?: string; name: string } | null>(null);
 
   useEffect(() => {
     const open = () => ref.current?.showModal();
     window.addEventListener(OPEN_SPONSOR, open);
     return () => window.removeEventListener(OPEN_SPONSOR, open);
   }, []);
+
+  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) return setLogo(null);
+    const src = await readLogo(file);
+    setLogo({ src, name: file.name });
+    setError(src ? "" : "Logo must be an image under 200 KB.");
+  }
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -36,56 +47,71 @@ export default function SponsorDialog() {
     try {
       url = new URL(/^https?:\/\//i.test(form.link) ? form.link : `https://${form.link}`);
     } catch {
-      return setError("Enter a valid link, like https://example.com");
+      return setError("Enter a valid link, like acme.dev");
     }
-    if (url.protocol !== "https:" && url.protocol !== "http:") return setError("The link must start with https://");
     form.link = url.toString();
     setBusy(true);
-    const logo = await readLogo(data.get("logo") as File | null);
-    writePending({ ...form, logo, paid: false });
+    writePending({ ...form, logo: logo?.src, paid: false });
     window.location.href = sponsorCheckout(form);
   }
 
   return (
-    <dialog ref={ref} className="sponsor-dialog" aria-labelledby="sponsor-dialog-title" onClose={() => setError("")}>
+    <dialog
+      ref={ref}
+      className="sponsor-dialog"
+      aria-labelledby="sponsor-dialog-title"
+      onClose={() => setError("")}
+      onClick={(e) => e.target === ref.current && ref.current?.close()}
+    >
       <form onSubmit={submit}>
-        <h2 id="sponsor-dialog-title">
-          Sponsor <em>OMG</em>
-        </h2>
-        <p className="dialog-lead">Tell us what to show. You pay {SPONSOR_PRICE} once on the next page.</p>
+        <div className="dialog-head">
+          <div>
+            <h2 id="sponsor-dialog-title">Claim a sponsor slot</h2>
+            <p className="dialog-lead">
+              <strong>{SPONSOR_PRICE}</strong> once. Logo on OMG and a shoutout on X.
+            </p>
+          </div>
+          <button type="button" className="dialog-close" aria-label="Close" onClick={() => ref.current?.close()}>
+            <LuX aria-hidden="true" />
+          </button>
+        </div>
+        <div className="dialog-row">
+          <label>
+            Product
+            <input name="name" required maxLength={40} placeholder="Acme" autoComplete="organization" />
+          </label>
+          <label>
+            Website
+            <input name="link" required maxLength={200} inputMode="url" placeholder="acme.dev" />
+          </label>
+        </div>
         <label>
-          Product name
-          <input name="name" required maxLength={40} autoComplete="organization" />
-        </label>
-        <label>
-          Link
-          <input name="link" required maxLength={200} inputMode="url" placeholder="https://" />
-        </label>
-        <label>
-          Description
-          <textarea name="description" required maxLength={140} rows={2} placeholder="One line about your product" />
+          Tagline
+          <input name="description" required maxLength={100} placeholder="What it does, in one line" />
         </label>
         <label>
           Email
-          <input name="email" type="email" required maxLength={120} autoComplete="email" />
+          <input name="email" type="email" required maxLength={120} placeholder="you@acme.dev" autoComplete="email" />
         </label>
-        <label>
-          Logo <span className="optional">(optional, only for your preview)</span>
-          <input name="logo" type="file" accept="image/png,image/svg+xml,image/jpeg,image/webp" />
+        <label className="logo-pick">
+          <span className="logo-thumb">{logo?.src ? <img src={logo.src} alt="" /> : <LuImagePlus aria-hidden="true" />}</span>
+          <span className="logo-text">
+            {logo ? logo.name : "Add logo"} <small>{logo ? "" : "optional, PNG or SVG"}</small>
+          </span>
+          <input name="logo" type="file" accept="image/png,image/svg+xml,image/jpeg,image/webp" onChange={pick} />
         </label>
         {error && (
           <p className="dialog-error" role="alert">
             {error}
           </p>
         )}
-        <div className="dialog-actions">
-          <button type="button" className="dialog-cancel" onClick={() => ref.current?.close()}>
-            Cancel
-          </button>
-          <button type="submit" className="dialog-pay" disabled={busy}>
-            {busy ? "Opening checkout..." : `Continue to payment`}
-          </button>
-        </div>
+        <button type="submit" className="dialog-pay" disabled={busy}>
+          {busy ? "Opening checkout..." : "Continue to payment"}
+          {!busy && <LuArrowRight aria-hidden="true" />}
+        </button>
+        <p className="dialog-note">
+          <LuLock aria-hidden="true" /> Secure checkout by Dodo Payments
+        </p>
       </form>
     </dialog>
   );

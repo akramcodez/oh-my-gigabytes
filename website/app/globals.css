@@ -1707,105 +1707,239 @@ button.icon-slot {
 }
 
 .sponsor-dialog {
-  width: min(440px, calc(100vw - 32px));
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
   padding: 0;
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--rule);
-  border-radius: 16px;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px -24px rgb(0 0 0 / 0.35);
+}
+
+.sponsor-dialog[open] {
+  animation: dialog-in 0.16s ease-out;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
 }
 
 .sponsor-dialog::backdrop {
-  background: rgb(0 0 0 / 0.45);
+  background: rgb(10 10 12 / 0.4);
+  backdrop-filter: blur(3px);
 }
 
 .sponsor-dialog form {
   display: grid;
-  gap: 14px;
-  padding: 24px;
+  gap: 10px;
+  padding: 18px;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
 }
 
 .sponsor-dialog h2 {
   margin: 0;
   font-family: var(--serif);
-  font-size: 1.6rem;
+  font-size: 1.25rem;
   font-weight: 400;
-}
-
-.sponsor-dialog h2 em {
-  color: var(--t-brand);
+  line-height: 1.2;
 }
 
 .dialog-lead {
-  margin: 0 0 4px;
-  color: var(--ink-2);
+  margin: 2px 0 0;
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
+
+.dialog-lead strong {
+  font-weight: 600;
+  color: var(--t-brand);
+}
+
+.dialog-close {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 0.95rem;
+  color: var(--ink-3);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.dialog-close:hover {
+  color: var(--ink);
+  background: var(--raised);
+}
+
+.dialog-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .sponsor-dialog label {
   display: grid;
-  gap: 6px;
-  font-size: 0.9rem;
-  color: var(--ink-2);
-}
-
-.sponsor-dialog .optional {
+  gap: 4px;
+  min-width: 0;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
   color: var(--ink-3);
 }
 
-.sponsor-dialog input,
-.sponsor-dialog textarea {
+.sponsor-dialog input:not([type="file"]) {
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 0 10px;
   font: inherit;
-  font-size: 0.95rem;
-  padding: 9px 11px;
+  font-size: 0.85rem;
+  font-weight: 400;
+  letter-spacing: 0;
   color: var(--ink);
   background: var(--raised);
   border: 1px solid var(--rule);
-  border-radius: 8px;
-  resize: vertical;
+  border-radius: 7px;
+  transition: border-color 0.12s;
 }
 
-.sponsor-dialog input[type="file"] {
-  padding: 7px;
+.sponsor-dialog input::placeholder {
+  color: var(--ink-3);
+  opacity: 0.7;
 }
 
-.sponsor-dialog input:focus-visible,
-.sponsor-dialog textarea:focus-visible {
-  outline: 2px solid var(--t-brand);
-  outline-offset: 1px;
+.sponsor-dialog input:hover {
+  border-color: var(--rule-strong);
 }
 
-.dialog-error {
-  margin: 0;
-  color: #c0392b;
+.sponsor-dialog input:focus-visible {
+  outline: none;
+  border-color: var(--t-brand);
 }
 
-.dialog-actions {
+.logo-pick {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 10px;
-  margin-top: 6px;
-}
-
-.dialog-actions button {
-  font: inherit;
-  padding: 9px 16px;
+  padding: 6px;
+  border: 1px dashed var(--rule-strong);
   border-radius: 8px;
   cursor: pointer;
 }
 
-.dialog-cancel {
+.logo-pick:hover {
+  border-color: var(--t-brand);
+}
+
+.logo-pick:focus-within {
+  border-color: var(--t-brand);
+}
+
+.logo-pick input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.logo-thumb {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 30px;
+  height: 30px;
+  overflow: hidden;
+  font-size: 0.9rem;
+  color: var(--ink-3);
+  background: var(--raised);
+  border-radius: 7px;
+}
+
+.logo-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.logo-text {
+  font-size: 0.8rem;
+  font-weight: 400;
+  letter-spacing: 0;
   color: var(--ink-2);
-  background: none;
-  border: 1px solid var(--rule);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.logo-text small {
+  color: var(--ink-3);
+}
+
+.dialog-error {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #c0392b;
 }
 
 .dialog-pay {
-  color: var(--paper);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  margin-top: 4px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #fff;
   background: var(--t-brand);
-  border: 1px solid var(--t-brand);
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: filter 0.12s;
+}
+
+.dialog-pay:hover {
+  filter: brightness(1.08);
 }
 
 .dialog-pay:disabled {
   opacity: 0.6;
   cursor: progress;
+}
+
+.dialog-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--ink-3);
+}
+
+@media (max-width: 420px) {
+  .dialog-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sponsor-dialog[open] {
+    animation: none;
+  }
 }
