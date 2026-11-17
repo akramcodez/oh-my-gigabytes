@@ -240,7 +240,7 @@ class TerminalSmokeTests(unittest.TestCase):
                 ui.close()
 
     def test_a_cache_holding_a_protected_folder_is_deleted_around_it(self):
-        # Python packages ship library folders called `credentials`; the whole cache used to be refused
+        # A cache holding a protected name (`.aws`) used to be refused as a whole
         # only after the user confirmed. Now the dialog says so up front and offers to delete the rest.
         binary = Path(__file__).resolve().parents[1] / "target/debug/omg"
         if not binary.exists():
@@ -250,8 +250,8 @@ class TerminalSmokeTests(unittest.TestCase):
             cache = home / ".cache" / "uv" / "archive-v0"
             (cache / "aaa" / "lib").mkdir(parents=True)
             (cache / "aaa" / "lib" / "mod.py").write_bytes(b"x" * (3 << 20))
-            (cache / "bbb" / "pkg" / "credentials").mkdir(parents=True)
-            (cache / "bbb" / "pkg" / "credentials" / "auth.py").write_text("library code")
+            (cache / "bbb" / "pkg" / ".aws").mkdir(parents=True)
+            (cache / "bbb" / "pkg" / ".aws" / "auth.py").write_text("library code")
             (cache / "bbb" / "pkg" / "__init__.py").write_bytes(b"y" * (1 << 20))
             (cache / "ccc").mkdir()
             (cache / "ccc" / "data").write_bytes(b"z" * (1 << 20))
@@ -285,10 +285,12 @@ class TerminalSmokeTests(unittest.TestCase):
                 self.assertFalse((cache / "aaa").exists())
                 self.assertFalse((cache / "ccc").exists())
                 self.assertFalse((cache / "bbb" / "pkg" / "__init__.py").exists())
-                self.assertEqual((cache / "bbb" / "pkg" / "credentials" / "auth.py").read_text(), "library code")
+                self.assertEqual((cache / "bbb" / "pkg" / ".aws" / "auth.py").read_text(), "library code")
                 ui.send(b"5")
                 self.assertTrue(ui.until("removed automatically"), ui.screen.text())
-                self.assertTrue(ui.until("archive-v0/aaa"), ui.screen.text())
+                # One line for the folder, not one per piece deleted around the protected item.
+                self.assertTrue(ui.until("~/.cache/uv"), ui.screen.text())
+                self.assertNotIn("archive-v0", ui.screen.text())
                 self.assertIn(" MiB", ui.screen.text())
                 ui.send(b"q")
                 self.assertEqual(ui.process.wait(timeout=10), 0)

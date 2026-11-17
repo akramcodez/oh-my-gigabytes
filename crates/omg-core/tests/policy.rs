@@ -123,3 +123,40 @@ fn names_the_filesystem_folds_to_a_protected_name_are_protected() {
     assert_eq!(policy::fold("Node_Modules"), "node_modules");
     assert!(policy::hard_protection(root.path(), &entry("cache/\u{e9}t\u{e9}.bin")).is_none());
 }
+
+#[test]
+fn credentials_is_package_code_only_inside_third_party_trees() {
+    let parts = |p: &str| -> Vec<String> { p.split('/').map(String::from).collect() };
+    for inside in [
+        "proj/node_modules/google-auth-library/build",
+        "venv/lib/python3.12/site-packages/google/auth",
+        ".cache/uv/archive-v0/abc/google/auth",
+        "zed/target/release/build/webrtc-sys-1/out/include/grpc",
+        "zed/target/aarch64-apple-darwin/release/build/webrtc-sys-1/out",
+    ] {
+        assert!(
+            !policy::sensitive_name("credentials", &parts(inside)),
+            "{inside}"
+        );
+        assert!(policy::sensitive_name(".ssh", &parts(inside)), "{inside}");
+        assert!(policy::sensitive_name(".aws", &parts(inside)), "{inside}");
+    }
+    for outside in [
+        "",
+        ".config/gcloud",
+        "proj",
+        "zed/target/debug",
+        "zed/target/release/build/x",
+    ] {
+        assert!(
+            policy::sensitive_name("credentials", &parts(outside)),
+            "{outside}"
+        );
+        assert!(
+            policy::sensitive_name("Credentials", &parts(outside)),
+            "{outside}"
+        );
+    }
+    assert!(!policy::sensitive_path(b"a/node_modules/x/credentials"));
+    assert!(policy::sensitive_path(b"a/credentials"));
+}

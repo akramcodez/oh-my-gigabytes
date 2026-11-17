@@ -27,6 +27,7 @@ pub const DELETED_LOG_DAYS: i64 = 20;
 /// (raw bytes), and its estimated size.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DeletedRecord {
+    pub id: i64,
     pub at: i64,
     pub source: String,
     pub path: Vec<u8>,
@@ -57,12 +58,22 @@ pub(crate) fn log_deleted(
     source: &str,
     path: &[u8],
     bytes: u64,
-) -> Result<()> {
+) -> Result<i64> {
     db.execute(
         "INSERT INTO deleted_log(at,source,path,bytes) VALUES(?,?,?,?)",
         params![at, source, path, bytes.min(i64::MAX as u64) as i64],
     )?;
-    prune_deleted_log(db, at)
+    let id = db.last_insert_rowid();
+    prune_deleted_log(db, at)?;
+    Ok(id)
+}
+
+pub(crate) fn add_to_deleted(db: &Connection, id: i64, bytes: u64) -> Result<()> {
+    db.execute(
+        "UPDATE deleted_log SET bytes=min(bytes+?,9223372036854775807) WHERE id=?",
+        params![bytes.min(i64::MAX as u64) as i64, id],
+    )?;
+    Ok(())
 }
 
 pub struct Index {
@@ -647,17 +658,34 @@ impl Index {
         let now = crate::now();
         prune_deleted_log(&self.db, now)?;
         let mut statement = self.db.prepare(
-            "SELECT at,source,path,bytes FROM deleted_log WHERE at>=? ORDER BY at DESC,id DESC",
+            "SELECT id,at,source,path,bytes FROM deleted_log WHERE at>=? ORDER BY at DESC,id DESC",
         )?;
         let rows = statement.query_map([deleted_log_cutoff(now)], |r| {
             Ok(DeletedRecord {
-                at: r.get(0)?,
-                source: r.get(1)?,
-                path: r.get(2)?,
-                bytes: r.get::<_, i64>(3)?.max(0) as u64,
+                id: r.get(0)?,
+                at: r.get(1)?,
+                source: r.get(2)?,
+                path: r.get(3)?,
+                bytes: r.get::<_, i64>(4)?.max(0) as u64,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+    /// Remove lines of the deleted log (a text record only; nothing on disk changes). `None`
+    /// clears the whole log.
+    pub fn forget_deleted(&self, ids: Option<&[i64]>) -> Result<()> {
+        match ids {
+            None => {
+                self.db.execute("DELETE FROM deleted_log", [])?;
+            }
+            Some(ids) => {
+                for id in ids {
+                    self.db
+                        .execute("DELETE FROM deleted_log WHERE id=?", [id])?;
+                }
+            }
+        }
+        Ok(())
     }
     /// Bytes omg's own index takes on disk, including its write-ahead log.
     pub fn index_bytes(&self) -> u64 {

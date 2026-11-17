@@ -410,8 +410,14 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
                 ("d", "delete selected…"),
                 ("D", "empty all…"),
                 ("u", "remove from list"),
+                ("U", "remove all…"),
             ],
-            Tab::Deleted => &[("j k", "move"), ("1", "overview"), ("m", "options")],
+            Tab::Deleted => &[
+                ("j k", "move"),
+                ("u", "remove line"),
+                ("U", "clear log…"),
+                ("m", "options"),
+            ],
         }
     };
     let mut spans = vec![Span::raw(" ")];
@@ -1113,7 +1119,8 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
         out.push(row("D", "in OMG Trash: delete everything listed…"));
     }
     out.extend([
-        row("u", "remove from OMG Trash"),
+        row("u  U", "remove from OMG Trash  ·  remove everything (asks first)"),
+        row("u  U", "in Deleted: remove a line  ·  clear the log (asks first)"),
         row(
             "capability",
             &format!(

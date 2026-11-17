@@ -131,6 +131,16 @@ pub enum Action {
     DeleteSelected,
     EmptyTrash,
     Unmark,
+    /// Ask before taking every item off the OMG Trash list; `UnmarkAllNow` does it.
+    UnmarkAll,
+    UnmarkAllNow,
+    /// Remove the selected line of the deleted log.
+    ForgetDeleted,
+    /// Ask before clearing the deleted log; `ClearDeletedNow` does it.
+    ClearDeleted,
+    ClearDeletedNow,
+    /// Close a question without doing anything.
+    Dismiss,
     Preview,
     Open,
     /// The single "are you sure?" confirmation (warnings are shown in the same dialog).
@@ -383,10 +393,32 @@ impl App {
                 Action::EmptyTrash,
                 Tone::Danger,
             );
+        }
+        if s.tab == Tab::Trash && !s.marked_ids().is_empty() {
             push(
                 "Remove from OMG Trash",
                 Some('u'),
                 Action::Unmark,
+                Tone::Normal,
+            );
+            push(
+                "Remove everything from OMG Trash…",
+                Some('U'),
+                Action::UnmarkAll,
+                Tone::Normal,
+            );
+        }
+        if s.tab == Tab::Deleted && s.summary.as_ref().is_some_and(|x| !x.deleted.is_empty()) {
+            push(
+                "Remove this line from the log",
+                Some('u'),
+                Action::ForgetDeleted,
+                Tone::Normal,
+            );
+            push(
+                "Clear the deleted log…",
+                Some('U'),
+                Action::ClearDeleted,
                 Tone::Normal,
             );
         }
@@ -434,6 +466,28 @@ impl App {
             title: "Options".into(),
             body: vec![],
             choices,
+            cursor: 0,
+            tone: Tone::Normal,
+        });
+    }
+    fn ask(&mut self, title: &str, body: String, yes: &str, action: Action) {
+        self.state.menu = Some(Menu {
+            title: title.into(),
+            body: vec![(body, Tone::Normal)],
+            choices: vec![
+                Choice {
+                    label: "Cancel".into(),
+                    key: None,
+                    action: Action::Dismiss,
+                    tone: Tone::Normal,
+                },
+                Choice {
+                    label: yes.into(),
+                    key: None,
+                    action,
+                    tone: Tone::Normal,
+                },
+            ],
             cursor: 0,
             tone: Tone::Normal,
         });
@@ -509,7 +563,11 @@ impl App {
             label: "Delete everything except the protected items…".into(),
             key: None,
             action: Action::PrepareKeeping {
-                ids: plan.keepable.clone(),
+                ids: if plan.requested.is_empty() {
+                    plan.keepable.clone()
+                } else {
+                    plan.requested.clone()
+                },
                 undo,
                 discard: plan.fingerprint.clone(),
             },
@@ -575,6 +633,7 @@ impl App {
                 self.state.details = false;
             }
             Action::Help => self.state.help = true,
+            Action::Dismiss => {}
             // Space toggles: a saved item is taken back out of OMG Trash.
             Action::Mark => {
                 if let Some((path, allocated)) = self.state.target() {
@@ -632,6 +691,51 @@ impl App {
                 if !ids.is_empty() {
                     self.request(Request::Unmark(ids), None);
                 }
+            }
+            Action::UnmarkAll => {
+                let count = self.state.marked_ids().len();
+                if count > 0 {
+                    self.ask(
+                        "Remove everything from OMG Trash?",
+                        format!("{count} item(s) leave the list. Nothing on disk changes."),
+                        "Yes, remove all from the list",
+                        Action::UnmarkAllNow,
+                    );
+                }
+            }
+            Action::UnmarkAllNow => {
+                let ids = self.state.marked_ids();
+                self.state.selected.clear();
+                self.state.cursor = 0;
+                if !ids.is_empty() {
+                    self.request(Request::Unmark(ids), None);
+                }
+            }
+            Action::ForgetDeleted => {
+                let id = self
+                    .state
+                    .summary
+                    .as_ref()
+                    .and_then(|s| s.deleted.get(self.state.cursor))
+                    .map(|d| d.id);
+                if let Some(id) = id {
+                    self.request(Request::ForgetDeleted(Some(vec![id])), None);
+                }
+            }
+            Action::ClearDeleted => {
+                let count = self.state.summary.as_ref().map_or(0, |s| s.deleted.len());
+                if count > 0 {
+                    self.ask(
+                        "Clear the deleted log?",
+                        format!("{count} line(s) of text are removed. Nothing on disk changes."),
+                        "Yes, clear the log",
+                        Action::ClearDeletedNow,
+                    );
+                }
+            }
+            Action::ClearDeletedNow => {
+                self.state.cursor = 0;
+                self.request(Request::ForgetDeleted(None), None);
             }
             Action::Preview => {
                 if let Some(f) = visible_findings(&self.state).get(self.state.cursor) {
@@ -1061,6 +1165,15 @@ impl App {
             }
             KeyCode::Char('u') if tab == Tab::Trash => {
                 self.run_action(Action::Unmark).map(|_| ())?
+            }
+            KeyCode::Char('U') if tab == Tab::Trash => {
+                self.run_action(Action::UnmarkAll).map(|_| ())?
+            }
+            KeyCode::Char('u') if tab == Tab::Deleted => {
+                self.run_action(Action::ForgetDeleted).map(|_| ())?
+            }
+            KeyCode::Char('U') if tab == Tab::Deleted => {
+                self.run_action(Action::ClearDeleted).map(|_| ())?
             }
             KeyCode::Char('t') if tab == Tab::Findings => {
                 self.state.tier = (self.state.tier + 1) % 4;

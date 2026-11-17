@@ -145,6 +145,10 @@ pub struct DeletePlan {
     /// can be deleted around them (`prepare_delete_keeping_protected`). They are listed in `denied`.
     #[serde(default)]
     pub keepable: Vec<i64>,
+    /// The OMG Trash ids this plan was made from, so a plan around protected items can be made
+    /// from the same selection.
+    #[serde(default)]
+    pub requested: Vec<i64>,
 }
 
 /// Finding categories whose owner can recreate them or does not need them: scans suggest them and
@@ -865,6 +869,17 @@ impl Index {
     /// Freeze the exact set to delete and issue it to this session. The interface shows it and must
     /// pass the same plan back. The issued copy is the only one `delete_permanently` will accept.
     pub fn prepare_delete(&mut self, ids: &[i64], home: &Path) -> Result<DeletePlan> {
+        let (scan, items, denied, keepable) = self.classify(ids, home)?;
+        self.issue(scan, items, denied, keepable, ids.to_vec())
+    }
+    /// What `prepare_delete` would plan: items deletable whole, refusals, and cache folders that
+    /// can only be deleted around the protected items inside them.
+    #[allow(clippy::type_complexity)]
+    fn classify(
+        &self,
+        ids: &[i64],
+        home: &Path,
+    ) -> Result<(i64, Vec<Marked>, Vec<(Vec<u8>, String)>, Vec<i64>)> {
         if ids.is_empty() || ids.len() > 10_000 {
             bail!("select 1–10000 items in OMG Trash to delete");
         }
@@ -945,7 +960,7 @@ impl Index {
                 None => denied.push((item.path.clone(), "no longer in the index".into())),
             }
         }
-        self.issue(scan, items, denied, keepable)
+        Ok((scan, items, denied, keepable))
     }
     /// Freeze `items` and `denied` as a plan and issue it to this session. Only bytes the plan would
     /// free are estimated: a hard link whose other name survives is not counted.
@@ -955,6 +970,7 @@ impl Index {
         items: Vec<Marked>,
         denied: Vec<(Vec<u8>, String)>,
         keepable: Vec<i64>,
+        requested: Vec<i64>,
     ) -> Result<DeletePlan> {
         let mut estimated = 0;
         for item in &items {
@@ -969,6 +985,7 @@ impl Index {
             estimated,
             created,
             keepable,
+            requested,
         };
         self.issued
             .retain(|_, (_, held)| now() - held.created <= PLAN_TTL);
@@ -1000,7 +1017,11 @@ impl Index {
             "SELECT CAST(parent||name AS BLOB) FROM entries WHERE scan_id=?1 AND parent>=?2 AND parent<?3 AND (parent=?2 OR parent>?5) AND ({tests}) LIMIT ?4"
         ))?;
         let rows = statement.query_map(rusqlite::params_from_iter(values), |r| r.get(0))?;
-        Ok(rows.collect::<rusqlite::Result<_>>()?)
+        let rows: Vec<Vec<u8>> = rows.collect::<rusqlite::Result<_>>()?;
+        Ok(rows
+            .into_iter()
+            .filter(|hit| policy::sensitive_path(hit))
+            .collect())
     }
     /// What the index lists directly inside the directory `parent`.
     fn children_entries(&self, scan: i64, parent: &[u8]) -> Result<Vec<Entry>> {
@@ -1010,33 +1031,35 @@ impl Index {
         let rows = statement.query_map(params![scan, parent], crate::index::row_entry)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
-    /// Plan the deletion of cache folders around the protected items inside them: everything except
-    /// those items and the folders on the way to them. A folder is split into ordinary pieces (files
-    /// and folders with nothing protected inside) that are validated and removed exactly like any
-    /// other item at deletion time; a protected item is never a piece, and one that appears after
-    /// the review still stops the piece that contains it. Only cache and build folders qualify:
-    /// splitting a user's ordinary folder would leave it half deleted.
+    /// Plan the deletion of the selected OMG Trash items, deleting cache folders that hold
+    /// protected items around them: everything except those items and the folders on the way to
+    /// them. Items without protected items inside are planned whole, exactly as `prepare_delete`
+    /// plans them. A folder is split into ordinary pieces (files and folders with nothing protected
+    /// inside) that are validated and removed exactly like any other item at deletion time; a
+    /// protected item is never a piece, and one that appears after the review still stops the piece
+    /// that contains it. Only cache and build folders qualify: splitting a user's ordinary folder
+    /// would leave it half deleted.
     pub fn prepare_delete_keeping_protected(
         &mut self,
         ids: &[i64],
         home: &Path,
     ) -> Result<DeletePlan> {
-        if ids.is_empty() || ids.len() > 100 {
-            bail!("select 1–100 folders in OMG Trash");
+        let (scan, mut items, mut denied, keepable) = self.classify(ids, home)?;
+        if keepable.len() > 100 {
+            bail!("select at most 100 folders with protected items inside");
         }
-        let (scan, root, _) = self.scope()?;
-        if delete_support(&root)? == crate::capability::Support::Unsupported {
-            bail!("permanent deletion is not available in this build or on this filesystem");
-        }
+        let root = self.scope()?.1;
         let all = self.marked()?;
-        let mut items: Vec<Marked> = Vec::new();
-        let mut denied: Vec<(Vec<u8>, String)> = Vec::new();
+        let split: Vec<&Marked> = keepable
+            .iter()
+            .filter_map(|id| all.iter().find(|m| m.id == *id))
+            .collect();
+        // A split folder is replaced by its pieces: its refusal and anything selected inside it go.
+        denied.retain(|(path, _)| !split.iter().any(|m| m.path == *path));
+        items.retain(|i| !split.iter().any(|m| policy::inside(&i.path, &m.path, true)));
         let mut pieces: Vec<Entry> = Vec::new();
         let mut kept: Vec<Vec<u8>> = Vec::new();
-        for id in ids {
-            let Some(item) = all.iter().find(|m| m.id == *id) else {
-                bail!("item {id} is no longer in OMG Trash");
-            };
+        for item in split {
             let Some(entry) = self.entry(&item.path)? else {
                 denied.push((item.path.clone(), "no longer in the index".into()));
                 continue;
@@ -1160,7 +1183,7 @@ impl Index {
             let name = printable(path.rsplit(|b| *b == b'/').next().unwrap_or(&path));
             denied.push((path, format!("kept: protected name ({name})")));
         }
-        self.issue(scan, items, denied, vec![])
+        self.issue(scan, items, denied, vec![], ids.to_vec())
     }
     /// Permanently delete the items of a confirmed plan. `confirmed` must be the fingerprint the
     /// user saw; every target is revalidated again here and skipped if anything changed.
@@ -1210,6 +1233,9 @@ impl Index {
         {
             let root_dir = platform::native::open_root(&root)?;
             let before = platform::native::volume(&root_dir).ok().map(|v| v.1);
+            // Pieces of a folder deleted around protected items are logged as that one folder.
+            let saved: Vec<Vec<u8>> = self.marked()?.into_iter().map(|m| m.path).collect();
+            let mut groups: std::collections::HashMap<Vec<u8>, i64> = Default::default();
             for (position, item) in plan.items.iter().enumerate() {
                 if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
                     report.cancelled = true;
@@ -1259,13 +1285,31 @@ impl Index {
                             let tx = self.db.unchecked_transaction()?;
                             Self::set_target(&tx, operation, item.id, "deleted", "")?;
                             self.forget_in(&tx, scan, &item.path, &freed)?;
-                            crate::index::log_deleted(
-                                &tx,
-                                now(),
-                                "files",
-                                &joined(&root_raw, &item.path),
-                                freed.allocated,
-                            )?;
+                            let group = (item.id < 0)
+                                .then(|| {
+                                    saved
+                                        .iter()
+                                        .filter(|p| policy::inside(&item.path, p, true))
+                                        .max_by_key(|p| p.len())
+                                })
+                                .flatten();
+                            match group.and_then(|g| groups.get(g).map(|id| (g, *id))) {
+                                Some((_, log)) => {
+                                    crate::index::add_to_deleted(&tx, log, freed.allocated)?
+                                }
+                                None => {
+                                    let log = crate::index::log_deleted(
+                                        &tx,
+                                        now(),
+                                        "files",
+                                        &joined(&root_raw, group.unwrap_or(&item.path)),
+                                        freed.allocated,
+                                    )?;
+                                    if let Some(g) = group {
+                                        groups.insert(g.clone(), log);
+                                    }
+                                }
+                            }
                             tx.execute("DELETE FROM marked WHERE id=?", [item.id])?;
                             tx.commit()?;
                         } else {
@@ -1283,6 +1327,15 @@ impl Index {
                         self.record_target(operation, item.id, "skipped", &reason)?;
                         report.skipped.push((item.path.clone(), reason));
                     }
+                }
+            }
+            // A folder deleted around protected items stays listed with what is left in it.
+            for path in groups.keys() {
+                if let Some(left) = self.subtree(path)? {
+                    self.db.execute(
+                        "UPDATE marked SET allocated=? WHERE path=? AND root=?",
+                        params![left.allocated.min(i64::MAX as u64) as i64, path, &root_raw],
+                    )?;
                 }
             }
             let volume = platform::native::volume(&root_dir).ok();
@@ -1657,7 +1710,7 @@ mod unix {
                 entry.kind = "file".into();
             }
             let name_text = os::name(&name).to_string_lossy().into_owned();
-            if policy::always_sensitive(&name_text) {
+            if policy::sensitive_name(&name_text, &policy::folded(relative)) {
                 return Err(format!("contains a sensitive item ({})", child.display()));
             }
             // Caches and stale repositories may legitimately contain `.git`, keys or databases
@@ -2011,7 +2064,7 @@ mod windows {
             let child_relative = relative.join(&name);
             let child_path = with_name(path, &child.name);
             let shown = child_relative.display();
-            if policy::always_sensitive(&name.to_string_lossy()) {
+            if policy::sensitive_name(&name.to_string_lossy(), &policy::folded(relative)) {
                 return Err(format!("contains a sensitive item ({shown})"));
             }
             if let Some(why) = child.meta.restricted {
@@ -2132,6 +2185,7 @@ mod tests {
             estimated: 4096,
             created,
             keepable: vec![],
+            requested: vec![],
         };
         issued.insert(fingerprint, (7, plan.clone()));
         plan

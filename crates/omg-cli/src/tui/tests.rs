@@ -423,12 +423,14 @@ fn deleted_log_lists_date_size_and_escaped_path() {
     let mut summary = summary_with_marked(b"x");
     summary.deleted = vec![
         omg_core::index::DeletedRecord {
+            id: 0,
             at: 1_763_164_800,
             source: "files".into(),
             path: b"/home/u/evil\x1b[31mcache".to_vec(),
             bytes: 3 * 1024 * 1024,
         },
         omg_core::index::DeletedRecord {
+            id: 0,
             at: 1_763_164_800,
             source: "docker".into(),
             path: b"build cache: abc".to_vec(),
@@ -457,6 +459,61 @@ fn key_five_opens_the_deleted_log() {
     app.handle_key(event::KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE))
         .unwrap();
     assert_eq!(app.state.tab, Tab::Deleted);
+}
+
+#[test]
+fn capital_u_asks_then_clears_the_trash_list_or_the_deleted_log() {
+    let key = |c| event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+    let down = event::KeyEvent::new(KeyCode::Down, KeyModifiers::NONE);
+    let choose = event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    let (mut app, rx) = test_app();
+    let mut summary = summary_with_marked(b"x");
+    summary.deleted = vec![omg_core::index::DeletedRecord {
+        id: 7,
+        at: 1,
+        source: "files".into(),
+        path: b"/home/u/target".to_vec(),
+        bytes: 1,
+    }];
+    app.state.summary = Some(Box::new(summary));
+
+    app.state.tab = Tab::Trash;
+    app.handle_key(key('U')).unwrap();
+    assert!(
+        rx.try_iter().next().is_none(),
+        "nothing happens before the answer"
+    );
+    let menu = app.state.menu.as_ref().expect("asks first");
+    assert!(menu.title.contains("Remove everything"));
+    app.handle_key(down).unwrap();
+    app.handle_key(choose).unwrap();
+    assert!(
+        rx.try_iter()
+            .any(|r| matches!(r, Request::Unmark(ids) if ids == vec![1]))
+    );
+
+    app.state.tab = Tab::Deleted;
+    app.state.cursor = 0;
+    app.handle_key(key('u')).unwrap();
+    assert!(
+        rx.try_iter()
+            .any(|r| matches!(r, Request::ForgetDeleted(Some(ids)) if ids == vec![7]))
+    );
+    app.handle_key(key('U')).unwrap();
+    assert!(
+        app.state
+            .menu
+            .as_ref()
+            .unwrap()
+            .title
+            .contains("Clear the deleted log")
+    );
+    app.handle_key(down).unwrap();
+    app.handle_key(choose).unwrap();
+    assert!(
+        rx.try_iter()
+            .any(|r| matches!(r, Request::ForgetDeleted(None)))
+    );
 }
 
 fn test_app() -> (App, std::sync::mpsc::Receiver<Request>) {
@@ -572,6 +629,7 @@ fn plan_of(
         estimated: 9 << 30,
         created: 0,
         keepable,
+        requested: vec![],
     }
 }
 

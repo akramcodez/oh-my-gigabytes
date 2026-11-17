@@ -40,6 +40,7 @@ export type Sim = {
   gone: string[];
   freed: number;
   log: { path: string; size: number }[];
+  deleted: { path: string; size: number }[];
   menu: Menu | null;
   message: string;
   theme: Theme;
@@ -194,6 +195,7 @@ export function initial(): Sim {
     gone: [],
     freed: 0,
     log: [],
+    deleted: [],
     menu: null,
     message: WELCOME,
     theme: "auto",
@@ -247,7 +249,7 @@ const alive = (sim: Sim, path: string) => !sim.gone.some((p) => path === p || pa
 function node(sim: Sim, path: string): Node | undefined {
   const n = TREE[path];
   if (!n || !alive(sim, path)) return undefined;
-  const lost = sim.log.reduce((sum, d) => (d.path.startsWith(path + "/") ? sum + d.size : sum), 0);
+  const lost = sim.deleted.reduce((sum, d) => (d.path.startsWith(path + "/") ? sum + d.size : sum), 0);
   return { ...n, size: Math.max(0, n.size - lost) };
 }
 const children = (sim: Sim, dir: string) =>
@@ -336,11 +338,64 @@ function remove(sim: Sim, paths: string[]): Sim {
     details: false,
     gone: [...sim.gone, ...paths],
     log: [...items, ...sim.log],
+    deleted: [...items, ...sim.deleted],
     trash: sim.trash.filter((p) => !paths.includes(p)),
     selected: [],
     freed: sim.freed + total,
     message: `Deleted ${items.length} item(s), ≈ ${bytes(total)}`,
   });
+}
+
+function ask(sim: Sim, title: string, body: string, yes: string, act: string): Sim {
+  const choices: Choice[] = [
+    { label: "Cancel", act: "dismiss" },
+    { label: yes, tone: "danger", act },
+  ];
+  return { ...sim, menu: { title, tone: "warn", body: [[body]], choices, cursor: 0 } };
+}
+
+function askUnmarkAll(sim: Sim): Sim {
+  if (!sim.trash.length) return sim;
+  return ask(
+    sim,
+    "Remove everything from OMG Trash?",
+    `${sim.trash.length} item(s) leave the list. Nothing is deleted from disk.`,
+    "Yes, remove all from the list",
+    "unmark-all",
+  );
+}
+
+function unmarkAll(sim: Sim): Sim {
+  const n = sim.trash.length;
+  return clampCursor({
+    ...sim,
+    trash: [],
+    auto: [],
+    selected: [],
+    dismissed: [...sim.dismissed, ...sim.trash],
+    message: `Removed ${n} item(s) from OMG Trash. Nothing changed on disk.`,
+  });
+}
+
+function forget(sim: Sim): Sim {
+  const i = sim.cursor[4];
+  if (!sim.log[i]) return sim;
+  return clampCursor({
+    ...sim,
+    log: sim.log.filter((_, j) => j !== i),
+    message: "Removed the line from the deleted log.",
+  });
+}
+
+function askClearLog(sim: Sim): Sim {
+  if (!sim.log.length) return sim;
+  return ask(
+    sim,
+    "Clear the deleted log?",
+    `${sim.log.length} line(s) are removed from the record. Nothing changes on disk.`,
+    "Yes, clear the log",
+    "clear-log",
+  );
 }
 
 function listLength(sim: Sim, tab = sim.tab): number {
@@ -395,6 +450,11 @@ function optionsMenu(sim: Sim): Sim {
     choices.push({ label: "Delete selected permanently…", key: "d", act: "delete-selected", tone: "danger" });
     choices.push({ label: "Empty OMG Trash permanently…", key: "D", act: "empty", tone: "danger" });
     choices.push({ label: "Remove from OMG Trash", key: "u", act: "unmark" });
+    choices.push({ label: "Remove everything from OMG Trash…", key: "U", act: "unmark-all-ask" });
+  }
+  if (sim.tab === 4 && sim.log.length) {
+    choices.push({ label: "Remove this line from the log", key: "u", act: "forget" });
+    choices.push({ label: "Clear the deleted log…", key: "U", act: "clear-log-ask" });
   }
   choices.push({ label: "Clean unused Docker data…", act: "docker" });
   choices.push({ label: "Scan now", key: "r", act: "scan" });
@@ -422,6 +482,18 @@ function choose(sim: Sim, c: Choice): Sim {
   switch (c.act) {
     case "cancel":
       return { ...closed, message: "Cancelled. Nothing was deleted." };
+    case "dismiss":
+      return closed;
+    case "unmark-all-ask":
+      return askUnmarkAll(closed);
+    case "unmark-all":
+      return unmarkAll(closed);
+    case "forget":
+      return forget(closed);
+    case "clear-log-ask":
+      return askClearLog(closed);
+    case "clear-log":
+      return clampCursor({ ...closed, log: [], message: "Cleared the deleted log. Nothing changed on disk." });
     case "delete":
       return remove(sim, menu.paths ?? []);
     case "delete-one":
@@ -524,8 +596,13 @@ export function key(sim: Sim, k: string): Sim {
       return { ...sim, selected };
     }
     if (k === "u" && path) return clampCursor(toggleTrash(sim, path));
+    if (k === "U") return askUnmarkAll(sim);
     if (k === "D") return planDelete(sim, [...sim.trash]);
     if (k === "d") return planDelete(sim, sim.selected.length ? [...sim.selected] : path ? [path] : []);
+  }
+  if (sim.tab === 4) {
+    if (k === "u") return forget(sim);
+    if (k === "U") return askClearLog(sim);
   }
   if (k === "d" && (sim.tab === 1 || sim.tab === 2) && path) return planDelete(sim, [path]);
   return sim;
@@ -967,7 +1044,8 @@ function help(): Line[] {
     row("space", "add / remove from OMG Trash (saves the path; nothing changes on disk)"),
     row("d", "delete permanently… (always asks; cannot be undone)"),
     row("D", "in OMG Trash: delete everything listed…"),
-    row("u", "remove from OMG Trash"),
+    row("u  U", "remove from OMG Trash  ·  remove everything (asks first)"),
+    row("u  U", "in Deleted: remove a line  ·  clear the log (asks first)"),
     row("capability", "permanent delete: development-unqualified · OS Trash: unsupported"),
     row("r  R", "scan  ·  full rescan        esc stops a scan"),
     row("p i o t", "preview · show in file manager · tier filter"),
@@ -995,8 +1073,8 @@ const OPTIONS: [string, string][][] = [
   [["r", "scan"], ["2", "browse"], ["3", "findings"], ["4", "OMG Trash"], ["m", "options"]],
   [["⏎", "open"], ["⌫", "up"], ["␣", "add / remove OMG Trash"], ["d", "delete…"], ["m", "options"]],
   [["⏎", "details"], ["␣", "add / remove OMG Trash"], ["d", "delete…"], ["p", "preview"], ["t", "tier"]],
-  [["␣", "select"], ["d", "delete selected…"], ["D", "empty all…"], ["u", "remove from list"]],
-  [["j k", "move"], ["1", "overview"], ["m", "options"]],
+  [["␣", "select"], ["d", "delete selected…"], ["D", "empty all…"], ["u", "remove"], ["U", "remove all…"]],
+  [["j k", "move"], ["u", "remove line"], ["U", "clear log…"], ["m", "options"]],
 ];
 
 function optionsBar(sim: Sim, cols: number): Line[] {

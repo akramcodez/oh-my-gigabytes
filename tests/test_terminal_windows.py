@@ -185,8 +185,8 @@ class ConPtyDeleteTests(unittest.TestCase):
             cache = local / "uv" / "cache" / "archive-v0"
             (cache / "aaa" / "lib").mkdir(parents=True)
             (cache / "aaa" / "lib" / "mod.py").write_bytes(b"x" * (3 << 20))
-            (cache / "bbb" / "pkg" / "credentials").mkdir(parents=True)
-            (cache / "bbb" / "pkg" / "credentials" / "auth.py").write_text("library code")
+            (cache / "bbb" / "pkg" / ".aws").mkdir(parents=True)
+            (cache / "bbb" / "pkg" / ".aws" / "auth.py").write_text("library code")
             (cache / "bbb" / "pkg" / "__init__.py").write_bytes(b"y" * (1 << 20))
             (cache / "ccc").mkdir()
             (cache / "ccc" / "data").write_bytes(b"z" * (1 << 20))
@@ -217,7 +217,7 @@ class ConPtyDeleteTests(unittest.TestCase):
                 self.assertFalse((cache / "aaa").exists())
                 self.assertFalse((cache / "ccc").exists())
                 self.assertFalse((cache / "bbb" / "pkg" / "__init__.py").exists())
-                self.assertEqual((cache / "bbb" / "pkg" / "credentials" / "auth.py").read_text(), "library code")
+                self.assertEqual((cache / "bbb" / "pkg" / ".aws" / "auth.py").read_text(), "library code")
                 ui.send("q")
                 self.assertEqual(ui.wait(), 0)
             finally:

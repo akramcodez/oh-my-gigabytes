@@ -834,15 +834,14 @@ fn delete_waits_out_housekeeping_but_a_running_scan_still_stops_it() {
     assert!(!h.join("big.iso").exists());
 }
 
-/// A uv-like cache: Python packages ship library folders called `credentials`, which carry a
-/// protected name, next to ordinary packages.
+/// A uv-like cache with a protected name inside (`.aws` is protected everywhere).
 fn cache_with_credentials_folder(h: &Path) {
     let root = h.join(".cache/uv");
     fs::create_dir_all(root.join("archive-v0/aaa/lib")).unwrap();
     fs::write(root.join("archive-v0/aaa/lib/mod.py"), vec![1u8; 20_000]).unwrap();
-    fs::create_dir_all(root.join("archive-v0/bbb/pkg/credentials")).unwrap();
+    fs::create_dir_all(root.join("archive-v0/bbb/pkg/.aws")).unwrap();
     fs::write(
-        root.join("archive-v0/bbb/pkg/credentials/auth.py"),
+        root.join("archive-v0/bbb/pkg/.aws/auth.py"),
         b"library code",
     )
     .unwrap();
@@ -899,7 +898,7 @@ fn a_cache_with_protected_names_inside_can_be_deleted_around_them() {
     assert!(
         !pieces
             .iter()
-            .any(|p| p.contains("credentials") || p.ends_with("bbb") || p.ends_with("/pkg")),
+            .any(|p| p.contains(".aws") || p.ends_with("bbb") || p.ends_with("/pkg")),
         "{pieces:?}"
     );
     assert!(plan.items.iter().all(|i| i.id < 0 && i.birth.is_some()));
@@ -907,7 +906,7 @@ fn a_cache_with_protected_names_inside_can_be_deleted_around_them() {
     assert!(
         plan.denied
             .iter()
-            .any(|(p, why)| p.ends_with(b"bbb/pkg/credentials") && why.starts_with("kept"))
+            .any(|(p, why)| p.ends_with(b"bbb/pkg/.aws") && why.starts_with("kept"))
     );
 
     let report = index
@@ -925,7 +924,7 @@ fn a_cache_with_protected_names_inside_can_be_deleted_around_them() {
     assert!(!root.join("simple").exists());
     assert!(!root.join("archive-v0/bbb/pkg/__init__.py").exists());
     assert_eq!(
-        fs::read(root.join("archive-v0/bbb/pkg/credentials/auth.py")).unwrap(),
+        fs::read(root.join("archive-v0/bbb/pkg/.aws/auth.py")).unwrap(),
         b"library code",
         "the protected folder is untouched"
     );
@@ -933,7 +932,7 @@ fn a_cache_with_protected_names_inside_can_be_deleted_around_them() {
     assert!(index.entry(b".cache/uv/archive-v0/aaa").unwrap().is_none());
     assert!(
         index
-            .entry(b".cache/uv/archive-v0/bbb/pkg/credentials")
+            .entry(b".cache/uv/archive-v0/bbb/pkg/.aws")
             .unwrap()
             .is_some()
     );
@@ -945,6 +944,130 @@ fn a_cache_with_protected_names_inside_can_be_deleted_around_them() {
             .iter()
             .any(|h| h.kind == "delete" && h.outcome == "partial")
     );
+}
+
+#[test]
+fn deleting_around_protected_items_keeps_the_rest_of_the_selection_and_logs_one_line_per_folder() {
+    let (home, state) = setup();
+    let h = home.path();
+    cache_with_credentials_folder(h);
+    fs::create_dir_all(h.join("Downloads")).unwrap();
+    fs::write(h.join("Downloads/old.zip"), vec![5u8; 20_000]).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b".cache/uv", 1, h).unwrap();
+    index.mark(b"Downloads/old.zip", 1, h).unwrap();
+    let cache = id_of(&index, b".cache/uv");
+    let file = id_of(&index, b"Downloads/old.zip");
+    let listed = index
+        .marked()
+        .unwrap()
+        .into_iter()
+        .find(|m| m.id == cache)
+        .unwrap()
+        .allocated;
+
+    let whole = index.prepare_delete(&[cache, file], h).unwrap();
+    assert_eq!(whole.keepable, vec![cache]);
+    assert_eq!(whole.requested, vec![cache, file]);
+    index.discard_plan(&whole.fingerprint);
+
+    // The plan around protected items still deletes the item that had none inside.
+    let plan = index
+        .prepare_delete_keeping_protected(&whole.requested, h)
+        .unwrap();
+    assert!(plan.items.iter().any(|i| i.id == file));
+    assert!(plan.items.iter().any(|i| i.id < 0));
+    assert!(
+        !plan
+            .denied
+            .iter()
+            .any(|(_, why)| why.contains("cannot be deleted whole")),
+        "{:?}",
+        plan.denied
+    );
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert_eq!(
+        report.deleted.len(),
+        plan.items.len(),
+        "{:?}",
+        report.skipped
+    );
+    assert!(!h.join("Downloads/old.zip").exists());
+    assert!(!h.join(".cache/uv/simple").exists());
+    assert!(h.join(".cache/uv/archive-v0/bbb/pkg/.aws/auth.py").exists());
+
+    // One line for the folder (not one per piece) and one for the file.
+    let log = index.deleted_log().unwrap();
+    let paths: Vec<Vec<u8>> = log.iter().map(|r| r.path.clone()).collect();
+    assert_eq!(log.len(), 2, "{paths:?}");
+    let folder = log
+        .iter()
+        .find(|r| r.path.ends_with(b"/.cache/uv"))
+        .expect("the folder is logged by its own path");
+    assert!(folder.bytes >= 60_000, "{}", folder.bytes);
+    assert!(log.iter().any(|r| r.path.ends_with(b"/Downloads/old.zip")));
+
+    // The folder stays in OMG Trash with what is left in it, the file leaves it.
+    let marked = index.marked().unwrap();
+    let left = marked.iter().find(|m| m.id == cache).unwrap().allocated;
+    assert!(left != listed && left < folder.bytes, "{left}, {listed}");
+    assert!(!marked.iter().any(|m| m.id == file));
+
+    // The log is a text record: lines can be removed, one or all.
+    index.forget_deleted(Some(&[folder.id])).unwrap();
+    assert_eq!(index.deleted_log().unwrap().len(), 1);
+    index.forget_deleted(None).unwrap();
+    assert!(index.deleted_log().unwrap().is_empty());
+}
+
+#[test]
+fn credentials_folders_in_package_and_build_output_are_not_protected() {
+    let (home, state) = setup();
+    let h = home.path();
+    let out =
+        h.join("app/target/release/build/webrtc-sys-1a2b/out/include/grpc/test/core/credentials");
+    fs::create_dir_all(&out).unwrap();
+    fs::write(out.join("fake.h"), vec![1u8; 20_000]).unwrap();
+    fs::write(h.join("app/Cargo.toml"), b"[package]\nname=\"app\"\n").unwrap();
+    let uv = h.join(".cache/uv/archive-v0/aaa/google/auth/credentials");
+    fs::create_dir_all(&uv).unwrap();
+    fs::write(uv.join("__init__.py"), b"library code").unwrap();
+    // The same name elsewhere, and other protected names inside build output, stay protected.
+    fs::create_dir_all(h.join("app/target/release/build/x-1/out/.ssh")).unwrap();
+    fs::write(h.join("app/target/release/build/x-1/out/.ssh/id"), b"k").unwrap();
+    fs::create_dir_all(h.join("app/target/debug/credentials")).unwrap();
+    fs::write(h.join("app/target/debug/credentials/token"), b"secret").unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+
+    index.mark(b".cache/uv", 1, h).unwrap();
+    let id = id_of(&index, b".cache/uv");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 1, "{:?}", report.skipped);
+    assert!(!h.join(".cache/uv").exists());
+
+    index
+        .mark(b"app/target/release/build/webrtc-sys-1a2b", 1, h)
+        .unwrap();
+    let id = id_of(&index, b"app/target/release/build/webrtc-sys-1a2b");
+    let plan = index.prepare_delete(&[id], h).unwrap();
+    assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
+    index.discard_plan(&plan.fingerprint);
+
+    for protected in ["app/target/release/build/x-1", "app/target/debug"] {
+        index.mark(protected.as_bytes(), 1, h).unwrap();
+        let id = id_of(&index, protected.as_bytes());
+        let plan = index.prepare_delete(&[id], h).unwrap();
+        assert!(plan.items.is_empty(), "{protected}");
+        index.discard_plan(&plan.fingerprint);
+    }
 }
 
 #[test]
@@ -965,7 +1088,7 @@ fn only_cache_folders_can_be_deleted_around_protected_items() {
     assert!(whole.denied[0].1.contains("sensitive item"));
     let plan = index.prepare_delete_keeping_protected(&[id], h).unwrap();
     assert!(plan.items.is_empty());
-    assert!(plan.denied[0].1.contains("only cache and build folders"));
+    assert!(plan.denied[0].1.contains("sensitive item"));
     assert!(h.join("Documents/project/notes.txt").exists());
     assert!(h.join("Documents/project/credentials/token").exists());
 }

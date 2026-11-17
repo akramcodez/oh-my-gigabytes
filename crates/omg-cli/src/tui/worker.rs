@@ -25,6 +25,8 @@ pub enum Request {
         allocated: u64,
     },
     Unmark(Vec<i64>),
+    /// Remove lines of the deleted log; `None` clears it.
+    ForgetDeleted(Option<Vec<i64>>),
     PrepareDelete(Vec<i64>),
     /// Plan the deletion of these cache folders around the protected items inside them. `undo`
     /// are saved items to take back out of OMG Trash if the user cancels.
@@ -233,6 +235,18 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                                 index.unmark(id)?;
                             }
                             send(Response::Info("Removed from OMG Trash.".into()));
+                            refresh = true;
+                        }
+                        Request::ForgetDeleted(ids) => {
+                            index.forget_deleted(ids.as_deref())?;
+                            send(Response::Info(
+                                if ids.is_none() {
+                                    "Cleared the deleted log. Nothing changed on disk."
+                                } else {
+                                    "Removed the line from the deleted log."
+                                }
+                                .into(),
+                            ));
                             refresh = true;
                         }
                         Request::PrepareDelete(ids) => {

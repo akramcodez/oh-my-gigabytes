@@ -56,6 +56,54 @@ pub fn always_sensitive(name: &str) -> bool {
     ALWAYS_SENSITIVE.contains(&fold(name).as_str())
 }
 
+/// Installed third-party packages (`node_modules`, `site-packages`, `dist-packages`), uv's
+/// unpacked archives and Cargo build-script output (`target/[triple/]profile/build/crate/out`),
+/// given folded path components. Their content comes from a registry or a build.
+pub fn third_party_tree(parts: &[String]) -> bool {
+    parts.iter().any(|p| {
+        matches!(
+            p.as_str(),
+            "node_modules" | "site-packages" | "dist-packages"
+        )
+    }) || parts
+        .windows(2)
+        .any(|w| w[0] == "uv" && w[1].starts_with("archive-v"))
+        || parts
+            .windows(5)
+            .any(|w| w[0] == "target" && w[2] == "build" && w[4] == "out")
+        || parts
+            .windows(6)
+            .any(|w| w[0] == "target" && w[3] == "build" && w[5] == "out")
+}
+
+/// `always_sensitive`, except that a `credentials` folder or file inside a third-party tree is
+/// package or test code (gRPC, google-auth), not the user's secret. Every other name, and the
+/// key, database and `.env` suffixes, stay protected there too.
+pub fn sensitive_name(name: &str, above: &[String]) -> bool {
+    let name = fold(name);
+    ALWAYS_SENSITIVE.contains(&name.as_str()) && !(name == "credentials" && third_party_tree(above))
+}
+
+/// `sensitive_name` for a stored path (raw bytes, `/`-separated).
+pub fn sensitive_path(path: &[u8]) -> bool {
+    let mut parts: Vec<String> = path
+        .split(|b| *b == b'/')
+        .filter(|p| !p.is_empty())
+        .map(|p| fold(&String::from_utf8_lossy(p)))
+        .collect();
+    let Some(name) = parts.pop() else {
+        return false;
+    };
+    sensitive_name(&name, &parts)
+}
+
+/// Folded components of a relative path.
+pub fn folded(path: &Path) -> Vec<String> {
+    path.components()
+        .map(|part| fold(&part.as_os_str().to_string_lossy()))
+        .collect()
+}
+
 /// Lowercase for comparing names. APFS also folds letters such as `ſ` and the Kelvin sign, so
 /// `.ſsh` names the same folder as `.ssh`; folding more than ASCII only ever protects more.
 pub fn fold(name: &str) -> String {
@@ -375,7 +423,10 @@ pub fn hard_protection(root: &Path, entry: &Entry) -> Option<String> {
     if cfg!(target_os = "macos") && parts.iter().any(|part| part.ends_with(".app")) {
         return Some("application bundle; uninstall it from Finder".into());
     }
-    for value in &parts {
+    for (at, value) in parts.iter().enumerate() {
+        if value == "credentials" && third_party_tree(&parts[..at]) {
+            continue;
+        }
         if [
             ".git",
             ".ssh",
