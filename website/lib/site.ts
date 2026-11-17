@@ -21,7 +21,7 @@ export const SPONSOR_CONTACT = X_URL;
 const DODO_CHECKOUT = (process.env.NEXT_PUBLIC_DODO_CHECKOUT_URL ?? "https://checkout.dodopayments.com").replace(/\/$/, "");
 const DODO_PRODUCT = process.env.NEXT_PUBLIC_DODO_SPONSOR_PRODUCT ?? "";
 export const SPONSOR_CHECKOUT = DODO_PRODUCT
-  ? `${DODO_CHECKOUT}/buy/${DODO_PRODUCT}?quantity=1&redirect_url=${encodeURIComponent(`${SITE}/sponsor/thanks`)}`
+  ? `${DODO_CHECKOUT}/buy/${DODO_PRODUCT}?quantity=1&metadata_source=website&redirect_url=${encodeURIComponent(`${SITE}/sponsor/thanks`)}`
   : SPONSOR_CONTACT;
 
 export type Sponsor = { name: string; tagline: string; url: string; logo?: string; logoDark?: string; house?: boolean };
