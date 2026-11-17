@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 
 const MAX_BODY = 64 * 1024;
 const TOLERANCE = 5 * 60;
+const EMAIL = /^[^\s@<>",]{1,64}@[^\s@<>",]{1,190}\.[a-z]{2,}$/i;
 
 function verify(secret: string, id: string, timestamp: string, signatures: string, body: string) {
   const ts = Number(timestamp);
@@ -52,6 +53,7 @@ export async function POST(req: Request) {
 
   const p = event.data ?? {};
   const m = p.metadata ?? {};
+  const replyTo = [m.sponsor_email, p.customer?.email].find((e) => typeof e === "string" && EMAIL.test(e));
   const amount = typeof p.total_amount === "number" ? `${(p.total_amount / 100).toFixed(2)} ${p.currency ?? ""}`.trim() : "unknown";
   const rows: [string, unknown][] = [
     ["Product name", m.sponsor_name],
@@ -77,7 +79,7 @@ export async function POST(req: Request) {
     body: JSON.stringify({
       from: process.env.SPONSOR_MAIL_FROM ?? "OMG Sponsors <onboarding@resend.dev>",
       to: [process.env.SPONSOR_MAIL_TO ?? SPONSOR_EMAIL],
-      reply_to: m.sponsor_email ?? p.customer?.email,
+      ...(replyTo && { reply_to: replyTo }),
       subject: `New sponsor paid: ${String(m.sponsor_name ?? "unknown").slice(0, 60)}`,
       html,
     }),
