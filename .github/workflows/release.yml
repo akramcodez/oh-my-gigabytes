@@ -27,8 +27,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # `flags` selects the build: default features include permanent delete, which only Linux and
-          # Windows offer. `cleanup` is what `omg doctor` must then report.
+          # `flags` selects the build: default features include permanent delete on every target.
+          # `cleanup` is what `omg doctor` must then report.
           - { target: linux-x64-gnu, os: ubuntu-24.04, image: 'quay.io/pypa/manylinux_2_28_x86_64', file: omg, flags: '', cleanup: development-unqualified }
           - { target: linux-arm64-gnu, os: ubuntu-24.04-arm, image: 'quay.io/pypa/manylinux_2_28_aarch64', file: omg, flags: '', cleanup: development-unqualified }
           - { target: win32-x64, os: windows-latest, triple: x86_64-pc-windows-msvc, file: omg.exe, flags: '', cleanup: development-unqualified }

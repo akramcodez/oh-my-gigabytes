@@ -254,7 +254,7 @@ test('sign-release can mark the packages publishable only when asked', t => {
     const meta = JSON.parse(tarText(path.join(out, `tarballs/${name}-0.1.0-beta.1.tgz`), 'package/package.json'));
     assert.match(meta.repository.url, /github\.com\/akramcodez\/oh-my-gigabytes/);
     assert.ok(meta.homepage && meta.bugs && meta.description, name);
-    assert.match(tarText(path.join(out, `tarballs/${name}-0.1.0-beta.1.tgz`), 'package/README.md'), /npm install --global oh-my-gigabytes@beta/);
+    assert.match(tarText(path.join(out, `tarballs/${name}-0.1.0-beta.1.tgz`), 'package/README.md'), /npm install --global oh-my-gigabytes\n/);
   }
 });
 

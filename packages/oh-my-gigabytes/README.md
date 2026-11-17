@@ -2,12 +2,12 @@
 
 **OMG (Oh My Gigabytes)** shows where your disk space went and helps you take it back: developer caches, build folders, old toolchains and leftovers, each with an explanation, deleted only after you confirm.
 
-> Development-preview beta. Delete is permanent and not qualified. Nothing is uploaded.
+> Development preview. Delete is permanent and not qualified. Nothing is uploaded.
 
 ## 1. Install
 
 ```sh
-npm install --global oh-my-gigabytes@beta
+npm install --global oh-my-gigabytes
 omg --version
 ```
 
