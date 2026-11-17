@@ -1,6 +1,8 @@
 import { LuPlus } from "react-icons/lu";
+import PendingSlot from "@/components/PendingSlot";
+import SponsorButton from "@/components/SponsorButton";
 import SponsorLogo from "@/components/SponsorLogo";
-import { SPONSORS, SPONSOR_CHECKOUT } from "@/lib/site";
+import { SPONSORS } from "@/lib/site";
 
 export default function NavSponsors() {
   return (
@@ -16,10 +18,11 @@ export default function NavSponsors() {
           </a>
         </li>
       ))}
+      <PendingSlot variant="nav" />
       <li>
-        <a className="nav-sponsor is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" title="Sponsor OMG" aria-label="Sponsor OMG">
+        <SponsorButton className="nav-sponsor is-open" label="Sponsor OMG" title="Sponsor OMG">
           <LuPlus aria-hidden="true" />
-        </a>
+        </SponsorButton>
       </li>
     </ul>
   );

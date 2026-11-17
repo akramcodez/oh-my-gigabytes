@@ -2,6 +2,7 @@ import CopyCommand from "@/components/CopyCommand";
 import Downloads from "@/components/Downloads";
 import Sponsors from "@/components/Sponsors";
 import NavSponsors from "@/components/NavSponsors";
+import SponsorDialog from "@/components/SponsorDialog";
 import Stars from "@/components/Stars";
 import { starCount } from "@/lib/github";
 import { totalDownloads } from "@/lib/npm";
@@ -483,6 +484,7 @@ export default async function Home() {
           <section id="sponsors" className="section" tabIndex={-1} aria-labelledby="sponsors-title">
             <Sponsors />
           </section>
+          <SponsorDialog />
 
           <section className="cta" aria-label="Install">
             <h2>

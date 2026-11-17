@@ -1,9 +1,10 @@
 import { LuMail, LuPlus } from "react-icons/lu";
 import { SiX } from "react-icons/si";
+import PendingSlot from "@/components/PendingSlot";
+import SponsorButton from "@/components/SponsorButton";
 import SponsorLogo from "@/components/SponsorLogo";
 import {
   SPONSORS,
-  SPONSOR_CHECKOUT,
   SPONSOR_EMAIL,
   SPONSOR_PRICE,
   X_URL,
@@ -39,19 +40,14 @@ export default function Sponsors() {
               </a>
             </li>
           ))}
+          <PendingSlot variant="grid" />
           <li>
-            <a
-              className="icon-slot is-open"
-              href={SPONSOR_CHECKOUT}
-              target="_blank"
-              rel="noopener"
-              aria-label={`Add your brand for ${SPONSOR_PRICE}`}
-            >
+            <SponsorButton className="icon-slot is-open" label={`Add your brand for ${SPONSOR_PRICE}`}>
               <span className="icon-box" aria-hidden="true">
                 <LuPlus />
               </span>
               <span className="icon-name">Add yours</span>
-            </a>
+            </SponsorButton>
           </li>
         </ul>
         <p className="sponsor-ask">
