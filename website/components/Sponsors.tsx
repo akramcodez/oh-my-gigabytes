@@ -57,7 +57,7 @@ export default function Sponsors() {
         <p className="sponsor-ask">
           Have questions?
           <a href={X_URL} target="_blank" rel="noopener">
-            <SiX aria-hidden="true" />X
+            <SiX className="x-logo" aria-hidden="true" />X / Twitter
           </a>
           <a href={`mailto:${SPONSOR_EMAIL}`}>
             <LuMail aria-hidden="true" />

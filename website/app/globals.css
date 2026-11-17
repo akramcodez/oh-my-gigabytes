@@ -1488,6 +1488,11 @@ main:focus {
   transition: color 0.15s;
 }
 
+.sponsor-ask .x-logo {
+  width: 11px;
+  height: 11px;
+}
+
 .sponsor-ask a:hover {
   color: var(--t-brand);
 }
