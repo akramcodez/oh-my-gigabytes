@@ -1,6 +1,13 @@
-import { LuPlus } from "react-icons/lu";
+import { LuMail, LuPlus } from "react-icons/lu";
+import { SiX } from "react-icons/si";
 import SponsorLogo from "@/components/SponsorLogo";
-import { REPO, SPONSORS, SPONSOR_CHECKOUT, SPONSOR_PRICE, X_URL } from "@/lib/site";
+import {
+  SPONSORS,
+  SPONSOR_CHECKOUT,
+  SPONSOR_EMAIL,
+  SPONSOR_PRICE,
+  X_URL,
+} from "@/lib/site";
 
 export default function Sponsors() {
   return (
@@ -10,20 +17,8 @@ export default function Sponsors() {
           Lifetime brand exposure, <em>one payment.</em>
         </h2>
         <p className="section-lead">
-          Showcase your product to developers on OMG and get a dedicated shoutout on X.
-        </p>
-        <p className="sponsor-price">
-          <span className="sponsor-amount">{SPONSOR_PRICE}</span>
-          <span className="sponsor-terms">one-time, for a lifetime slot and a shoutout on X</span>
-        </p>
-        <p className="sponsor-ask">
-          Have questions?
-          <a href={X_URL} target="_blank" rel="noopener">
-            X / Twitter
-          </a>
-          <a href={`${REPO}/issues/new?title=${encodeURIComponent("Sponsor slot")}`} target="_blank" rel="noopener">
-            GitHub
-          </a>
+          Your logo on OMG plus a shoutout on X, for{" "}
+          <strong className="sponsor-amount">{SPONSOR_PRICE}</strong> once.
         </p>
       </div>
       <div className="sponsor-shelf">
@@ -31,7 +26,12 @@ export default function Sponsors() {
         <ul className="sponsor-icons">
           {SPONSORS.map((s) => (
             <li key={s.name}>
-              <a className="icon-slot" href={s.url} target="_blank" rel={s.house ? "noopener" : "sponsored noopener"}>
+              <a
+                className="icon-slot"
+                href={s.url}
+                target="_blank"
+                rel={s.house ? "noopener" : "sponsored noopener"}
+              >
                 <span className="icon-box">
                   <SponsorLogo sponsor={s} size={96} alt="" />
                 </span>
@@ -40,7 +40,13 @@ export default function Sponsors() {
             </li>
           ))}
           <li>
-            <a className="icon-slot is-open" href={SPONSOR_CHECKOUT} target="_blank" rel="noopener" aria-label={`Add your brand for ${SPONSOR_PRICE}`}>
+            <a
+              className="icon-slot is-open"
+              href={SPONSOR_CHECKOUT}
+              target="_blank"
+              rel="noopener"
+              aria-label={`Add your brand for ${SPONSOR_PRICE}`}
+            >
               <span className="icon-box" aria-hidden="true">
                 <LuPlus />
               </span>
@@ -48,6 +54,16 @@ export default function Sponsors() {
             </a>
           </li>
         </ul>
+        <p className="sponsor-ask">
+          Have questions?
+          <a href={X_URL} target="_blank" rel="noopener">
+            <SiX aria-hidden="true" />X
+          </a>
+          <a href={`mailto:${SPONSOR_EMAIL}`}>
+            <LuMail aria-hidden="true" />
+            Email
+          </a>
+        </p>
       </div>
     </>
   );
