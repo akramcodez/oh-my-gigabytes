@@ -207,7 +207,7 @@ const RULES = [
   "Links are never followed, and scans stop at mount boundaries.",
   "Protection rules run separately from the finding catalog. A catalog rule can only explain, never grant a delete.",
   "Every delete is a plan you confirm. Before removing each item omg checks it is still the same file, and skips it if not.",
-  "Whole projects, session history and an app's data are deleted only on their own, never with D.",
+  "Whole projects and an app's data are deleted only on their own, never with D.",
   "No telemetry. Notifications and default diagnostics never contain paths or file names.",
   "The npm package runs no install scripts and downloads nothing. Every launch re-verifies the binary against an Ed25519-signed manifest.",
 ];

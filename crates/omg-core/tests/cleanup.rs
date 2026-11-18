@@ -1670,56 +1670,96 @@ fn a_file_changed_after_the_checkout_keeps_a_clone_out_even_with_an_old_modified
 }
 
 #[test]
-fn projects_and_session_history_are_only_deleted_on_their_own() {
+fn projects_are_only_deleted_on_their_own_and_transcripts_go_together() {
     let (home, state) = setup();
     let h = home.path();
     let source = clone_source();
     old_clone(h, source.path(), "clone");
-    write_bytes(&h.join(".claude/projects/p/old.jsonl"), 2 << 20);
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
-    fs::File::options()
-        .write(true)
-        .open(h.join(".claude/projects/p/old.jsonl"))
-        .unwrap()
-        .set_modified(old)
-        .unwrap();
+    for file in [".claude/projects/p/a.jsonl", ".claude/projects/p/b.jsonl"] {
+        write_bytes(&h.join(file), 2 << 20);
+        fs::File::options()
+            .write(true)
+            .open(h.join(file))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
     write_bytes(&h.join("rusty/Cargo.toml"), 10);
     write_bytes(&h.join("rusty/target/debug/app"), 60 << 20);
     let mut index = Index::open(state.path()).unwrap();
     scan(&mut index, h);
     index.suggest(h).unwrap();
     let ids: Vec<i64> = index.marked().unwrap().iter().map(|m| m.id).collect();
-    assert_eq!(ids.len(), 3, "{:?}", suggested(&index));
+    assert_eq!(ids.len(), 4, "{:?}", suggested(&index));
 
-    // "Delete everything listed" leaves both out, with the reason, and keeps the rest.
+    // "Delete everything listed" leaves the repository out, with the reason, and keeps the rest.
     let plan = index.prepare_delete(&ids, h).unwrap();
-    let planned: Vec<_> = plan.items.iter().map(|i| i.path.clone()).collect();
-    assert_eq!(planned, vec![b"rusty/target".to_vec()]);
-    let mut held: Vec<_> = plan.denied.iter().map(|(p, _)| p.clone()).collect();
-    held.sort();
+    let mut planned: Vec<_> = plan.items.iter().map(|i| i.path.clone()).collect();
+    planned.sort();
     assert_eq!(
-        held,
-        vec![b".claude/projects/p/old.jsonl".to_vec(), b"clone".to_vec()]
+        planned,
+        vec![
+            b".claude/projects/p/a.jsonl".to_vec(),
+            b".claude/projects/p/b.jsonl".to_vec(),
+            b"rusty/target".to_vec()
+        ]
     );
-    assert!(
-        plan.denied
-            .iter()
-            .all(|(_, why)| why.contains("on its own"))
-    );
-    index.discard_plan(&plan.fingerprint);
+    let held: Vec<_> = plan.denied.iter().map(|(p, _)| p.clone()).collect();
+    assert_eq!(held, vec![b"clone".to_vec()]);
+    assert!(plan.denied[0].1.contains("on its own"));
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 3, "{report:?}");
+    assert!(!h.join(".claude/projects/p/a.jsonl").exists());
+    assert!(!h.join("rusty/target").exists());
 
-    // On its own, each can still be deleted.
-    for path in [b"clone".as_slice(), b".claude/projects/p/old.jsonl"] {
-        let plan = index.prepare_delete(&[id_of(&index, path)], h).unwrap();
-        assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
-        let report = index
-            .delete_permanently(&plan, &plan.fingerprint, h)
-            .unwrap();
-        assert_eq!(report.deleted.len(), 1, "{report:?}");
-    }
+    // On its own, the repository can still be deleted.
+    let plan = index.prepare_delete(&[id_of(&index, b"clone")], h).unwrap();
+    assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 1, "{report:?}");
     assert!(!h.join("clone").exists());
-    assert!(!h.join(".claude/projects/p/old.jsonl").exists());
-    assert!(h.join("rusty/target/debug/app").exists());
+}
+
+#[test]
+fn pi_and_codex_transcripts_are_found_only_where_the_tools_write_them() {
+    let (home, state) = setup();
+    let h = home.path();
+    let files = [
+        ".pi/agent/sessions/--Users-me-app--/2026-01-01_x.jsonl",
+        ".pi/agent/sessions/--Users-me-app--/deeper/y.jsonl",
+        ".pi/agent/sessions/loose.jsonl",
+        ".codex/sessions/2026/01/02/rollout-2026-01-02-abc.jsonl",
+        ".codex/sessions/2026/01/02/other.jsonl",
+        ".codex/sessions/2026/01/rollout-short.jsonl",
+        ".codex/history.jsonl",
+    ];
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 86_400);
+    for file in files {
+        write_bytes(&h.join(file), 2 << 20);
+        fs::File::options()
+            .write(true)
+            .open(h.join(file))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut found = suggested(&index);
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            b".codex/sessions/2026/01/02/rollout-2026-01-02-abc.jsonl".to_vec(),
+            b".pi/agent/sessions/--Users-me-app--/2026-01-01_x.jsonl".to_vec(),
+        ]
+    );
 }
 
 fn app_area(home: &Path) -> std::path::PathBuf {

@@ -2,6 +2,12 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Session transcripts in one delete, Pi and Codex transcripts (2026-11-18)
+
+Owner decision 2026-11-18: old session transcripts may be deleted together with other items. Scans add them to OMG Trash, but `D` refused every one of them (`one_at_a_time`), so they had to be deleted one by one. `one_at_a_time` now covers only whole repositories and application data. `ai_tool_sessions` also finds the transcripts of two more tools that keep one plain `.jsonl` file per session, at exactly the depth each writes them: Pi (`~/.pi/agent/sessions/<folder>/*.jsonl`) and Codex (`$CODEX_HOME` or `~/.codex`, `sessions/<year>/<month>/<day>/rollout-*.jsonl`). The age and size limits are the same (7 days, 1 MB). Not added: OpenCode (all sessions in one SQLite database), nanocoder (session files listed in a `sessions.json` index that a deleted file would leave stale), and Antigravity (undocumented per-conversation databases with a shared summary database).
+
+Verified on macOS 27 (APFS): `projects_are_only_deleted_on_their_own_and_transcripts_go_together` and `pi_and_codex_transcripts_are_found_only_where_the_tools_write_them` (`tests/cleanup.rs`), and `cargo clippy` and `cargo test --workspace` with `OMG_REQUIRE_DISK_IMAGES=1`. Not checked: real Pi and Codex installs (none on the test machine), Linux and Windows (CI only).
+
 ## Delete around protected items, clearing lists, credentials in package code (2026-11-17)
 
 Three problems found while testing 0.1.0 on the owner's Mac:

@@ -1528,38 +1528,48 @@ impl Index {
         }
         Ok(out)
     }
-    /// Old session transcripts of the AI coding tool: `projects/<project>/<session>.jsonl`, exactly
-    /// that depth, so memory and settings beside or below them are never included.
+    /// Old session transcripts of AI coding tools that keep one plain `.jsonl` file per session,
+    /// at exactly the depth each tool writes them, so memory and settings beside or below them are
+    /// never included: Claude Code `projects/<project>/`, Pi `sessions/<folder>/` and Codex
+    /// `sessions/<year>/<month>/<day>/rollout-*`.
     fn ai_tool_sessions(
         &self,
         scan: i64,
         root: &std::path::Path,
         home: &std::path::Path,
     ) -> Result<Vec<Vec<u8>>> {
-        let Some(projects) = crate::rollup::relative_raw(root, &home.join(".claude/projects"))
-        else {
-            return Ok(vec![]);
-        };
-        let mut low = projects.clone();
-        low.push(b'/');
-        let mut high = projects.clone();
-        high.push(b'0');
+        let codex = absolute_env("CODEX_HOME").unwrap_or_else(|| home.join(".codex"));
+        let stores: [(std::path::PathBuf, usize, &[u8]); 3] = [
+            (home.join(".claude/projects"), 1, b""),
+            (home.join(".pi/agent/sessions"), 1, b""),
+            (codex.join("sessions"), 3, b"rollout-"),
+        ];
         let cutoff = (crate::now() - SESSION_MIN_AGE_DAYS * 86_400).saturating_mul(1_000_000_000);
         let mut statement = self.db.prepare(
             "SELECT parent,name FROM entries WHERE scan_id=? AND parent>? AND parent<? AND kind='file' AND excluded IS NULL AND allocated>=? AND modified_ns<?",
         )?;
-        let rows = statement
-            .query_map(params![scan, low, high, SESSION_MIN_BYTES, cutoff], |r| {
-                Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
-            })?;
         let mut out = Vec::new();
-        for row in rows {
-            let (parent, name) = row?;
-            let direct = !parent[projects.len() + 1..].contains(&b'/');
-            if direct && name.ends_with(b".jsonl") {
-                let mut path = parent;
-                path.extend_from_slice(&name);
-                out.push(path);
+        for (store, depth, prefix) in stores {
+            let Some(base) = crate::rollup::relative_raw(root, &store) else {
+                continue;
+            };
+            let mut low = base.clone();
+            low.push(b'/');
+            let mut high = base.clone();
+            high.push(b'0');
+            let rows = statement
+                .query_map(params![scan, low, high, SESSION_MIN_BYTES, cutoff], |r| {
+                    Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+                })?;
+            for row in rows {
+                let (parent, name) = row?;
+                let levels = parent[base.len()..].iter().filter(|&&b| b == b'/').count();
+                let file = name.strip_prefix(b"/").unwrap_or(&name);
+                if levels == depth && file.starts_with(prefix) && file.ends_with(b".jsonl") {
+                    let mut path = parent;
+                    path.extend_from_slice(&name);
+                    out.push(path);
+                }
             }
         }
         Ok(out)
