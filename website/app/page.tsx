@@ -142,6 +142,17 @@ const FINDS: { title: string; tag: string; body: string; note?: string }[] = [
     body: "On macOS and Windows: logs, crash dumps and temporary files of 1 MB or more, unchanged for 7 days.",
   },
   {
+    title: "Coding agent sessions",
+    tag: "session_history",
+    body: "Claude Code, Codex, Pi, GitHub Copilot CLI, Cursor CLI and Gemini CLI sessions of 1 MB or more, unchanged for 7 days. New tools can be added by a signed catalog rule.",
+    note: "your own history",
+  },
+  {
+    title: "Stores no rule knows",
+    tag: "unrecognized",
+    body: "Big old folders in a tool's own area that look like a cache, log or history store. Listed for review only; omg catalog draft turns one into a rule.",
+  },
+  {
     title: "Docker data",
     tag: "omg docker clean",
     body: "Asks your local Docker engine for dangling images older than 7 days and build cache unused for 30. Docker removes exactly those, one by one, without force.",
