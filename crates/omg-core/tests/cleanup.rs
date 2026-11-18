@@ -2519,11 +2519,18 @@ fn emulators_old_environments_and_old_ide_versions_are_listed_but_not_suggested_
     for env in ["old", "notenv"] {
         age(&h.join("miniconda3/envs").join(env), days_ago(100));
     }
+    // Linux runners may set XDG_DATA_HOME or XDG_CONFIG_HOME outside this home; omg then looks there.
     let ide = if cfg!(target_os = "macos") {
-        h.join("Library/Application Support/JetBrains")
+        Some(h.join("Library/Application Support/JetBrains"))
+    } else if std::env::var_os("XDG_CONFIG_HOME").is_none() {
+        Some(h.join(".config/JetBrains"))
+    } else if std::env::var_os("XDG_DATA_HOME").is_none() {
+        Some(h.join(".local/share/JetBrains"))
     } else {
-        h.join(".config/JetBrains")
+        None
     };
+    let ide = ide.unwrap_or_else(|| h.join("ide-not-looked-at"));
+    let looked_at = !ide.ends_with("ide-not-looked-at");
     for (version, days) in [
         ("IntelliJIdea2023.3", 40),
         ("IntelliJIdea2024.2", 2),
@@ -2551,10 +2558,12 @@ fn emulators_old_environments_and_old_ide_versions_are_listed_but_not_suggested_
         vec![b"miniconda3/envs/old".to_vec()]
     );
     let relative = ide.strip_prefix(h).unwrap().to_string_lossy().into_owned();
-    assert_eq!(
-        findings_of(&index, h, "jetbrains_old_versions"),
+    let old_ide = if looked_at {
         vec![format!("{relative}/IntelliJIdea2023.3").into_bytes()]
-    );
+    } else {
+        vec![]
+    };
+    assert_eq!(findings_of(&index, h, "jetbrains_old_versions"), old_ide);
     if cfg!(target_os = "macos") {
         assert_eq!(
             findings_of(&index, h, "xcode_archives"),
@@ -2563,8 +2572,7 @@ fn emulators_old_environments_and_old_ide_versions_are_listed_but_not_suggested_
     }
     let marked = suggested(&index);
     assert_eq!(
-        marked,
-        vec![format!("{relative}/IntelliJIdea2023.3").into_bytes()],
+        marked, old_ide,
         "emulators, environments and archives are only listed"
     );
 }
