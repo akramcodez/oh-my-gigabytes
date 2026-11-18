@@ -1032,3 +1032,619 @@ compatibility = "inventory-only"
 deprecated = false
 fixtures = ["old-cache-folder-positive", "recent-folder-near-miss", "known-root-near-miss"]
 source = "https://github.com/akramcodez/oh-my-gigabytes/blob/main/docs/evidence.md"
+
+[[rules]]
+id = "dev.copies.superseded"
+name = "Older copy of a build or release folder"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "duplicates"
+tier = "review"
+action = "info"
+discovery = "superseded_copies"
+explanation = "A folder of build or release output whose files a newer sibling folder also has (version numbers aside). The newest copy is never listed."
+side_effects = "The older copy is gone; the newer one stays."
+regeneration = "Run the build or download the release again."
+warnings = ["Compare it with the newer copy before deleting: only names and sizes were checked, not contents."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["older-copy-positive", "different-files-near-miss", "photos-near-miss"]
+source = "https://github.com/akramcodez/oh-my-gigabytes/blob/main/docs/evidence.md"
+
+[[rules]]
+id = "os.downloads.old-installer"
+name = "Old installer or archive in Downloads"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "old_downloads"
+tier = "review"
+action = "info"
+discovery = "old_installers"
+explanation = "An installer, disk image or archive of 10 MB or more in Downloads, unchanged for 30 days. What it installed or unpacked lives elsewhere."
+side_effects = "You would have to download it again to reinstall."
+regeneration = "Download it again from where it came from."
+warnings = ["An archive may be the only copy of what it holds."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-dmg-positive", "recent-download-near-miss", "document-near-miss"]
+source = "https://github.com/akramcodez/oh-my-gigabytes/blob/main/docs/evidence.md"
+
+[[rules]]
+id = "dev.gradle.wrapper-dist"
+name = "Old Gradle distribution"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "A Gradle version the wrapper downloaded, unused for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://docs.gradle.org/current/userguide/directory_layout.html"
+
+[rules.store]
+roots = ["~/.gradle/wrapper/dists", "$GRADLE_USER_HOME/wrapper/dists"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.cargo.git"
+name = "Cargo Git checkouts"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Git dependencies Cargo fetched, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://doc.rust-lang.org/cargo/guide/cargo-home.html"
+
+[rules.store]
+roots = ["~/.cargo/git", "$CARGO_HOME/git"]
+patterns = ["*", "*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.pub.cache"
+name = "Dart and Flutter package cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Packages pub downloaded, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://dart.dev/tools/pub/glossary#system-cache"
+
+[rules.store]
+roots = ["~/.pub-cache/hosted", "$PUB_CACHE/hosted"]
+patterns = ["*", "*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.nuget.packages"
+name = "NuGet global packages"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Packages .NET restored, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders"
+
+[rules.store]
+roots = ["~/.nuget/packages"]
+patterns = ["*", "*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.cocoapods.repos"
+name = "CocoaPods spec repositories"
+revision = 1
+platforms = ["macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Spec repositories CocoaPods cloned, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://guides.cocoapods.org/terminal/commands.html#pod_repo"
+
+[rules.store]
+roots = ["~/.cocoapods/repos"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.minikube.cache"
+name = "minikube download cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Images and binaries minikube downloaded, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://minikube.sigs.k8s.io/docs/handbook/offline/"
+
+[rules.store]
+roots = ["~/.minikube/cache", "$MINIKUBE_HOME/cache"]
+patterns = []
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.terraform.plugin-cache"
+name = "Terraform provider cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Providers Terraform cached, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://developer.hashicorp.com/terraform/cli/config/config-file#provider-plugin-cache"
+
+[rules.store]
+roots = ["~/.terraform.d/plugin-cache"]
+patterns = ["*", "*", "*", "*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.ivy.cache"
+name = "Ivy and sbt dependency cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Dependencies Ivy or sbt downloaded, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://www.scala-sbt.org/1.x/docs/Directories.html"
+
+[rules.store]
+roots = ["~/.ivy2/cache"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.coursier.cache"
+name = "Coursier dependency cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Dependencies Coursier (sbt, Mill, Scala CLI) downloaded, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://get-coursier.io/docs/cache"
+
+[rules.store]
+roots = ["{cache}/coursier", "{cache}/Coursier"]
+patterns = []
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.cypress.cache"
+name = "Cypress binaries"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Cypress test runner binaries, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://docs.cypress.io/app/references/advanced-installation"
+
+[rules.store]
+roots = ["{cache}/Cypress"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.electron.cache"
+name = "Electron download cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Electron builds downloaded by electron or electron-builder, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://www.electronjs.org/docs/latest/tutorial/installation#cache"
+
+[rules.store]
+roots = ["{cache}/electron", "{cache}/electron-builder"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.pre-commit.cache"
+name = "pre-commit hook environments"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Hook environments pre-commit built, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://pre-commit.com/#managing-ci-caches"
+
+[rules.store]
+roots = ["~/.cache/pre-commit"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.ccache"
+name = "ccache compiler cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Compiler results ccache stored, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://ccache.dev/manual/latest.html#config_cache_dir"
+
+[rules.store]
+roots = ["{cache}/ccache", "~/.ccache"]
+patterns = []
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.sccache"
+name = "sccache compiler cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Compiler results sccache stored, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://github.com/mozilla/sccache/blob/main/docs/Local.md"
+
+[rules.store]
+roots = ["{cache}/sccache", "{cache}/Mozilla.sccache"]
+patterns = []
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.conda.pkgs"
+name = "conda package cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Packages conda downloaded into the user package cache, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://docs.conda.io/projects/conda/en/latest/user-guide/configuration/use-condarc.html#specify-package-directories-pkgs-dirs"
+
+[rules.store]
+roots = ["~/.conda/pkgs"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.npm.npx"
+name = "npx package cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Packages npx installed for one-off commands, unused for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://docs.npmjs.com/cli/commands/npx"
+
+[rules.store]
+roots = ["~/.npm/_npx"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 10485760
+
+[[rules]]
+id = "dev.android.build-cache"
+name = "Android build caches"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Android tooling caches, unchanged for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://developer.android.com/build/build-cache"
+
+[rules.store]
+roots = ["~/.android/cache", "~/.android/build-cache"]
+patterns = []
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.node-gyp.headers"
+name = "node-gyp header cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Node.js headers node-gyp downloaded, unused for 30 days."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://github.com/nodejs/node-gyp#configuration"
+
+[rules.store]
+roots = ["{cache}/node-gyp", "~/.node-gyp"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 10485760
+
+[[rules]]
+id = "dev.gradle.daemon-logs"
+name = "Old Gradle daemon logs"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "logs_and_temp"
+tier = "info"
+action = "info"
+discovery = "tool_logs"
+explanation = "Gradle daemon log files of 1 MB or more, unchanged for 7 days."
+side_effects = "None for builds."
+regeneration = "Gradle writes new logs."
+warnings = ["Logs help when a build failed."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-log-positive", "recent-log-near-miss"]
+source = "https://docs.gradle.org/current/userguide/gradle_daemon.html"
+
+[rules.store]
+roots = ["~/.gradle/daemon", "$GRADLE_USER_HOME/daemon"]
+patterns = ["*", "*.log"]
+target = "file"
+min_age_days = 7
+min_bytes = 1048576

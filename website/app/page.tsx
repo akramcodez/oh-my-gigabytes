@@ -102,12 +102,12 @@ const FINDS: { title: string; tag: string; body: string; note?: string }[] = [
   {
     title: "Package caches",
     tag: "package_caches",
-    body: "npm, pnpm, Yarn, Bun, pip, uv, Cargo, Go, Gradle, Maven, Homebrew, Deno, CocoaPods, Composer, and Playwright and Puppeteer browsers.",
+    body: "npm, npx, pnpm, Yarn, Bun, pip, uv, conda, Cargo, Go, Gradle and its old distributions, Maven, Ivy, Coursier, NuGet, pub, Homebrew, Deno, CocoaPods, Composer, Terraform, minikube, ccache, sccache, pre-commit, Electron, node-gyp, Cypress, Playwright and Puppeteer.",
   },
   {
     title: "Build output",
     tag: "build_artifacts",
-    body: "target beside Cargo.toml, node_modules beside package.json, Python virtualenvs (50 MB or more), and Xcode DerivedData. Details show when it was last built.",
+    body: "Build output of 50 MB or more beside the project file that made it: Rust, Node and Next.js, Nuxt, SvelteKit, Turbo, Gradle, Maven, Swift, CocoaPods, Flutter, Zig, CMake, Haskell, Elixir and Python virtualenvs, plus Xcode DerivedData.",
   },
   {
     title: "Unused Git clones",
@@ -146,6 +146,16 @@ const FINDS: { title: string; tag: string; body: string; note?: string }[] = [
     tag: "session_history",
     body: "Claude Code, Codex, Pi, GitHub Copilot CLI, Cursor CLI and Gemini CLI sessions of 1 MB or more, unchanged for 7 days. New tools can be added by a signed catalog rule.",
     note: "your own history",
+  },
+  {
+    title: "Older copies of builds",
+    tag: "duplicates",
+    body: "Release and build folders whose files a newer sibling also has, version numbers aside. The newest copy is never listed. For review only.",
+  },
+  {
+    title: "Old installers",
+    tag: "old_downloads",
+    body: "Disk images, installers and archives of 10 MB or more in Downloads, unchanged for 30 days. For review only.",
   },
   {
     title: "Stores no rule knows",

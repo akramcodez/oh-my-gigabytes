@@ -27,7 +27,7 @@ Removing or renaming a field raises the output schema. Scripts should ignore fie
 
 Signed catalogs use `schema_version = 1`. Tiers stay `info` and `review` and the action stays `info`; a catalog never grants deletion. A catalog with another schema version is refused, and the current one stays active.
 
-A rule of the kinds `tool_sessions`, `tool_caches` or `tool_logs` must carry a `[rules.store]` table (`roots`, `patterns`, `target`, `min_age_days`, `min_bytes`) and no other kind may. Roots start with `~/.`, `{data}/`, `{config}/`, `{cache}/` or `$NAME/` and must resolve inside the home folder; patterns use `*` and `?` only, one per level. The kind `ai_tool_sessions` was replaced by `tool_sessions` (rule id `dev.ai-tool.session` kept, so existing ignores still apply). Category `unrecognized` (kind `unrecognized_store`) is new and is never suggested. JSON findings carry the rule's `store` when it has one.
+A rule of the kinds `tool_sessions`, `tool_caches` or `tool_logs` must carry a `[rules.store]` table (`roots`, `patterns`, `target`, `min_age_days`, `min_bytes`) and no other kind may. Roots start with `~/.`, `{data}/`, `{config}/`, `{cache}/` or `$NAME/` and must resolve inside the home folder; patterns use `*` and `?` only, one per level. The kind `ai_tool_sessions` was replaced by `tool_sessions` (rule id `dev.ai-tool.session` kept, so existing ignores still apply). Category `unrecognized` (kind `unrecognized_store`) is new and is never suggested. Categories `duplicates` (kind `superseded_copies`) and `old_downloads` (kind `old_installers`) are new and are never suggested. A catalog may hold up to 128 rules (was 64). JSON findings carry the rule's `store` when it has one.
 
 ## Index
 

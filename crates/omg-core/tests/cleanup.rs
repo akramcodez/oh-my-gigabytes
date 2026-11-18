@@ -2210,3 +2210,180 @@ fn big_old_stores_no_rule_knows_are_shown_but_never_suggested() {
         ]
     );
 }
+
+#[test]
+fn build_output_of_more_ecosystems_is_found_beside_its_project_file() {
+    let (home, state) = setup();
+    let h = home.path();
+    for (marker, output) in [
+        ("web/package.json", "web/.next/cache/blob"),
+        ("app/Package.swift", "app/.build/debug/blob"),
+        ("ios/Podfile", "ios/Pods/Lib/blob"),
+        ("droid/build.gradle.kts", "droid/build/outputs/blob"),
+        ("zigged/build.zig", "zigged/zig-out/bin/blob"),
+    ] {
+        write_bytes(&h.join(marker), 10);
+        write_bytes(&h.join(output), 60 << 20);
+    }
+    // Ordinary names without their project file are somebody's own folder.
+    write_bytes(&h.join("notes/build/drawing.psd"), 60 << 20);
+    write_bytes(&h.join("plain/Pods/blob"), 60 << 20);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut found = suggested(&index);
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            b"app/.build".to_vec(),
+            b"droid/build".to_vec(),
+            b"ios/Pods".to_vec(),
+            b"web/.next".to_vec(),
+            b"zigged/zig-out".to_vec(),
+        ]
+    );
+    let ids: Vec<i64> = found.iter().map(|p| id_of(&index, p)).collect();
+    let plan = index.prepare_delete(&ids, h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 5, "{report:?}");
+    assert!(h.join("web/package.json").exists());
+    assert!(h.join("notes/build/drawing.psd").exists());
+}
+
+fn findings_of(index: &Index, h: &Path, kind: &str) -> Vec<Vec<u8>> {
+    let mut found: Vec<Vec<u8>> = index
+        .findings_in(1000, 0, false, h)
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.rule.discovery == kind)
+        .map(|f| f.entry.path)
+        .collect();
+    found.sort();
+    found
+}
+
+#[test]
+fn older_copies_of_release_folders_are_listed_but_the_newest_and_personal_files_are_not() {
+    let (home, state) = setup();
+    let h = home.path();
+    for version in ["0.1.0-beta.1", "0.1.0-beta.2", "0.1.0"] {
+        for file in [
+            format!("omg-release/{version}/signed/tarballs/omg-darwin-arm64-{version}.tgz"),
+            format!("omg-release/{version}/signed/tarballs/omg-linux-x64-{version}.tgz"),
+            format!("omg-release/{version}/signed/omg"),
+        ] {
+            write_bytes(&h.join(file), 5 << 20);
+        }
+        write_bytes(
+            &h.join(format!("omg-release/{version}/signed/SHA256SUMS")),
+            300,
+        );
+    }
+    for year in ["2023", "2024"] {
+        for n in 0..4 {
+            write_bytes(&h.join(format!("photos/{year}/img-{n}.jpg")), 4 << 20);
+        }
+    }
+    let now = std::time::SystemTime::now();
+    let day = std::time::Duration::from_secs(86_400);
+    age(&h.join("omg-release/0.1.0-beta.1"), now - day * 60);
+    age(&h.join("omg-release/0.1.0-beta.2"), now - day * 30);
+    age(&h.join("photos/2023"), now - day * 400);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert_eq!(
+        findings_of(&index, h, "superseded_copies"),
+        vec![
+            b"omg-release/0.1.0-beta.1".to_vec(),
+            b"omg-release/0.1.0-beta.2".to_vec(),
+        ]
+    );
+    assert!(suggested(&index).is_empty(), "copies are for review only");
+}
+
+#[test]
+fn old_installers_in_downloads_are_listed_but_never_suggested() {
+    let (home, state) = setup();
+    let h = home.path();
+    for file in [
+        "Downloads/Tool-1.2.dmg",
+        "Downloads/fresh.pkg",
+        "Downloads/report.pdf",
+        "Downloads/sdk/node-v22.tar.gz",
+        "Downloads/tiny.zip",
+    ] {
+        write_bytes(
+            &h.join(file),
+            if file.ends_with("tiny.zip") {
+                1 << 20
+            } else {
+                12 << 20
+            },
+        );
+    }
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+    for file in [
+        "Downloads/Tool-1.2.dmg",
+        "Downloads/report.pdf",
+        "Downloads/sdk/node-v22.tar.gz",
+        "Downloads/tiny.zip",
+    ] {
+        age(&h.join(file), old);
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert_eq!(
+        findings_of(&index, h, "old_installers"),
+        vec![
+            b"Downloads/Tool-1.2.dmg".to_vec(),
+            b"Downloads/sdk/node-v22.tar.gz".to_vec(),
+        ]
+    );
+    assert!(suggested(&index).is_empty());
+}
+
+#[test]
+fn tool_caches_of_more_ecosystems_come_from_store_rules() {
+    let (home, state) = setup();
+    let h = home.path();
+    for file in [
+        ".gradle/wrapper/dists/gradle-7.6-bin/abc/gradle.zip",
+        ".gradle/wrapper/dists/gradle-8.9-bin/def/gradle.zip",
+        ".nuget/packages/newtonsoft.json/13.0.1/lib.nupkg",
+        ".pub-cache/hosted/pub.dev/http-1.2.0/lib.dart",
+        ".npm/_npx/1a2b3c/node_modules/pkg/index.js",
+    ] {
+        write_bytes(&h.join(file), 60 << 20);
+    }
+    write_bytes(&h.join(".gradle/daemon/8.9/daemon-1.out.log"), 2 << 20);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+    for folder in [
+        ".gradle/wrapper/dists/gradle-7.6-bin",
+        ".gradle/daemon",
+        ".nuget",
+        ".pub-cache",
+        ".npm",
+    ] {
+        age(&h.join(folder), old);
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut found = suggested(&index);
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            b".gradle/daemon/8.9/daemon-1.out.log".to_vec(),
+            b".gradle/wrapper/dists/gradle-7.6-bin".to_vec(),
+            b".npm/_npx/1a2b3c".to_vec(),
+            b".nuget/packages/newtonsoft.json/13.0.1".to_vec(),
+            b".pub-cache/hosted/pub.dev/http-1.2.0".to_vec(),
+        ]
+    );
+}

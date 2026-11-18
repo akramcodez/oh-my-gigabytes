@@ -9,7 +9,7 @@ pub const STALE_DAYS: i64 = 30;
 
 /// Build and dependency folders that their tools recreate. Inside a repository they are never
 /// locked (a warning is shown instead); outside one they are ordinary folders.
-pub const REGENERABLE: [&str; 22] = [
+pub const REGENERABLE: [&str; 32] = [
     "node_modules",
     "target",
     "dist",
@@ -32,6 +32,16 @@ pub const REGENERABLE: [&str; 22] = [
     "coverage",
     ".dart_tool",
     "DerivedData",
+    "Pods",
+    ".build",
+    ".stack-work",
+    "dist-newstyle",
+    "_build",
+    "zig-cache",
+    ".zig-cache",
+    "zig-out",
+    "cmake-build-debug",
+    "cmake-build-release",
 ];
 
 /// Names that are sensitive wherever they appear, even inside caches or old repositories. Lower case.
