@@ -285,7 +285,6 @@ export default async function Home() {
               <span className="nav-label">npm</span>
             </a>
             <Stars initial={stars} />
-            <ThemeToggle />
           </nav>
         </header>
 
@@ -523,9 +522,12 @@ export default async function Home() {
               <a href={CREATOR_URL}>{CREATOR}</a> &middot; Licensed under{" "}
               <a href={doc("LICENSE-MIT")}>MIT</a> or <a href={doc("LICENSE-APACHE")}>Apache-2.0</a>
             </p>
-            <p>
-              v{VERSION} &middot; Runs locally. No account, no telemetry.
-            </p>
+            <div className="footer-end">
+              <p>
+                v{VERSION} &middot; Runs locally. No account, no telemetry.
+              </p>
+              <ThemeToggle />
+            </div>
           </div>
         </footer>
       </div>

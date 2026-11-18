@@ -61,7 +61,7 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-const themeScript = `try{var t=localStorage.getItem("omg-theme");document.documentElement.dataset.theme=t==="dark"?"dark":"light"}catch(e){document.documentElement.dataset.theme="light"}
+const themeScript = `try{var t=localStorage.getItem("omg-site-theme");document.documentElement.dataset.theme=t==="dark"?"dark":"light"}catch(e){document.documentElement.dataset.theme="light"}
 (function(){var d=document.documentElement,m=matchMedia("(prefers-color-scheme: dark)");function f(){var t=d.dataset.theme==="light"||d.dataset.theme==="dark"?d.dataset.theme:m.matches?"dark":"light";document.querySelectorAll('link[rel="icon"]').forEach(function(l){l.href="/logo-"+t+".svg"})}new MutationObserver(f).observe(d,{attributes:true,attributeFilter:["data-theme"]});m.addEventListener("change",f);document.addEventListener("DOMContentLoaded",f)})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

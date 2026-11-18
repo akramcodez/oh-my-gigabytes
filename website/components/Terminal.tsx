@@ -12,11 +12,10 @@ function siteTheme(): Theme {
 function applySiteTheme(theme: Theme) {
   const root = document.documentElement;
   try {
-    if (theme === "auto") localStorage.removeItem("omg-theme");
-    else localStorage.setItem("omg-theme", theme);
+    if (theme === "auto") localStorage.removeItem("omg-site-theme");
+    else localStorage.setItem("omg-site-theme", theme);
   } catch {}
-  if (theme === "auto") delete root.dataset.theme;
-  else root.dataset.theme = theme;
+  root.dataset.theme = theme === "dark" ? "dark" : "light";
 }
 
 const initial = (): Sim => ({ ...initialSim(), theme: siteTheme() });

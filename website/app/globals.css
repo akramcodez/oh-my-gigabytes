@@ -367,16 +367,38 @@ main:focus {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  height: 30px;
   box-sizing: border-box;
-  padding: 0;
+  padding: 0 12px;
   font: inherit;
+  font-size: 0.8rem;
   color: var(--ink-2);
   background: var(--raised);
   border: 1px solid var(--rule);
   border-radius: 6px;
   cursor: pointer;
+}
+
+.theme-toggle span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-toggle .when-dark,
+:root[data-theme="dark"] .theme-toggle .when-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .theme-toggle .when-dark {
+  display: inline-flex;
+}
+
+.footer-end {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
 }
 
 .theme-toggle:hover {
