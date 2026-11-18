@@ -364,25 +364,15 @@ main:focus {
 }
 
 .theme-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 30px;
-  box-sizing: border-box;
-  padding: 0 12px;
+  padding: 0;
   font: inherit;
-  font-size: 0.8rem;
   color: var(--ink-2);
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: 6px;
+  background: none;
+  border: 0;
   cursor: pointer;
-}
-
-.theme-toggle span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  text-decoration: underline;
+  text-decoration-color: var(--rule-strong);
+  text-underline-offset: 3px;
 }
 
 .theme-toggle .when-dark,
@@ -391,7 +381,7 @@ main:focus {
 }
 
 :root[data-theme="dark"] .theme-toggle .when-dark {
-  display: inline-flex;
+  display: inline;
 }
 
 .footer-end {
@@ -403,7 +393,6 @@ main:focus {
 
 .theme-toggle:hover {
   color: var(--ink);
-  border-color: var(--ink-3);
 }
 
 .hero {
