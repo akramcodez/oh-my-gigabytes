@@ -12,7 +12,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { banner } from "@/lib/banner";
 import { LuBookOpen, LuGithub } from "react-icons/lu";
 import { SiNpm } from "react-icons/si";
-import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SITE, VERSION, X_URL, doc } from "@/lib/site";
+import { CREATOR, CREATOR_URL, DESCRIPTION, INSTALL, NAME, NPM, REPO, SHOW_SPONSORS, SITE, VERSION, X_URL, doc } from "@/lib/site";
 
 const SCHEMA = {
   "@context": "https://schema.org",
@@ -42,7 +42,7 @@ const FOOTER: { title: string; links: [string, string][] }[] = [
       ["Safety", "#safety"],
       ["Platforms", "#platforms"],
       ["FAQ", "#faq"],
-      ["Sponsors", "#sponsors"],
+      ...(SHOW_SPONSORS ? [["Sponsors", "#sponsors"] as [string, string]] : []),
     ],
   },
   {
@@ -275,7 +275,7 @@ export default async function Home() {
             <pre className="mark" aria-hidden="true">{`${mark1}\n${mark2}`}</pre>
           </a>
           <nav aria-label="Project" className="topbar-actions">
-            <NavSponsors />
+            {SHOW_SPONSORS && <NavSponsors />}
             <a href={doc("README.md")} className="text-link" aria-label="Docs">
               <LuBookOpen aria-hidden="true" />
               <span className="nav-label">Docs</span>
@@ -481,10 +481,14 @@ export default async function Home() {
             </div>
           </section>
 
-          <section id="sponsors" className="section" tabIndex={-1} aria-labelledby="sponsors-title">
-            <Sponsors />
-          </section>
-          <SponsorDialog />
+          {SHOW_SPONSORS && (
+            <>
+              <section id="sponsors" className="section" tabIndex={-1} aria-labelledby="sponsors-title">
+                <Sponsors />
+              </section>
+              <SponsorDialog />
+            </>
+          )}
 
           <section className="cta" aria-label="Install">
             <h2>

@@ -42,3 +42,6 @@ export type Sponsor = { name: string; tagline: string; url: string; logo?: strin
 export const SPONSORS: Sponsor[] = [
   { name: "Oh My Gigabytes", tagline: "", url: REPO, logo: "/logo-light.svg", logoDark: "/logo-dark.svg", house: true },
 ];
+
+// Sponsors are hidden until the first slots are filled; the components and checkout stay.
+export const SHOW_SPONSORS = false;
