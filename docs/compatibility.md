@@ -27,6 +27,8 @@ Removing or renaming a field raises the output schema. Scripts should ignore fie
 
 Signed catalogs use `schema_version = 1`. Tiers stay `info` and `review` and the action stays `info`; a catalog never grants deletion. A catalog with another schema version is refused, and the current one stays active.
 
+A rule of the kinds `tool_sessions`, `tool_caches` or `tool_logs` must carry a `[rules.store]` table (`roots`, `patterns`, `target`, `min_age_days`, `min_bytes`) and no other kind may. Roots start with `~/.`, `{data}/`, `{config}/`, `{cache}/` or `$NAME/` and must resolve inside the home folder; patterns use `*` and `?` only, one per level. The kind `ai_tool_sessions` was replaced by `tool_sessions` (rule id `dev.ai-tool.session` kept, so existing ignores still apply). Category `unrecognized` (kind `unrecognized_store`) is new and is never suggested. JSON findings carry the rule's `store` when it has one.
+
 ## Index
 
 The index is a SQLite database at schema 14. A newer omg migrates an older index forward on open. An older omg refuses an index newer than it knows and changes nothing; `omg doctor` shows `schema` and `schema_supported`. The index is a cache: moving the state folder aside and scanning again is always safe, but loses the deletion history and trend samples.

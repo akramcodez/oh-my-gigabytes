@@ -556,3 +556,44 @@ fn a_quarantined_copy_of_the_binary_runs_from_a_terminal() {
     );
     assert!(String::from_utf8_lossy(&run.stdout).starts_with("omg "));
 }
+#[test]
+#[cfg(unix)]
+fn catalog_draft_describes_a_store_from_folder_listings() {
+    let fixture = tempfile::tempdir().unwrap();
+    let home = std::fs::canonicalize(fixture.path()).unwrap();
+    let state = home.join("state");
+    std::fs::create_dir(&state).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let store = home.join(".newagent/sessions");
+    for (folder, file) in [("p1", "a.jsonl"), ("p1", "b.jsonl"), ("p2", "c.jsonl")] {
+        std::fs::create_dir_all(store.join(folder)).unwrap();
+        std::fs::write(store.join(folder).join(file), b"{}").unwrap();
+    }
+    let draft = |path: &std::path::Path| {
+        Command::new(env!("CARGO_BIN_EXE_omg"))
+            .env("HOME", &home)
+            .arg("--state-dir")
+            .arg(&state)
+            .args(["catalog", "draft"])
+            .arg(path)
+            .output()
+            .unwrap()
+    };
+    let output = draft(&store);
+    assert!(output.status.success(), "{output:?}");
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text.contains(r#"roots = ["~/.newagent/sessions"]"#),
+        "{text}"
+    );
+    assert!(text.contains(r#"patterns = ["*", "*.jsonl"]"#), "{text}");
+    assert!(text.contains(r#"discovery = "tool_sessions""#), "{text}");
+    std::fs::create_dir_all(home.join("Documents/x")).unwrap();
+    assert!(!draft(&home.join("Documents")).status.success());
+    assert!(
+        !draft(&home.join(".newagent/../.newagent/sessions"))
+            .status
+            .success()
+    );
+}

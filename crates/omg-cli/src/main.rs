@@ -213,6 +213,10 @@ enum CatalogCommand {
         signature: PathBuf,
     },
     Rollback,
+    /// Print a draft rule for a tool's store folder, read from folder listings only
+    Draft {
+        path: PathBuf,
+    },
 }
 /// Live one-line progress on stderr (terminals only); the JSON report on stdout is unaffected.
 struct Meter {
@@ -614,6 +618,12 @@ fn run() -> Result<()> {
             CatalogCommand::Rollback => {
                 index.rollback_catalog()?;
                 println!("rolled back to previous verified catalog");
+            }
+            CatalogCommand::Draft { path } => {
+                print!(
+                    "{}",
+                    omg_core::catalog::draft_rule(&path, &omg_core::platform::home()?)?
+                );
             }
         },
         None => {

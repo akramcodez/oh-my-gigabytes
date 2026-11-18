@@ -2134,3 +2134,79 @@ fn deleted_items_are_logged_with_size_and_dropped_after_twenty_days() {
         .unwrap();
     assert_eq!(left, 2, "the expired line is removed from the index too");
 }
+
+#[test]
+fn copilot_cursor_and_gemini_sessions_come_from_store_rules() {
+    let (home, state) = setup();
+    let h = home.path();
+    for file in [
+        ".copilot/session-state/old-id/events.jsonl",
+        ".copilot/session-state/new-id/events.jsonl",
+        ".cursor/chats/0a1b/chat-1/store.db",
+        ".cursor/chats/loose.db",
+        ".gemini/tmp/project-hash/chats/session-2026-01-01.json",
+        ".gemini/tmp/project-hash/logs.json",
+    ] {
+        write_bytes(&h.join(file), 2 << 20);
+    }
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 86_400);
+    for folder in [".copilot/session-state/old-id", ".cursor", ".gemini"] {
+        age(&h.join(folder), old);
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let mut found = suggested(&index);
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            b".copilot/session-state/old-id".to_vec(),
+            b".cursor/chats/0a1b/chat-1".to_vec(),
+            b".gemini/tmp/project-hash/chats/session-2026-01-01.json".to_vec(),
+        ]
+    );
+    let ids: Vec<i64> = found.iter().map(|p| id_of(&index, p)).collect();
+    let plan = index.prepare_delete(&ids, h).unwrap();
+    assert_eq!(plan.items.len(), 3, "sessions of every tool go in one plan");
+}
+
+#[test]
+fn big_old_stores_no_rule_knows_are_shown_but_never_suggested() {
+    let (home, state) = setup();
+    let h = home.path();
+    write_bytes(&h.join(".mystery/cache/blob"), 101 << 20);
+    write_bytes(&h.join(".fresh/cache/blob"), 101 << 20);
+    for n in 0..12 {
+        write_bytes(&h.join(format!(".agent-x/data/history/{n}.jsonl")), 9 << 20);
+    }
+    write_bytes(&h.join(".cache/uv/archive/wheel"), 101 << 20);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 86_400);
+    for folder in [".mystery", ".agent-x", ".cache"] {
+        age(&h.join(folder), old);
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert!(
+        suggested(&index)
+            .iter()
+            .all(|p| !p.starts_with(b".mystery") && !p.starts_with(b".agent-x")),
+        "unrecognized stores are never added on their own"
+    );
+    let mut found: Vec<Vec<u8>> = index
+        .findings_in(1000, 0, false, h)
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.rule.discovery == "unrecognized_store")
+        .map(|f| f.entry.path)
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            b".agent-x/data/history".to_vec(),
+            b".mystery/cache".to_vec()
+        ]
+    );
+}

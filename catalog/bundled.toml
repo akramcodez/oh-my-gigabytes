@@ -326,15 +326,15 @@ source = "https://code.claude.com/docs/en/setup"
 
 [[rules]]
 id = "dev.ai-tool.session"
-name = "Old AI coding session history"
-revision = 1
+name = "Old Claude Code session history"
+revision = 2
 platforms = ["linux", "macos"]
 tool_versions = ["unknown-inventory-only"]
 category = "session_history"
 tier = "review"
 action = "info"
-discovery = "ai_tool_sessions"
-explanation = "The transcript of a Claude Code, Pi or Codex session last changed 7 or more days ago, 1 MB or larger. Memory and settings are never included."
+discovery = "tool_sessions"
+explanation = "The transcript of a Claude Code session last changed 7 or more days ago, 1 MB or larger. Memory and settings are never included."
 side_effects = "You can no longer resume or read this session."
 regeneration = "It cannot be recreated."
 warnings = ["This is your own history, not a cache: remove it from the list if you want to keep it."]
@@ -346,6 +346,163 @@ compatibility = "inventory-only"
 deprecated = false
 fixtures = ["old-transcript-positive", "recent-transcript-near-miss", "memory-file-near-miss"]
 source = "https://code.claude.com/docs/en/settings"
+
+[rules.store]
+roots = ["~/.claude/projects"]
+patterns = ["*", "*.jsonl"]
+target = "file"
+min_age_days = 7
+min_bytes = 1048576
+
+[[rules]]
+id = "dev.pi.session"
+name = "Old Pi session history"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "session_history"
+tier = "review"
+action = "info"
+discovery = "tool_sessions"
+explanation = "The transcript of a Pi coding agent session last changed 7 or more days ago, 1 MB or larger."
+side_effects = "You can no longer resume or read this session."
+regeneration = "It cannot be recreated."
+warnings = ["This is your own history, not a cache: remove it from the list if you want to keep it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-transcript-positive", "settings-near-miss"]
+source = "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md"
+
+[rules.store]
+roots = ["~/.pi/agent/sessions"]
+patterns = ["*", "*.jsonl"]
+target = "file"
+min_age_days = 7
+min_bytes = 1048576
+
+[[rules]]
+id = "dev.codex.session"
+name = "Old Codex session history"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "session_history"
+tier = "review"
+action = "info"
+discovery = "tool_sessions"
+explanation = "The transcript of a Codex session last changed 7 or more days ago, 1 MB or larger."
+side_effects = "You can no longer resume or read this session."
+regeneration = "It cannot be recreated."
+warnings = ["This is your own history, not a cache: remove it from the list if you want to keep it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-rollout-positive", "other-file-near-miss"]
+source = "https://developers.openai.com/codex/local-config"
+
+[rules.store]
+roots = ["$CODEX_HOME/sessions", "~/.codex/sessions"]
+patterns = ["*", "*", "*", "rollout-*.jsonl"]
+target = "file"
+min_age_days = 7
+min_bytes = 1048576
+
+[[rules]]
+id = "dev.copilot-cli.session"
+name = "Old GitHub Copilot CLI session"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "session_history"
+tier = "review"
+action = "info"
+discovery = "tool_sessions"
+explanation = "A GitHub Copilot CLI session folder in which nothing changed for 7 or more days, 1 MB or larger."
+side_effects = "You can no longer resume or read this session."
+regeneration = "It cannot be recreated."
+warnings = ["This is your own history, not a cache: remove it from the list if you want to keep it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-session-positive", "recent-session-near-miss"]
+source = "https://docs.github.com/en/copilot/how-tos/use-copilot-agents/use-copilot-cli"
+
+[rules.store]
+roots = ["~/.copilot/session-state"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 7
+min_bytes = 1048576
+
+[[rules]]
+id = "dev.cursor-cli.chat"
+name = "Old Cursor CLI chat"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "session_history"
+tier = "review"
+action = "info"
+discovery = "tool_sessions"
+explanation = "A Cursor agent CLI chat folder in which nothing changed for 7 or more days, 1 MB or larger."
+side_effects = "You can no longer resume or read this session."
+regeneration = "It cannot be recreated."
+warnings = ["This is your own history, not a cache: remove it from the list if you want to keep it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-chat-positive", "recent-chat-near-miss"]
+source = "https://cursor.com/docs/cli/overview"
+
+[rules.store]
+roots = ["~/.cursor/chats"]
+patterns = ["*", "*"]
+target = "directory"
+min_age_days = 7
+min_bytes = 1048576
+
+[[rules]]
+id = "dev.gemini-cli.chat"
+name = "Old Gemini CLI chat"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "session_history"
+tier = "review"
+action = "info"
+discovery = "tool_sessions"
+explanation = "A saved Gemini CLI chat last changed 7 or more days ago, 1 MB or larger."
+side_effects = "You can no longer resume or read this session."
+regeneration = "It cannot be recreated."
+warnings = ["This is your own history, not a cache: remove it from the list if you want to keep it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-chat-positive", "settings-near-miss"]
+source = "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/session-management.md"
+
+[rules.store]
+roots = ["~/.gemini/tmp"]
+patterns = ["*", "chats", "*.json*"]
+target = "file"
+min_age_days = 7
+min_bytes = 1048576
 
 [[rules]]
 id = "dev.colima.vm"
@@ -852,3 +1009,26 @@ compatibility = "inventory-only"
 deprecated = false
 fixtures = ["old-log-positive", "recent-temp-near-miss"]
 source = "https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-gettemppathw"
+
+[[rules]]
+id = "dev.unrecognized.store"
+name = "Large folder no rule explains"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "unrecognized"
+tier = "info"
+action = "info"
+discovery = "unrecognized_store"
+explanation = "A large folder in a tool's own area that looks like a cache, log or history store, unchanged for 30 or more days. No rule knows which tool owns it."
+side_effects = "Unknown: the tool that owns it may need it."
+regeneration = "Unknown."
+warnings = ["Check which tool owns this folder before deleting it. omg catalog draft can describe it as a rule."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["old-cache-folder-positive", "recent-folder-near-miss", "known-root-near-miss"]
+source = "https://github.com/akramcodez/oh-my-gigabytes/blob/main/docs/evidence.md"
