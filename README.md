@@ -34,6 +34,7 @@ omg                                      # interface: 1 Overview, 2 Browse, 3 Fi
 omg status                               # totals, and how much space omg itself uses (index_bytes)
 omg findings                             # what can be cleaned, with explanations
 omg grew                                 # which folders grew between the last two scans
+omg unexplained                          # big folders that no finding explains
 omg doctor                               # read-only health check
 omg theme light                          # interface colours: auto (follows the terminal), dark or light
 omg schedule enable --hour 12            # macOS and Windows: a daily scan-only job (Linux: omg start)

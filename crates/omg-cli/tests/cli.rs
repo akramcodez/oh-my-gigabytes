@@ -486,6 +486,8 @@ fn tree_reports_subtree_sizes_and_rejects_escapes() {
     }
     let grew = json(&omg(&["grew"]));
     assert!(grew["since"].is_null() && grew["items"].as_array().unwrap().is_empty());
+    let unexplained = json(&omg(&["unexplained", "--limit", "5"]));
+    assert!(unexplained["items"].is_array());
     let clean = json(&omg(&["clean", "--category", "build_artifacts"]));
     assert!(clean["fingerprint"].is_string() && clean["items"].is_array());
     assert!(

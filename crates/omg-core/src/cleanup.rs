@@ -778,8 +778,15 @@ impl Index {
         for finding in self.findings_in(1000, 0, false, home)? {
             // What its owner can recreate or does not need; never large files. Listing is not
             // deleting: every item still goes through a confirmed plan.
+            // Output of a project worked on this week is still in use: rebuilding it costs time.
+            let in_use = finding
+                .activity
+                .as_ref()
+                .and_then(|a| a.last())
+                .is_some_and(|at| crate::now() - at < crate::catalog::PROJECT_ACTIVE_DAYS * 86_400);
             if !SUGGESTED_CATEGORIES.contains(&finding.rule.category.as_str())
                 || finding.effective_tier == "protected"
+                || in_use
             {
                 continue;
             }
@@ -1660,7 +1667,7 @@ mod unix {
         // Fresh descendant check right before deletion: no protected names, no mounts.
         let mut seen = 0u64;
         check_tree(&dir, root, &relative, device(&opened), kind, &mut seen)?;
-        let (removed, failed) = remove_tree(&dir, device(&opened));
+        let (removed, failed) = remove_tree(&dir, device(&opened), kind == Kind::Cache);
         if failed == 0 {
             // rmdir only removes an empty directory, so a late swap cannot take anything with it.
             fs::unlinkat(&parent, &cname, AtFlags::REMOVEDIR).map_err(|e| e.to_string())?;
@@ -1741,7 +1748,20 @@ mod unix {
     }
 
     /// Remove everything below `dir` through descriptors. Returns (removed, failed).
-    fn remove_tree(dir: &OwnedFd, dev: u64) -> (u64, u64) {
+    fn remove_tree(dir: &OwnedFd, dev: u64, cache: bool) -> (u64, u64) {
+        // Some tools (Go's module cache) make their folders read-only, which stops their contents
+        // from being removed. Only inside a tool's cache is a folder of the user's own made
+        // writable again; elsewhere a read-only folder is the user's choice and stays.
+        if cache
+            && let Ok(stat) = fs::fstat(dir)
+            && stat.st_mode & 0o300 != 0o300
+            && stat.st_uid == rustix::process::geteuid().as_raw()
+        {
+            let _ = fs::fchmod(
+                dir,
+                Mode::from_bits_truncate((stat.st_mode & 0o7777) as _) | Mode::RWXU,
+            );
+        }
         let Ok(list) = entries(dir) else {
             return (0, 1);
         };
@@ -1767,7 +1787,7 @@ mod unix {
                         if fs::fstat(&sub)
                             .is_ok_and(|s| s.st_ino == stat.st_ino && device(&s) == dev) =>
                     {
-                        let (r, f) = remove_tree(&sub, dev);
+                        let (r, f) = remove_tree(&sub, dev, cache);
                         removed += r;
                         failed += f;
                         if f == 0 && fs::unlinkat(dir, &name, AtFlags::REMOVEDIR).is_ok() {

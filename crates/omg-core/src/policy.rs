@@ -9,7 +9,7 @@ pub const STALE_DAYS: i64 = 30;
 
 /// Build and dependency folders that their tools recreate. Inside a repository they are never
 /// locked (a warning is shown instead); outside one they are ordinary folders.
-pub const REGENERABLE: [&str; 32] = [
+pub const REGENERABLE: [&str; 54] = [
     "node_modules",
     "target",
     "dist",
@@ -42,6 +42,28 @@ pub const REGENERABLE: [&str; 32] = [
     "zig-out",
     "cmake-build-debug",
     "cmake-build-release",
+    ".terraform",
+    ".terragrunt-cache",
+    "elm-stuff",
+    "bower_components",
+    ".serverless",
+    ".docusaurus",
+    "storybook-static",
+    ".bloop",
+    ".metals",
+    ".bsp",
+    ".cpcache",
+    ".shadow-cljs",
+    "_opam",
+    ".cxx",
+    ".externalNativeBuild",
+    ".kotlin",
+    "vcpkg_installed",
+    ".godot",
+    ".elixir_ls",
+    ".pnpm-store",
+    ".nox",
+    "DerivedDataCache",
 ];
 
 /// Names that are sensitive wherever they appear, even inside caches or old repositories. Lower case.

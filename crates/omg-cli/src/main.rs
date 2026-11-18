@@ -97,6 +97,11 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
+    /// Largest folders that no finding explains, with the part left after the findings inside
+    Unexplained {
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// Largest subdirectories and files under a path in the scanned scope (subtree totals)
     Tree {
         /// Path inside the scan root (absolute or root-relative); default is the root
@@ -555,6 +560,23 @@ fn run() -> Result<()> {
                 eprintln!("omg: scan twice to see what grew between scans");
             }
             println!("{}", serde_json::to_string_pretty(&value)?)
+        }
+        Some(Command::Unexplained { limit }) => {
+            let items: Vec<serde_json::Value> = index
+                .unexplained(limit)?
+                .into_iter()
+                .map(|u| {
+                    serde_json::json!({
+                        "path": omg_core::display_path(&u.path),
+                        "allocated": u.allocated,
+                        "unexplained": u.unexplained,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({ "items": items }))?
+            )
         }
         Some(Command::Trends { days }) => {
             println!("{}", serde_json::to_string_pretty(&index.trend(days)?)?)
