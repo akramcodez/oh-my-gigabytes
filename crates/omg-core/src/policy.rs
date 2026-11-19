@@ -9,7 +9,7 @@ pub const STALE_DAYS: i64 = 30;
 
 /// Build and dependency folders that their tools recreate. Inside a repository they are never
 /// locked (a warning is shown instead); outside one they are ordinary folders.
-pub const REGENERABLE: [&str; 54] = [
+pub const REGENERABLE: [&str; 57] = [
     "node_modules",
     "target",
     "dist",
@@ -64,6 +64,9 @@ pub const REGENERABLE: [&str; 54] = [
     ".pnpm-store",
     ".nox",
     "DerivedDataCache",
+    ".nyc_output",
+    ".vite",
+    ".vs",
 ];
 
 /// Names that are sensitive wherever they appear, even inside caches or old repositories. Lower case.
@@ -226,12 +229,142 @@ pub fn repository_status(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) 
     }
 }
 
-/// When the repository at `repo` is an untouched clone, the time its index was written (nanoseconds
-/// since the epoch); `None` when that cannot be shown. Reads only Git's own config and references,
-/// bounded and without following links, and never runs Git. Fetched objects stay in packs, so any
-/// loose object means something was committed, staged or pulled here. The caller still has to
-/// compare the working tree with the returned time.
-pub fn pristine_clone(repo: &Path) -> Option<i128> {
+/// A file as Git's index last recorded it: size and modified seconds, both truncated to 32 bits as
+/// Git stores them, and the file mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tracked {
+    pub size: u32,
+    pub modified: u32,
+    pub mode: u32,
+}
+
+impl Tracked {
+    /// Whether a working-tree entry still has the size, time and kind Git recorded for it.
+    pub fn matches(&self, kind: &str, apparent: u64, modified_ns: i64) -> bool {
+        let kind_matches = match self.mode & 0o170000 {
+            0o100000 => kind == "file",
+            0o120000 => kind == "symlink" || kind == "file",
+            _ => false,
+        };
+        kind_matches
+            && u64::from(self.size) == apparent & 0xffff_ffff
+            && i64::from(self.modified) == modified_ns.div_euclid(1_000_000_000) & 0xffff_ffff
+    }
+}
+
+/// What `pristine_clone` found: when the index was written (nanoseconds since the epoch) and every
+/// tracked path, relative to the repository with `/` separators.
+#[derive(Debug, Default)]
+pub struct Checkout {
+    pub written: i128,
+    pub tracked: HashMap<Vec<u8>, Tracked>,
+}
+
+const MAX_GIT_INDEX: u64 = 64 << 20;
+
+/// Git's offset encoding for version 4 path prefixes.
+fn index_varint(bytes: &[u8]) -> Option<(usize, usize)> {
+    let mut used = 0;
+    let mut byte = *bytes.first()?;
+    let mut value = usize::from(byte & 127);
+    while byte & 128 != 0 {
+        used += 1;
+        if used > 9 {
+            return None;
+        }
+        byte = *bytes.get(used)?;
+        value = value.checked_add(1)?.checked_mul(128)? + usize::from(byte & 127);
+    }
+    Some((value, used + 1))
+}
+
+/// The entries of `.git/index` (versions 2 to 4). `None` for anything these checks cannot compare
+/// with the working tree: a split or sparse index, a merge conflict, a submodule, or a path Git
+/// was told to skip, assume unchanged or only intends to add.
+fn index_entries(path: &Path, hash_len: usize) -> Option<HashMap<Vec<u8>, Tracked>> {
+    let metadata = path.symlink_metadata().ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_GIT_INDEX {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    let word = |at: usize| -> Option<u32> {
+        Some(u32::from_be_bytes(
+            data.get(at..at.checked_add(4)?)?.try_into().ok()?,
+        ))
+    };
+    let half = |at: usize| -> Option<u16> {
+        Some(u16::from_be_bytes(
+            data.get(at..at.checked_add(2)?)?.try_into().ok()?,
+        ))
+    };
+    if data.get(..4)? != b"DIRC" {
+        return None;
+    }
+    let version = word(4)?;
+    if !(2..=4).contains(&version) {
+        return None;
+    }
+    let count = usize::try_from(word(8)?).ok()?;
+    let mut entries = HashMap::with_capacity(count.min(1 << 16));
+    let mut previous: Vec<u8> = Vec::new();
+    let mut at = 12;
+    for _ in 0..count {
+        let start = at;
+        let tracked = Tracked {
+            modified: word(at + 8)?,
+            mode: word(at + 24)?,
+            size: word(at + 36)?,
+        };
+        at += 40 + hash_len;
+        let flags = half(at)?;
+        at += 2;
+        if flags & 0x8000 != 0 || flags & 0x3000 != 0 {
+            return None;
+        }
+        if flags & 0x4000 != 0 {
+            if version < 3 || half(at)? & 0x6000 != 0 {
+                return None;
+            }
+            at += 2;
+        }
+        let name = if version == 4 {
+            let (strip, used) = index_varint(data.get(at..)?)?;
+            at += used;
+            let end = at + data.get(at..)?.iter().position(|b| *b == 0)?;
+            let mut name = previous.get(..previous.len().checked_sub(strip)?)?.to_vec();
+            name.extend_from_slice(&data[at..end]);
+            at = end + 1;
+            name
+        } else {
+            let end = at + data.get(at..)?.iter().position(|b| *b == 0)?;
+            let name = data[at..end].to_vec();
+            // Padded with one to eight NULs to a multiple of eight bytes.
+            at = start + (end - start + 8) / 8 * 8;
+            name
+        };
+        if !matches!(tracked.mode & 0o170000, 0o100000 | 0o120000) {
+            return None;
+        }
+        previous.clone_from(&name);
+        entries.insert(name, tracked);
+    }
+    let end = data.len().checked_sub(hash_len)?;
+    while at.checked_add(8)? <= end {
+        if matches!(data.get(at..at + 4)?, b"link" | b"sdir") {
+            return None;
+        }
+        at = at.checked_add(8 + usize::try_from(word(at + 4)?).ok()?)?;
+    }
+    Some(entries)
+}
+
+/// When the repository at `repo` is an untouched clone, what its index records; `None` when that
+/// cannot be shown. Reads only Git's own config, references and index, bounded and without
+/// following links, and never runs Git. Fetched objects stay in packs, so any loose object means
+/// something was committed, staged or pulled here. The caller still has to compare the working
+/// tree with the returned index entries and time: Git rewrites the index on pull, checkout or
+/// status, so an edit older than the index shows only in the entries.
+pub fn pristine_clone(repo: &Path) -> Option<Checkout> {
     let git = repo.join(".git");
     if !git.symlink_metadata().ok()?.is_dir() {
         return None;
@@ -273,6 +406,11 @@ pub fn pristine_clone(repo: &Path) -> Option<i128> {
     if !has_remote {
         return None;
     }
+    let sha256 = config.lines().any(|line| {
+        let line: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+        line.eq_ignore_ascii_case("objectformat=sha256")
+    });
+    let hash_len = if sha256 { 32 } else { 20 };
     let mut refs: HashMap<String, String> = HashMap::new();
     if git.join("packed-refs").symlink_metadata().is_ok() {
         for line in read_small(&git.join("packed-refs"))?.lines() {
@@ -345,7 +483,10 @@ pub fn pristine_clone(repo: &Path) -> Option<i128> {
     }
     let written = git.join("index").symlink_metadata().ok()?.modified().ok()?;
     let since = written.duration_since(std::time::UNIX_EPOCH).ok()?;
-    i128::try_from(since.as_nanos()).ok()
+    Some(Checkout {
+        written: i128::try_from(since.as_nanos()).ok()?,
+        tracked: index_entries(&git.join("index"), hash_len)?,
+    })
 }
 
 fn read_small(path: &Path) -> Option<String> {

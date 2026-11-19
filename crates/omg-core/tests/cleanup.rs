@@ -1572,7 +1572,14 @@ fn old_clone(home: &Path, source: &Path, name: &str) -> std::path::PathBuf {
         &clone,
         std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400),
     );
+    refresh(&clone);
     clone
+}
+
+/// Let Git record the aged times in its index, as its next status after a real checkout would.
+fn refresh(clone: &Path) {
+    git(clone, &["status", "--porcelain"]);
+    age(&clone.join(".git"), days_ago(60));
 }
 
 fn clone_source() -> tempfile::TempDir {
@@ -1594,6 +1601,7 @@ fn only_a_clone_with_nothing_local_to_lose_is_suggested_and_it_deletes_whole() {
     old_clone(h, source.path(), "untouched");
     write_bytes(&h.join("untouched/node_modules/pkg/index.js"), 100);
     age(&h.join("untouched"), old);
+    refresh(&h.join("untouched"));
 
     // Every near miss below is a real Git state, and each must stay out of the list.
     let committed = old_clone(h, source.path(), "committed");
@@ -1688,6 +1696,71 @@ fn a_file_changed_after_the_checkout_keeps_a_clone_out_even_with_an_old_modified
     scan(&mut index, h);
     index.suggest(h).unwrap();
     assert!(suggested(&index).is_empty(), "{:?}", suggested(&index));
+}
+
+#[test]
+fn local_changes_older_than_the_last_index_write_keep_a_clone_out() {
+    let (home, state) = setup();
+    let h = home.path();
+    let source = clone_source();
+    let old = days_ago(60);
+    let url = format!("file://{}", source.path().display());
+    let mut clones = Vec::new();
+    for name in ["modified", "untracked", "removed"] {
+        git(h, &["clone", "--quiet", &url, name]);
+        clones.push(h.join(name));
+    }
+    write_bytes(&clones[0].join("src/main.rs"), 3000);
+    write_bytes(&clones[1].join(".env"), 10);
+    fs::remove_file(clones[2].join("src/main.rs")).unwrap();
+    write_bytes(&source.path().join("src/lib.rs"), 500);
+    git(source.path(), &["add", "."]);
+    git(source.path(), &["commit", "--quiet", "-m", "two"]);
+    // Pulling rewrites the index after the edits and packing leaves no loose objects, so only the
+    // index entries still show that the working tree differs from the checkout.
+    for clone in &clones {
+        git(clone, &["pull", "--quiet", "--ff-only"]);
+        git(clone, &["gc", "--quiet"]);
+        age(clone, old);
+        refresh(clone);
+    }
+    old_clone(h, source.path(), "pristine");
+    let compact = old_clone(h, source.path(), "version4");
+    git(&compact, &["update-index", "--index-version", "4"]);
+    refresh(&compact);
+    let skipped = old_clone(h, source.path(), "skipped");
+    git(
+        &skipped,
+        &["update-index", "--skip-worktree", "src/main.rs"],
+    );
+    refresh(&skipped);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    assert_eq!(
+        suggested(&index),
+        vec![b"pristine".to_vec(), b"version4".to_vec()]
+    );
+}
+
+#[test]
+fn a_scripted_clean_leaves_a_whole_repository_for_review_even_when_it_is_the_only_match() {
+    let (home, state) = setup();
+    let h = home.path();
+    let source = clone_source();
+    old_clone(h, source.path(), "clone");
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    let selection = index
+        .select_for_clean(h, &["unused_clones".to_string()], None)
+        .unwrap();
+    assert_eq!(selection.items.len(), 1);
+    let (plan, report) = index
+        .clean_selection(h, &selection, &selection.fingerprint)
+        .unwrap();
+    assert!(report.deleted.is_empty(), "{report:?}");
+    assert_eq!(plan.denied.len(), 1, "{:?}", plan.denied);
+    assert!(h.join("clone/src/main.rs").exists());
 }
 
 #[test]
@@ -2276,6 +2349,78 @@ fn build_output_of_more_ecosystems_is_found_beside_its_project_file() {
     assert_eq!(report.deleted.len(), 5, "{report:?}");
     assert!(h.join("web/package.json").exists());
     assert!(h.join("notes/build/drawing.psd").exists());
+}
+
+#[test]
+fn test_coverage_bundler_caches_and_ide_state_are_found_with_their_project_file() {
+    let (home, state) = setup();
+    let h = home.path();
+    for (marker, output) in [
+        ("web/package.json", "web/coverage/lcov.info"),
+        ("web/package.json", "web/.nyc_output/run.json"),
+        ("web/package.json", "web/.vite/deps/blob"),
+        ("desk/Desk.sln", "desk/.vs/Desk/v17/blob"),
+        ("ios/Cartfile", "ios/Carthage/Build/Lib.xcframework/blob"),
+        ("pkg/Package.swift", "pkg/.swiftpm/xcode/blob"),
+        ("mono/pnpm-workspace.yaml", "mono/packages/ui/dist/index.js"),
+        (
+            "mono/packages/ui/package.json",
+            "mono/packages/ui/build/index.js",
+        ),
+    ] {
+        write_bytes(&h.join(marker), 10);
+        write_bytes(&h.join(output), 60 << 20);
+    }
+    std::fs::create_dir_all(h.join("mono/.git")).unwrap();
+    // A report without the tools' own files may be committed, and SwiftPM settings are the user's.
+    write_bytes(&h.join("docs/package.json"), 10);
+    write_bytes(&h.join("docs/coverage/summary.html"), 60 << 20);
+    write_bytes(&h.join("lib/Package.swift"), 10);
+    write_bytes(
+        &h.join("lib/.swiftpm/configuration/registries.json"),
+        60 << 20,
+    );
+    // Without a workspace file a package's `dist` is not proven to be output.
+    write_bytes(&h.join("loose/packages/ui/package.json"), 10);
+    write_bytes(&h.join("loose/packages/ui/dist/index.js"), 60 << 20);
+    std::fs::create_dir_all(h.join("loose/.git")).unwrap();
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    assert_eq!(
+        findings_of(&index, h, "project_build_output"),
+        vec![
+            b"desk/.vs".to_vec(),
+            b"ios/Carthage/Build".to_vec(),
+            b"mono/packages/ui/build".to_vec(),
+            b"mono/packages/ui/dist".to_vec(),
+            b"pkg/.swiftpm".to_vec(),
+            b"web/.nyc_output".to_vec(),
+            b"web/.vite".to_vec(),
+            b"web/coverage".to_vec(),
+        ]
+    );
+    let ids: Vec<i64> = [
+        "desk/.vs",
+        "ios/Carthage/Build",
+        "pkg/.swiftpm",
+        "web/.vite",
+    ]
+    .iter()
+    .map(|p| {
+        index.mark(p.as_bytes(), 1, h).unwrap();
+        id_of(&index, p.as_bytes())
+    })
+    .collect();
+    let plan = index.prepare_delete(&ids, h).unwrap();
+    let report = index
+        .delete_permanently(&plan, &plan.fingerprint, h)
+        .unwrap();
+    assert_eq!(report.deleted.len(), 4, "{report:?}");
+    assert!(h.join("ios/Cartfile").exists());
+    assert!(
+        h.join("lib/.swiftpm/configuration/registries.json")
+            .exists()
+    );
 }
 
 fn findings_of(index: &Index, h: &Path, kind: &str) -> Vec<Vec<u8>> {

@@ -677,6 +677,28 @@ impl Activity {
         ))
     }
 }
+/// Findings are reused for at most this long, so ages and the Git and application folders they
+/// read stay current.
+const FINDINGS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a full list of findings was computed from: the published scan, the catalog, the ignores,
+/// the arguments and SQLite's count of commits by other connections (a scan by the service).
+#[derive(PartialEq, Eq)]
+struct FindingsKey {
+    scan: i64,
+    catalog: String,
+    ignores: Vec<u8>,
+    include_ignored: bool,
+    home: std::path::PathBuf,
+    data_version: i64,
+}
+
+pub(crate) struct FindingsMemo {
+    key: FindingsKey,
+    at: std::time::Instant,
+    findings: Vec<Finding>,
+}
+
 /// A folder that no finding explains, from `Index::unexplained`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Unexplained {
@@ -785,10 +807,27 @@ fn app_installed(name: &str, apps: &[String]) -> bool {
     })
 }
 
+/// Files at the root of a JavaScript monorepo that make its packages' `dist` and `build` output.
+const WORKSPACE_FILES: [&str; 5] = [
+    "pnpm-workspace.yaml",
+    "lerna.json",
+    "turbo.json",
+    "nx.json",
+    "rush.json",
+];
+
+/// The folder `CARGO_TARGET_DIR` names, relative to the scan root, when it is absolute.
+fn shared_cargo_target(root: &std::path::Path) -> Option<Vec<u8>> {
+    let target = absolute_env("CARGO_TARGET_DIR")?;
+    crate::rollup::relative_raw(root, &target).filter(|p| !p.is_empty())
+}
+
 /// Projects worked on within this many days keep their build output out of suggestions.
 pub const PROJECT_ACTIVE_DAYS: i64 = 7;
 /// Folder names a build or package tool writes inside a project.
-const PROJECT_OUTPUT_NAMES: [&str; 10] = [
+const PROJECT_OUTPUT_NAMES: [&str; 12] = [
+    "Carthage",
+    ".swiftpm",
     "bin",
     "obj",
     "vendor",
@@ -1432,6 +1471,27 @@ impl Index {
                 .query_row("SELECT scan_id FROM active WHERE singleton=1", [], |r| {
                     r.get(0)
                 })?;
+        let key = FindingsKey {
+            scan,
+            catalog: hash.clone(),
+            ignores: serde_json::to_vec(&ignores)?,
+            include_ignored,
+            home: home.clone(),
+            data_version: self.db.query_row("PRAGMA data_version", [], |r| r.get(0))?,
+        };
+        let page = |all: &[Finding]| -> Vec<Finding> {
+            all.iter()
+                .skip(offset)
+                .take(limit.min(1000))
+                .cloned()
+                .collect()
+        };
+        if let Some(memo) = self.findings_memo.borrow().as_ref()
+            && memo.key == key
+            && memo.at.elapsed() < FINDINGS_TTL
+        {
+            return Ok(page(&memo.findings));
+        }
         let rollups = self.rollups_available()?;
         let mut output: Vec<Finding> = Vec::new();
         let mut directory_roots: Vec<Vec<u8>> = Vec::new();
@@ -1524,14 +1584,7 @@ impl Index {
             if relative.is_empty() {
                 continue;
             }
-            let entry = self
-                .db
-                .query_row(
-                    "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
-                    params![scan, crate::index::split_path(&relative).0, crate::index::split_path(&relative).1],
-                    crate::index::row_entry,
-                )
-                .optional()?;
+            let entry = self.entry_at(scan, &relative)?;
             let Some(entry) = entry.filter(|e| e.kind == "directory") else {
                 continue;
             };
@@ -1547,15 +1600,7 @@ impl Index {
             .find(|r| r.discovery == "unused_clone")
         {
             for path in self.unused_clones(scan, &root)? {
-                let Some(entry) = self
-                    .db
-                    .query_row(
-                        "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
-                        params![scan, crate::index::split_path(&path).0, crate::index::split_path(&path).1],
-                        crate::index::row_entry,
-                    )
-                    .optional()?
-                else {
+                let Some(entry) = self.entry_at(scan, &path)? else {
                     continue;
                 };
                 directory_roots.push(entry.path.clone());
@@ -1569,27 +1614,19 @@ impl Index {
             .filter(applicable)
             .find(|r| r.discovery == "stale_dependencies")
         {
-            for path in self.stale_dependencies(scan)? {
+            for path in self.stale_dependencies(scan, &root)? {
                 if directory_roots
                     .iter()
                     .any(|d| policy::inside(&path, d, true))
                 {
                     continue;
                 }
-                let Some(entry) = self
-                    .db
-                    .query_row(
-                        "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
-                        params![scan, crate::index::split_path(&path).0, crate::index::split_path(&path).1],
-                        crate::index::row_entry,
-                    )
-                    .optional()?
-                else {
+                let Some(entry) = self.entry_at(scan, &path)? else {
                     continue;
                 };
                 directory_roots.push(entry.path.clone());
                 let subtree = self.subtree(&entry.path)?;
-                let activity = self.project_activity(scan, crate::index::split_path(&path).0)?;
+                let activity = self.output_activity(scan, &root, &path)?;
                 output.extend(assemble(rule, entry, subtree, None, Some(activity))?);
             }
         }
@@ -1602,7 +1639,10 @@ impl Index {
         };
         let mut found: Vec<(&Rule, Vec<Vec<u8>>)> = Vec::new();
         if let Some(rule) = rule_of("project_build_output") {
-            found.push((rule, self.project_outputs(scan, SUGGEST_MIN_BYTES, None)?));
+            found.push((
+                rule,
+                self.project_outputs(scan, &root, SUGGEST_MIN_BYTES, None)?,
+            ));
         }
         if let Some(rule) = rule_of("ai_tool_old_versions") {
             found.push((rule, self.ai_tool_old_versions(scan, &root, &home)?));
@@ -1659,15 +1699,7 @@ impl Index {
                 {
                     continue;
                 }
-                let Some(entry) = self
-                    .db
-                    .query_row(
-                        "SELECT CAST(parent||name AS BLOB) AS path,parent,kind,identity,apparent,allocated,links,modified_ns,changed_ns,excluded FROM entries WHERE scan_id=? AND parent=? AND name=?",
-                        params![scan, crate::index::split_path(&path).0, crate::index::split_path(&path).1],
-                        crate::index::row_entry,
-                    )
-                    .optional()?
-                else {
+                let Some(entry) = self.entry_at(scan, &path)? else {
                     continue;
                 };
                 directory_roots.push(entry.path.clone());
@@ -1677,7 +1709,7 @@ impl Index {
                     None
                 };
                 let activity = (rule.discovery == "project_build_output")
-                    .then(|| self.project_activity(scan, crate::index::split_path(&path).0))
+                    .then(|| self.output_activity(scan, &root, &path))
                     .transpose()?;
                 output.extend(assemble(rule, entry, subtree, None, activity)?);
             }
@@ -1754,11 +1786,13 @@ impl Index {
                 .cmp(&a.estimate)
                 .then(a.entry.path.cmp(&b.entry.path))
         });
-        Ok(output
-            .into_iter()
-            .skip(offset)
-            .take(limit.min(1000))
-            .collect())
+        let found = page(&output);
+        self.findings_memo.replace(Some(FindingsMemo {
+            key,
+            at: std::time::Instant::now(),
+            findings: output,
+        }));
+        Ok(found)
     }
     /// Git clones untouched for `policy::STALE_DAYS` with nothing local to lose: see
     /// `policy::pristine_clone`, plus nothing in the working tree changed after the checkout. The
@@ -1792,11 +1826,15 @@ impl Index {
             if newest <= 0 || newest >= cutoff {
                 continue;
             }
-            let Some(written) = policy::pristine_clone(&root.join(platform::path(&repository)?))
+            let Some(checkout) = policy::pristine_clone(&root.join(platform::path(&repository)?))
             else {
                 continue;
             };
-            let limit = i64::try_from(written.saturating_add(CLONE_SLACK_NS)).unwrap_or(i64::MAX);
+            if !self.matches_checkout(scan, &repository, &checkout)? {
+                continue;
+            }
+            let limit =
+                i64::try_from(checkout.written.saturating_add(CLONE_SLACK_NS)).unwrap_or(i64::MAX);
             let mut upper = repository.clone();
             upper.push(b'0');
             let mut prefix = repository.clone();
@@ -1819,6 +1857,51 @@ impl Index {
             }
         }
         Ok(chosen)
+    }
+    /// Whether the working tree is exactly what Git's index recorded: every tracked file present
+    /// with its recorded size and time, and nothing else apart from what tools write
+    /// (`CLONE_NOISE`). An untracked or ignored file, such as a `.env`, is local work too.
+    fn matches_checkout(
+        &self,
+        scan: i64,
+        repository: &[u8],
+        checkout: &policy::Checkout,
+    ) -> Result<bool> {
+        let mut upper = repository.to_vec();
+        upper.push(b'0');
+        let mut prefix = repository.to_vec();
+        prefix.push(b'/');
+        let mut statement = self.db.prepare_cached(
+            "SELECT CAST(parent||name AS BLOB),kind,apparent,modified_ns,excluded IS NOT NULL FROM entries WHERE scan_id=?1 AND parent>=?2 AND parent<?3 AND (parent=?2 OR parent>?4)",
+        )?;
+        let mut rows = statement.query(params![scan, repository, upper, prefix])?;
+        let mut seen = 0;
+        while let Some(row) = rows.next()? {
+            let path: Vec<u8> = row.get(0)?;
+            let kind: String = row.get(1)?;
+            let Some(relative) = path.strip_prefix(prefix.as_slice()) else {
+                return Ok(false);
+            };
+            if relative == b".git" {
+                continue;
+            }
+            if let Some(tracked) = checkout.tracked.get(relative) {
+                if !tracked.matches(&kind, row.get::<_, i64>(2)?.max(0) as u64, row.get(3)?) {
+                    return Ok(false);
+                }
+                seen += 1;
+                continue;
+            }
+            let noise = relative.split(|b| *b == b'/').any(|part| {
+                part != b".git" && CLONE_NOISE.iter().any(|name| name.as_bytes() == part)
+            });
+            // Git tracks no folders, but one not looked into could hide anything.
+            let unread = kind == "directory" && row.get::<_, bool>(4)?;
+            if !noise && (kind != "directory" || unread) {
+                return Ok(false);
+            }
+        }
+        Ok(seen == checkout.tracked.len())
     }
     /// Applications' folders directly in `~/Library/Caches`, which apps must be able to recreate.
     /// Apple's own are left out: the system manages them and they come straight back.
@@ -1860,7 +1943,11 @@ impl Index {
         let cutoff = crate::now() - UNUSED_DAYS * 86_400;
         let gaps = self.gaps(scan)?;
         let mut out = Vec::new();
-        for toolchain in toolchains(home) {
+        let all = toolchains(home);
+        let wanted: std::collections::HashSet<&str> =
+            all.iter().flat_map(|t| t.outputs.iter().copied()).collect();
+        let mut recent_outputs: Option<std::collections::HashSet<String>> = None;
+        for toolchain in &all {
             for install in &toolchain.roots {
                 let Some(path) = crate::rollup::relative_raw(root, install) else {
                     continue;
@@ -1885,9 +1972,14 @@ impl Index {
                         recent |= t.newest >= cutoff || gaps.covers(&other);
                     }
                 }
-                for name in toolchain.outputs {
-                    recent = recent || self.recent_folder_named(scan, name, cutoff)?;
+                if !recent && recent_outputs.is_none() {
+                    recent_outputs = Some(self.recent_folder_names(scan, cutoff, &wanted)?);
                 }
+                recent = recent
+                    || toolchain
+                        .outputs
+                        .iter()
+                        .any(|name| recent_outputs.as_ref().is_some_and(|r| r.contains(*name)));
                 if !recent && !out.contains(&path) {
                     out.push(path);
                 }
@@ -1895,22 +1987,32 @@ impl Index {
         }
         Ok(out)
     }
-    /// Whether any folder called `name` anywhere in the scan changed at or after `since`.
-    fn recent_folder_named(&self, scan: i64, name: &str, since: i64) -> Result<bool> {
-        let mut nested = b"/".to_vec();
-        nested.extend_from_slice(name.as_bytes());
-        Ok(self
-            .db
-            .prepare_cached(
-                "SELECT 1 FROM dir_totals WHERE scan_id=?1 AND newest>=?2 AND (path=?3 OR substr(path,-?4)=?5) LIMIT 1",
-            )?
-            .exists(params![
-                scan,
-                since,
-                name.as_bytes(),
-                i64::try_from(nested.len())?,
-                nested
-            ])?)
+    /// Which of the `wanted` folder names appear anywhere in the scan changed at or after `since`,
+    /// read in one pass.
+    fn recent_folder_names(
+        &self,
+        scan: i64,
+        since: i64,
+        wanted: &std::collections::HashSet<&str>,
+    ) -> Result<std::collections::HashSet<String>> {
+        let mut statement = self.db.prepare_cached(
+            "SELECT path,parent FROM dir_totals WHERE scan_id=? AND newest>=? AND path<>x''",
+        )?;
+        let mut rows = statement.query(params![scan, since])?;
+        let mut found = std::collections::HashSet::new();
+        while let Some(row) = rows.next()? {
+            let path: Vec<u8> = row.get(0)?;
+            let parent: Vec<u8> = row.get(1)?;
+            let name = path.get(parent.len()..).unwrap_or_default();
+            let name = String::from_utf8_lossy(name.strip_prefix(b"/").unwrap_or(name));
+            if wanted.contains(name.as_ref()) {
+                found.insert(name.into_owned());
+                if found.len() == wanted.len() {
+                    break;
+                }
+            }
+        }
+        Ok(found)
     }
     /// Applications' own folders in the per-user data areas, 50 MB or larger, not changed for
     /// `UNUSED_DAYS`, with nothing protected inside (a database or credential inside means the
@@ -2937,17 +3039,31 @@ impl Index {
     }
     /// Top-level dependency folders (`node_modules` next to `package.json`, `target` next to
     /// `Cargo.toml`, Python virtual environments) outside hidden (tool/application) folders.
-    fn stale_dependencies(&self, scan: i64) -> Result<Vec<Vec<u8>>> {
+    fn stale_dependencies(&self, scan: i64, root: &std::path::Path) -> Result<Vec<Vec<u8>>> {
         let cutoff = crate::now() - policy::STALE_DAYS * 86_400;
-        self.project_outputs(scan, 1 << 20, Some(cutoff))
+        self.project_outputs(scan, root, 1 << 20, Some(cutoff))
+    }
+    /// When a project's output was last worked on. A shared Cargo target folder belongs to no one
+    /// project, so only its own newest change counts.
+    fn output_activity(&self, scan: i64, root: &std::path::Path, path: &[u8]) -> Result<Activity> {
+        if shared_cargo_target(root).as_deref() == Some(path) {
+            let newest = self.subtree(path)?.map(|t| t.newest).filter(|at| *at > 0);
+            return Ok(Activity {
+                build: newest,
+                ..Activity::default()
+            });
+        }
+        self.project_activity(scan, crate::index::split_path(path).0)
     }
     /// The same folders at least `min_bytes` large, and untouched since `untouched_since` if given.
     fn project_outputs(
         &self,
         scan: i64,
+        root: &std::path::Path,
         min_bytes: i64,
         untouched_since: Option<i64>,
     ) -> Result<Vec<Vec<u8>>> {
+        let shared_target = shared_cargo_target(root);
         let mut statement = self.db.prepare(
             "SELECT path FROM dir_totals WHERE scan_id=? AND allocated>=? AND path<>x''",
         )?;
@@ -3016,10 +3132,47 @@ impl Index {
                 }
                 Ok(false)
             };
+            // A package of a JavaScript monorepo: a workspace file and `.git` a few folders up.
+            let workspace_member = || -> Result<bool> {
+                let mut above = parent.clone();
+                for _ in 0..4 {
+                    if above.is_empty() {
+                        break;
+                    }
+                    above = crate::index::split_path(&above).0.to_vec();
+                    if !exists(join(&above, ".git"))? {
+                        continue;
+                    }
+                    for file in WORKSPACE_FILES {
+                        if exists(join(&above, file))? {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            };
+            let shared = shared_target.as_deref() == Some(path.as_slice());
             let evidence = match name {
+                // Cargo tags every target folder it creates.
+                _ if shared => exists(join(&path, "CACHEDIR.TAG"))?,
                 b"node_modules" | b".next" | b".nuxt" | b".svelte-kit" | b".turbo"
                 | b".parcel-cache" | b".angular" | b".expo" | b".output" | b"storybook-static"
-                | b".pnpm-store" => beside(&["package.json"])?,
+                | b".pnpm-store" | b".nyc_output" | b".vite" => beside(&["package.json"])?,
+                // Coverage reports by name alone may be committed; these files are the tools' own.
+                b"coverage" => {
+                    beside(&["package.json"])?
+                        && (exists(join(&path, "lcov.info"))?
+                            || exists(join(&path, "coverage-final.json"))?
+                            || exists(join(&path, "lcov-report"))?)
+                }
+                b".vs" => beside_kind(&[".sln", ".slnx"])?,
+                b"Build" if parent_name == b"Carthage" => {
+                    beside_parent(&["Cartfile", "Cartfile.resolved"])?
+                }
+                // Xcode recreates the workspace data; registry and mirror settings are the user's.
+                b".swiftpm" => {
+                    beside(&["Package.swift"])? && !exists(join(&path, "configuration"))?
+                }
                 b"out" => beside(&[
                     "next.config.js",
                     "next.config.mjs",
@@ -3074,7 +3227,7 @@ impl Index {
                 b".direnv" => beside(&[".envrc"])?,
                 // Ordinary names: only at the root of a Git project, where the build made them.
                 b"dist" | b"build" => {
-                    (beside(&["package.json"])? && beside(&[".git"])?)
+                    (beside(&["package.json"])? && (beside(&[".git"])? || workspace_member()?))
                         || beside(&[
                             "build.gradle",
                             "build.gradle.kts",
@@ -3109,14 +3262,18 @@ impl Index {
             let hidden = parent
                 .split(|b| *b == b'/')
                 .any(|part| part.first() == Some(&b'.'));
-            if !evidence || hidden || chosen.iter().any(|c| policy::inside(&path, c, true)) {
+            if !evidence
+                || (hidden && !shared)
+                || chosen.iter().any(|c| policy::inside(&path, c, true))
+            {
                 continue;
             }
             let Some(cutoff) = untouched_since else {
                 chosen.push(path);
                 continue;
             };
-            let newest = self.subtree(&parent)?.map_or(0, |t| t.newest);
+            let owner = if shared { &path } else { &parent };
+            let newest = self.subtree(owner)?.map_or(0, |t| t.newest);
             if newest > 0 && newest < cutoff {
                 chosen.push(path);
             }

@@ -368,6 +368,14 @@ fn proven_build_output(absolute: &Path) -> bool {
     match absolute.file_name().map(|n| n.to_string_lossy()).as_deref() {
         Some("target") => beside("Cargo.toml"),
         Some(".venv" | "venv") => absolute.join("pyvenv.cfg").is_file(),
+        Some("Build") => absolute.parent().is_some_and(|p| {
+            p.file_name().is_some_and(|n| n == "Carthage")
+                && p.parent().is_some_and(|project| {
+                    project.join("Cartfile").is_file()
+                        || project.join("Cartfile.resolved").is_file()
+                })
+        }),
+        Some(".swiftpm") => beside("Package.swift") && !absolute.join("configuration").exists(),
         _ => false,
     }
 }
@@ -689,7 +697,8 @@ impl Index {
             .filter(|m| wanted.contains(&m.path.as_slice()))
             .map(|m| m.id)
             .collect();
-        let plan = self.prepare_delete(&ids, home)?;
+        let (scan, items, denied, keepable) = self.classify(&ids, home, true)?;
+        let plan = self.issue(scan, items, denied, keepable, ids)?;
         if plan.items.is_empty() {
             return Ok((plan, DeleteReport::default()));
         }
@@ -876,16 +885,18 @@ impl Index {
     /// Freeze the exact set to delete and issue it to this session. The interface shows it and must
     /// pass the same plan back. The issued copy is the only one `delete_permanently` will accept.
     pub fn prepare_delete(&mut self, ids: &[i64], home: &Path) -> Result<DeletePlan> {
-        let (scan, items, denied, keepable) = self.classify(ids, home)?;
+        let (scan, items, denied, keepable) = self.classify(ids, home, false)?;
         self.issue(scan, items, denied, keepable, ids.to_vec())
     }
     /// What `prepare_delete` would plan: items deletable whole, refusals, and cache folders that
-    /// can only be deleted around the protected items inside them.
+    /// can only be deleted around the protected items inside them. A scripted plan never takes a
+    /// whole project or application data, even alone.
     #[allow(clippy::type_complexity)]
     fn classify(
         &self,
         ids: &[i64],
         home: &Path,
+        scripted: bool,
     ) -> Result<(i64, Vec<Marked>, Vec<(Vec<u8>, String)>, Vec<i64>)> {
         if ids.is_empty() || ids.len() > 10_000 {
             bail!("select 1–10000 items in OMG Trash to delete");
@@ -925,7 +936,9 @@ impl Index {
                         Gate::Warn(text) => Some(text),
                         Gate::Allowed => None,
                     };
-                    if ids.len() > 1 && one_at_a_time(&root, home, &entry, verdict.kind) {
+                    if (scripted || ids.len() > 1)
+                        && one_at_a_time(&root, home, &entry, verdict.kind)
+                    {
                         denied.push((item.path.clone(), ONE_AT_A_TIME.into()));
                         continue;
                     }
@@ -1051,7 +1064,7 @@ impl Index {
         ids: &[i64],
         home: &Path,
     ) -> Result<DeletePlan> {
-        let (scan, mut items, mut denied, keepable) = self.classify(ids, home)?;
+        let (scan, mut items, mut denied, keepable) = self.classify(ids, home, false)?;
         if keepable.len() > 100 {
             bail!("select at most 100 folders with protected items inside");
         }
@@ -1491,6 +1504,7 @@ impl Index {
         path: &[u8],
         freed: &Freed,
     ) -> Result<()> {
+        self.findings_memo.take();
         let (prefix, upper) = descendants(path);
         // Protection counts are per name, and every name in the subtree is removed with it.
         let protected = self.subtree(path)?.map_or(0, |t| t.protected);

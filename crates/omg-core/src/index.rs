@@ -82,6 +82,8 @@ pub struct Index {
     /// Delete plans issued by this session and not yet used. Memory only: a reopened index cannot
     /// delete a plan that a previous session showed.
     pub(crate) issued: crate::cleanup::IssuedPlans,
+    /// The last full list of findings, reused while nothing it depends on changed.
+    pub(crate) findings_memo: std::cell::RefCell<Option<crate::catalog::FindingsMemo>>,
 }
 /// Native scanning maturity, as `omg doctor` reports it.
 fn native_analysis() -> &'static str {
@@ -404,6 +406,7 @@ impl Index {
             db,
             state,
             issued: Default::default(),
+            findings_memo: Default::default(),
         })
     }
     pub fn status(&self) -> Result<Status> {
