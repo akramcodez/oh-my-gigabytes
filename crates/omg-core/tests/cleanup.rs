@@ -1596,7 +1596,8 @@ fn only_a_clone_with_nothing_local_to_lose_is_suggested_and_it_deletes_whole() {
     let (home, state) = setup();
     let h = home.path();
     let source = clone_source();
-    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+    // A day apart from `old_clone`'s time, so Git sees the new times without comparing nanoseconds.
+    let old = days_ago(61);
 
     old_clone(h, source.path(), "untouched");
     write_bytes(&h.join("untouched/node_modules/pkg/index.js"), 100);
@@ -1734,6 +1735,27 @@ fn local_changes_older_than_the_last_index_write_keep_a_clone_out() {
         &["update-index", "--skip-worktree", "src/main.rs"],
     );
     refresh(&skipped);
+    // An edit of the same size, moments after Git last wrote its index and with the modification
+    // time put back within the same second, differs from the index only in nanoseconds.
+    let retimed = old_clone(h, source.path(), "retimed");
+    let file = retimed.join("src/main.rs");
+    let before = fs::metadata(&file).unwrap();
+    fs::write(&file, vec![b'x'; before.len() as usize]).unwrap();
+    let since = before
+        .modified()
+        .unwrap()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let shifted = std::time::Duration::new(
+        since.as_secs(),
+        (since.subsec_nanos() + 500_000_000) % 1_000_000_000,
+    );
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + shifted)
+        .unwrap();
     let mut index = Index::open(state.path()).unwrap();
     scan(&mut index, h);
     index.suggest(h).unwrap();

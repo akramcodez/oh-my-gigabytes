@@ -599,3 +599,67 @@ fn catalog_draft_describes_a_store_from_folder_listings() {
             .success()
     );
 }
+#[test]
+#[cfg(unix)]
+fn a_shared_cargo_target_folder_is_found_only_where_cargo_target_dir_points() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = tempfile::tempdir().unwrap();
+    let home = std::fs::canonicalize(fixture.path()).unwrap();
+    let state = home.join("state");
+    std::fs::create_dir(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let shared = home.join(".cache/cargo-target");
+    let elsewhere = home.join(".cache/other-target");
+    for folder in [&shared, &elsewhere] {
+        std::fs::create_dir_all(folder.join("debug")).unwrap();
+        std::fs::write(folder.join("debug/blob"), vec![7u8; 60 << 20]).unwrap();
+    }
+    std::fs::write(
+        shared.join("CACHEDIR.TAG"),
+        b"Signature: 8a477f597d28d172789f06886806bc55",
+    )
+    .unwrap();
+    std::fs::write(
+        elsewhere.join("CACHEDIR.TAG"),
+        b"Signature: 8a477f597d28d172789f06886806bc55",
+    )
+    .unwrap();
+    let omg = |target: &std::path::Path, args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_omg"))
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("CARGO_TARGET_DIR", target)
+            .arg("--state-dir")
+            .arg(&state)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let scan = omg(
+        &shared,
+        &["scan", "--root", home.to_str().unwrap(), "--no-suggest"],
+    );
+    assert!(scan.status.success(), "{scan:?}");
+    let outputs = |target: &std::path::Path| -> Vec<Vec<u8>> {
+        let output = omg(target, &["findings"]);
+        assert!(output.status.success(), "{output:?}");
+        let findings: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        findings
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["rule"]["discovery"] == "project_build_output")
+            .map(|f| serde_json::from_value(f["entry"]["path"].clone()).unwrap())
+            .collect()
+    };
+    assert_eq!(outputs(&shared), vec![b".cache/cargo-target".to_vec()]);
+    // A relative value names no fixed folder.
+    assert!(outputs(std::path::Path::new("cargo-target")).is_empty());
+    std::fs::remove_file(shared.join("CACHEDIR.TAG")).unwrap();
+    let scan = omg(
+        &shared,
+        &["scan", "--root", home.to_str().unwrap(), "--no-suggest"],
+    );
+    assert!(scan.status.success(), "{scan:?}");
+    assert!(outputs(&shared).is_empty());
+}

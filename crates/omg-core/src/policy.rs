@@ -235,6 +235,8 @@ pub fn repository_status(root: &Path, entry: &Entry, memo: &mut RepositoryMemo) 
 pub struct Tracked {
     pub size: u32,
     pub modified: u32,
+    /// Zero when Git was built without nanosecond times.
+    pub modified_nanos: u32,
     pub mode: u32,
 }
 
@@ -246,9 +248,11 @@ impl Tracked {
             0o120000 => kind == "symlink" || kind == "file",
             _ => false,
         };
+        let nanos = modified_ns.rem_euclid(1_000_000_000);
         kind_matches
             && u64::from(self.size) == apparent & 0xffff_ffff
             && i64::from(self.modified) == modified_ns.div_euclid(1_000_000_000) & 0xffff_ffff
+            && (self.modified_nanos == 0 || i64::from(self.modified_nanos) == nanos)
     }
 }
 
@@ -312,6 +316,7 @@ fn index_entries(path: &Path, hash_len: usize) -> Option<HashMap<Vec<u8>, Tracke
         let start = at;
         let tracked = Tracked {
             modified: word(at + 8)?,
+            modified_nanos: word(at + 12)?,
             mode: word(at + 24)?,
             size: word(at + 36)?,
         };
