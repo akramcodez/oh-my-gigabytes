@@ -107,6 +107,17 @@ const TREE: Record<string, Node> = {
   "~/.nvm/versions/node": { size: g(1.19), files: 41_300, dir: true },
   "~/.nvm/versions/node/v18.20.4": { size: m(96.2), files: 6_010, dir: true },
   "~/.nvm/versions/node/v22.21.1": { size: m(102.7), files: 6_240, dir: true },
+  "~/code/old-fork": { size: g(1.84), files: 22_410, dir: true },
+  "~/Downloads/Docker.dmg": { size: m(498.6), files: 1, dir: false },
+  "~/.codex": { size: m(201.3), files: 1_904, dir: true },
+  "~/.codex/sessions": { size: m(199.8), files: 1_880, dir: true },
+  "~/.codex/sessions/2026": { size: m(199.8), files: 1_880, dir: true },
+  "~/.codex/sessions/2026/11": { size: m(15.3), files: 142, dir: true },
+  "~/.codex/sessions/2026/09": { size: m(184.5), files: 1_738, dir: true },
+  "~/.vscode": { size: m(612.4), files: 30_118, dir: true },
+  "~/.vscode/extensions": { size: m(611.9), files: 30_102, dir: true },
+  "~/.vscode/extensions/ms-python.python-2026.8.0": { size: m(141.7), files: 6_820, dir: true },
+  "~/.vscode/extensions/ms-python.python-2026.10.0": { size: m(144.2), files: 6_905, dir: true },
 };
 
 const FINDINGS: Finding[] = [
@@ -169,6 +180,30 @@ const FINDINGS: Finding[] = [
     rule: "Older nvm version", reason: "older Node version; a newer one is installed", changed: "61d ago",
     evidence: "nvm version folder unchanged 30 days, newer line present", effects: "nvm use 18 needs a reinstall",
     regen: "nvm install 18", warnings: "", suggest: true,
+  },
+  {
+    path: "~/code/old-fork", size: g(1.84), tier: "review", category: "unused_clones",
+    rule: "Unused Git clone", reason: "a clone untouched for 73 days with nothing that is not on its remote", changed: "73d ago",
+    evidence: "every branch on the remote, no stash or local tag, every file matches Git's index", effects: "the folder is gone; clone it again to get it back",
+    regen: "git clone", warnings: "deleted one at a time", suggest: false,
+  },
+  {
+    path: "~/Downloads/Docker.dmg", size: m(498.6), tier: "review", category: "old_downloads",
+    rule: "Old installer", reason: "a disk image in Downloads, not opened for 52 days", changed: "52d ago",
+    evidence: "installer or disk image in ~/Downloads, 10 MB+, 30+ days old", effects: "download it again if you need it",
+    regen: "download it again", warnings: "listed for you, never suggested", suggest: false,
+  },
+  {
+    path: "~/.codex/sessions/2026/09", size: m(184.5), tier: "review", category: "session_history",
+    rule: "Old Codex sessions", reason: "session transcripts older than 7 days", changed: "58d ago",
+    evidence: "Codex session store, items 7+ days old, 1 MB+", effects: "those old sessions can no longer be resumed",
+    regen: "no", warnings: "", suggest: true,
+  },
+  {
+    path: "~/.vscode/extensions/ms-python.python-2026.8.0", size: m(141.7), tier: "review", category: "old_tool_versions",
+    rule: "Older VS Code extension", reason: "an older version of an extension; the newer one is installed", changed: "39d ago",
+    evidence: "same extension id with a newer version a day old or more", effects: "none; VS Code uses the newer version",
+    regen: "no need", warnings: "", suggest: true,
   },
 ];
 
@@ -623,6 +658,7 @@ const json = (pairs: [string, string][]): Line[] => [
   [s("}")],
 ];
 
+const UNEXPLAINED = ["~/Library/Application Support", "~/Movies", "~/Documents", "~/Library/Caches", "~/code/website", "~/Downloads"];
 const CLEAN_CATEGORIES = ["package_caches", "build_artifacts", "logs_and_temp", "old_tool_versions"];
 
 export function run(sim: Sim, input: string): Sim {
@@ -641,6 +677,7 @@ export function run(sim: Sim, input: string): Sim {
       [s("  omg status", "brand"), s("        totals and freed so far", "dim")],
       [s("  omg findings", "brand"), s("      what can be cleaned and why", "dim")],
       [s("  omg grew", "brand"), s("          what grew since the scan before", "dim")],
+      [s("  omg unexplained", "brand"), s("   the biggest folders no finding explains", "dim")],
       [s("  omg clean --category package_caches", "brand")],
       [s("  omg theme light", "brand"), s("   colours: auto, dark or light", "dim")],
       [s("  omg doctor", "brand"), s("  ·  ", "dim"), s("ls", "brand"), s("  ·  ", "dim"), s("clear", "brand")],
@@ -689,6 +726,22 @@ export function run(sim: Sim, input: string): Sim {
       [s("  +2.31 GiB    ", "warn"), s("~/Library/Developer/Xcode/DerivedData")],
       [s("  +640.12 MiB  ", "warn"), s("~/.npm/_cacache")],
       [s("  +212.40 MiB  ", "warn"), s("~/code/game/target")],
+    ]);
+  }
+  if (cmd === "omg unexplained") {
+    if (!sim.scanned) return needScan();
+    const rows = UNEXPLAINED.filter((p) => alive(sim, p))
+      .map((p) => {
+        const size = sizeOf(sim, p);
+        const covered = findings(sim).reduce((n, f) => (f.path.startsWith(p + "/") ? n + sizeOf(sim, f.path) : n), 0);
+        return { p, size, left: Math.max(0, size - covered) };
+      })
+      .filter((r) => r.left >= 256 * MiB)
+      .sort((a, b) => b.left - a.left);
+    return out([
+      dim("allocated   unexplained   path"),
+      ...rows.map((r) => [s(lpad(bytes(r.size), 10)), s(lpad(bytes(r.left), 14), "warn"), s("   " + r.p)]),
+      dim("(the real command prints JSON; shortened here)"),
     ]);
   }
   if (cmd === "omg doctor")

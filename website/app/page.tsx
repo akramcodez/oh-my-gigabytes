@@ -79,7 +79,7 @@ const STEPS = [
   {
     title: "Scan",
     cmd: "omg scan",
-    body: "Walks your home folder and stores names, sizes and times in a local SQLite index. File contents are not read. The one exception: to judge an old Git clone, it reads Git's own config and branch references. Nothing is uploaded.",
+    body: "Walks your home folder and stores names, sizes and times in a local SQLite index. File contents are not read. The one exception: to judge an old Git clone, it reads Git's own config, branch references and index. Nothing is uploaded.",
   },
   {
     title: "Explain",
@@ -107,12 +107,12 @@ const FINDS: { title: string; tag: string; body: string; note?: string }[] = [
   {
     title: "Build output",
     tag: "build_artifacts",
-    body: "Build output and dependencies beside the project file that made them: Rust, Node and Next.js, Nuxt, SvelteKit, Gatsby, Gradle and Kotlin, Maven, sbt, Clojure, .NET, PHP, Ruby, R, Elixir, OCaml, Haskell, Swift, CocoaPods, Flutter, Zig, CMake, vcpkg, Terraform, Unity, Unreal, Godot and Python virtualenvs of any name, plus Xcode DerivedData. Each says when the project was last worked on; one touched this week is never suggested.",
+    body: "Build output and dependencies beside the project file that made them: Rust, Node and Next.js, Nuxt, SvelteKit, Gatsby, Gradle and Kotlin, Maven, sbt, Clojure, .NET, PHP, Ruby, R, Elixir, OCaml, Haskell, Swift, CocoaPods, Flutter, Zig, CMake, vcpkg, Terraform, Unity, Unreal, Godot and Python virtualenvs of any name, plus Xcode DerivedData. Also test coverage, Vite and nyc caches, Visual Studio .vs, Carthage and SwiftPM builds, a custom CARGO_TARGET_DIR and dist or build folders of monorepo packages. Each says when the project was last worked on; one touched this week is never suggested.",
   },
   {
     title: "Unused Git clones",
     tag: "unused_clones",
-    body: "Untouched for 30 days, every branch equal to the remote, no local commits, stashes or changes. Git itself is never run.",
+    body: "Untouched for 30 days, every branch equal to the remote, no local commits or stashes, and every file matching Git's own index exactly: same files, sizes and times, nothing extra. Git itself is never run.",
     note: "deleted one at a time",
   },
   {
@@ -363,7 +363,7 @@ export default async function Home() {
             </li>
             <li>
               <strong>Metadata, not contents</strong>
-              <span>Names, sizes and times. Only Git&apos;s own refs are read, to judge old clones.</span>
+              <span>Names, sizes and times. Only Git&apos;s own config, refs and index are read, to judge old clones.</span>
             </li>
             <li>
               <strong>You confirm every delete</strong>
