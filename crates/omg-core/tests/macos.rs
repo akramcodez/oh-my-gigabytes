@@ -274,8 +274,23 @@ fn every_macos_filesystem_scans_and_a_mounted_volume_is_a_boundary() {
         let state_dir = state.path().join(tag);
         fs::create_dir(&state_dir).unwrap();
         fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o700)).unwrap();
-        let (index, report) = scan(&mount, &state_dir);
-        assert_eq!(report.state, "complete", "{filesystem}");
+        // macOS services can still be writing to a volume just mounted, which makes a folder
+        // unreadable for a moment; scan again before calling it a failure.
+        let mut attempt = 0;
+        let (index, report) = loop {
+            let (index, report) = scan(&mount, &state_dir);
+            attempt += 1;
+            if report.state == "complete" || attempt == 3 {
+                break (index, report);
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        };
+        assert_eq!(
+            report.state,
+            "complete",
+            "{filesystem}: {:?}",
+            index.issues().unwrap()
+        );
         assert_eq!(report.errors, 0, "{filesystem}");
         let entries = index.entries(1000, 0).unwrap();
         let find = |name: &[u8]| entries.iter().find(|e| e.path == name);

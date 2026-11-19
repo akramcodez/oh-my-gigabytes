@@ -791,7 +791,7 @@ fn item_without_a_recorded_creation_time_is_never_deleted() {
 
 #[test]
 fn delete_waits_out_housekeeping_but_a_running_scan_still_stops_it() {
-    use omg_core::index::{LOCK_WAIT, lock};
+    use omg_core::index::{LOCK_WAIT, lock, lock_wait};
     let (home, state) = setup();
     let h = home.path();
     fs::write(h.join("big.iso"), vec![2u8; 200_000]).unwrap();
@@ -818,7 +818,9 @@ fn delete_waits_out_housekeeping_but_a_running_scan_still_stops_it() {
     drop(scanning);
 
     // The lock is only held for a moment (housekeeping between two slices): the delete goes through.
-    let busy = lock(state.path(), "scan.lock").unwrap();
+    // A child process spawned by a parallel test briefly shares every open file, so the lock just
+    // dropped can still look held for an instant.
+    let busy = lock_wait(state.path(), "scan.lock", LOCK_WAIT).unwrap();
     let release = std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(300));
         drop(busy);
