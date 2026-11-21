@@ -33,6 +33,7 @@ The package runs no install scripts and downloads nothing; each launch re-verifi
 
 ```sh
 omg scan --root "$HOME" --accept-gaps   # index your home folder
+omg scan --root ~/code                   # or any folder; omg remembers it for the next scan
 omg                                      # interface: 1 Overview, 2 Browse, 3 Findings, 4 OMG Trash, q quits
 omg status                               # totals, and how much space omg itself uses (index_bytes)
 omg findings                             # what can be cleaned, with explanations

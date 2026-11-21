@@ -122,16 +122,36 @@ Found and fixed by this run:
 
 `scripts/qualify-delete.py --binary target/debug/omg.exe --root %RUNNER_TEMP%` drives the interface through ConPTY in throwaway home folders on NTFS. On `windows-2022` (Server 2022) and `windows-latest` (Server 2025), run 43678086940: 7 of 7 passed: Esc keeps the file; "Yes" deletes only the confirmed file; a `.pem` is refused with no question; a 220-item folder is deleted whole; links inside a deleted folder are removed as links and their targets keep their content; deleting one name of a hard-linked file keeps the other; a file replaced between the question and "Yes" is skipped. Symbolic links were created (the runners are administrators); on an account without that right the link scenario is reported as skipped. Not done: the same with the MSVC release binary from `release.yml` on the owner's PC.
 
+## The signed 0.1.0 release package on a Windows 11 PC (2026-11-21)
+
+Owner's laptop: Windows 11 Home 25H2 (build 10.0.26200.7462), AMD64, C: and D: NTFS, F: FAT32. Standard account without Developer Mode, so it cannot create symbolic links. PowerShell 5.1, Node 24.13.0, Python 3.13.3 with `pywinpty` 2.0.15. Tests from a clone of `main` at `739f959`. Package: `oh-my-gigabytes-offline-win32-x64-0.1.0.tgz` from `Release build` run 44874343258, signed with the production key; its SHA-256 `a0735f24...3052` equals the line in `SHA256SUMS`.
+
+| Step | Result |
+| --- | --- |
+| Signature | Pass: `verify-release.js --target win32-x64 --version 0.1.0` verifies with key `01deacfe...9adc0`; a wrong target is refused ("Release version/target/schema mismatch"). |
+| Install | Pass: `npm install -g --prefix ... --ignore-scripts`, also into a prefix with a space (through `omg.cmd` and `omg.ps1`); `omg.exe` matches the manifest hash. |
+| `--version`, `doctor` | Pass: `omg 0.1.0`; "permanent delete: development-unqualified (Windows: NTFS only; ReFS and FAT32 refused; cloud placeholders never deleted)"; `doctor` did not create the state folder. |
+| State folder | Pass: after the first scan `icacls` lists only the user and SYSTEM. |
+| Refusals | Pass: FAT32 `F:\` ("FAT32 and exFAT volumes cannot be scanned on Windows yet ..."), a junction ("scan root is a link or mount point; scan the folder it points to instead"), `\\localhost\C$\...` ("only local drive paths are supported"); each exits 1. A symbolic link root was not tried (no privilege). |
+| Profile scan | Pass: complete, 1,098,681 entries, 0 errors, 141 excluded, 16.4 s (26 s with startup); 65.4 GiB indexed; index 290 MiB. 172 findings (159 review, 9 info, 4 protected), 30.6 GiB explained. The ten junctions at the profile root are not followed; `OneDrive` is excluded by name and never opened. |
+| `status`, `tree`, `findings`, `trends`, `history`, `schedule status` | Pass: all exit 0; every finding path is relative to the profile; `schedule status` says not registered. |
+| ConPTY delete tests | Pass: `test_terminal_windows.py` with `OMG_BINARY` set to the installed `omg.exe`: 3 of 3, none skipped. |
+| `qualify-delete.py` | Pass: 6 of 7, the link scenario skipped ("this account cannot create symbolic links"). |
+| Interface by hand | Pass, by the owner, in Windows Terminal and in the console host: drawing, resizing, the views, the delete question and `q` restoring the terminal. |
+| Tamper | Pass: one byte appended to `omg.exe` gives "omg: Binary integrity verification failed" (exit 1); a reinstall runs again. |
+
+Not done: a symbolic link root and the link-inside-a-folder delete scenario on this account (they need Developer Mode), OneDrive cloud-only placeholders (none on this PC). Found, not fixed in 0.1.0: `omg tree` on the excluded `OneDrive` folder itself shows 0 bytes with `incomplete: false`, although it holds 1,190 files; the listing of the profile shows it as excluded.
+
 ## Known gaps (not done, not claimed)
 
 - **Hard-link counts.** Enumeration does not read link counts, so each Windows name counts once. Data reachable by two names is double-counted in folder totals until link counts are read (plan W02).
 - **Containment.** Each directory is checked by final path and file ID, which refuses a junction swapped into an intermediate component. Relative `NtCreateFile` opens (the stronger design in the plan) are not used.
 - **State directory ACLs.** Done 2026-10-19: see "Owner-only state directory" below.
-- **Cloud placeholders.** Placeholder detection uses attributes and reparse tags. It is not tested against a live OneDrive sync root.
+- **Cloud placeholders.** Placeholder detection uses attributes and reparse tags. It is not tested against a live OneDrive sync root. `OneDrive` in the profile is excluded by name; `omg tree` on that folder itself shows 0 bytes instead of unknown (to fix after 0.1.0).
 - **Drive root and system folders.** Scanning `C:\` as a whole is untested. `System Volume Information` and `$Recycle.Bin` are excluded by name.
 - **Progress estimate.** No used-inode count is available on Windows, so the ETA is unavailable.
 - **Not implemented:** drives view, Recycle Bin size, WSL/Docker virtual-disk findings (M2); background service (M4); Recycle Bin deletion; Authenticode signing (W09). The ConPTY tests (W11) exist since 2026-10-19 and cover delete since 2026-11-02.
-- **Deletion through the TUI** is automated through ConPTY since 2026-11-02 (see above), on the owner's PC with a GNU-toolchain release build. Not done: the same with the MSVC release binary from `release.yml`, and a delete in Windows Terminal by hand.
+- **Deletion through the TUI** is automated through ConPTY since 2026-11-02 (see above). Done on 2026-11-21 with the signed MSVC release package on the owner's PC, through ConPTY and by hand in Windows Terminal and the console host.
 - **Launcher Ctrl+C.** `bin/omg.js` no longer force-kills the child on Windows. This was not run through a packaged binary.
 - **TUI.** Checked by screenshots of Overview, Browse and Findings, and quit with `q`. Ctrl+C and window-close behaviour were not exercised.
 - **FAT32 and exFAT** are refused. The virtual-disk matrix (`scripts/win-vhd-matrix.ps1`, run on `windows-2022` and `windows-latest`, 2026-10-19) found that scanning such a volume failed with "The parameter is incorrect" (error 87), because the scanner's file identity and directory listing use information classes that only NTFS and ReFS provide. `open_root` now refuses them with "FAT32 and exFAT volumes cannot be scanned on Windows yet". Supporting them needs a separate enumeration path and is not part of the beta. (macOS scans FAT32 and exFAT.)

@@ -187,6 +187,26 @@ On this Mac (Mac17,9, macOS 27.2.1, APFS `/private/tmp`): 7 of 7 passed with the
 
 APFS compares names with Unicode case folding, so on this Mac a folder created as `.ſsh` (long s) answers lookups for `~/.ssh`, and `Library/\u{212a}eychains` (Kelvin sign) for `Library/Keychains`; a scan records the name as created. The protection checks lowered names with ASCII rules only, so such a name was not protected. `policy::fold` now lowers non-ASCII names with full Unicode case mapping (ASCII names keep the fast path), and `policy::hard_protection`, `always_sensitive`, the standard-folder check and the iCloud warning use it. Folding more only ever protects more. Test: `names_the_filesystem_folds_to_a_protected_name_are_protected` in `tests/policy.rs`.
 
+## Final check of the 0.1.0 release build (2026-11-21)
+
+Mac17,9 (Apple silicon), macOS 27.2.1 (26B131), Terminal.app. Commit `739f959`, `Release build` run 44874343258, signed by the owner with the production key (`sign-release.js --publishable`, fingerprint `01deacfe...9adc0`). The offline `darwin-arm64` package was installed with `npm install --global --ignore-scripts` into a prefix with a space; every step used its own private state folder under `/private/tmp`.
+
+| Step | Result |
+| --- | --- |
+| Signed output | Pass: all nine files match `SHA256SUMS`; `verify-release.js` verifies all four targets with the production key; each packaged binary is byte-identical to the CI artifact. |
+| Install, `--version`, `doctor` | Pass: `omg 0.1.0`, `permanent delete: development-unqualified`; only `com.apple.provenance` is set, no quarantine mark. |
+| Tamper | Pass: one byte appended to `vendor/darwin-arm64/omg` gives "omg: Binary integrity verification failed" (exit 1); the restored binary runs. |
+| 4. Home scan without Full Disk Access | Pass: partial, 681,363 entries, 439 unreadable, 4.5 s; not published without `--accept-gaps`; `Library` shows `≥ 6.71 GiB` and `incomplete`; `.ssh` and `.Trash` are not traversed. 55 findings, each with a reason and evidence; none under Mail, Messages, Safari or Containers offered for deletion. |
+| 5. Full Disk Access | Pass: with access on, the home scan is complete: 726,947 entries, 0 unreadable, 4.1 s; `Library` is fully counted (Containers 1.56 GiB, Group Containers 462 MiB, Safari, Messages, Keychains). 59 findings; the 3 inside private areas (Apple model files under Containers) are `protected`. In the interface, `d` on `Library/Mail`, `Messages`, `Safari`, `Keychains`, `Containers` and `Group Containers` is refused with "personal data folder" and offers no "Yes". OMG Trash stayed empty. |
+| 6. iCloud placeholders | Partly: a 2 MB file created in iCloud Drive and evicted with `brctl evict` became `dataless` (0 blocks). iCloud Drive is refused as a scan root ("scan root excluded by mandatory or configured policy") and the file stayed `dataless`. Desktop and Documents are not synced to iCloud on this Mac, so a placeholder inside a scanned folder was not tested. |
+| 7. External volume | Pass on the HFS+ disk image `/Volumes/Dia` again: complete, 3,167 entries, 0 errors. No USB drive was used. |
+| 8. Interface | Pass, driven through a pseudo-terminal: views 1 to 5, Enter and Backspace, Space adds to and takes out of OMG Trash (matches `omg trash`), `?` and `m` list delete, `r` rescans, a tiny window shows "Terminal too small" and redraws when enlarged, `q` exits 0. No second terminal app is installed. |
+| 8b. Delete in a throwaway home | Pass: the question names the file and defaults to Cancel; Esc keeps `remove-me.txt`; "Yes" deletes only it and `keep-me.txt` stays; `Desktop/note.txt` shows the Desktop warning; `locked.txt` (`uchg`), `Desktop` and `Tools/Thing.app` are refused before any question. |
+| Scripted delete | Pass: `omg clean --category logs_and_temp` lists one old log; `--confirm` deletes only it and the neighbouring file stays. |
+| Two deletes at once | Pass: two `omg clean --confirm` on one state folder: one deletes all six files, the other is refused and changes nothing (`cleanup.lock`). Two state folders on the same files: each deletes three and skips three as "no longer exists". A file replaced after review is refused ("changed on disk since the last scan"). |
+
+Found, not fixed in 0.1.0: `omg tree` on an excluded folder itself (for example `~/.ssh`) prints `allocated: 0` and `incomplete: false`, with no `excluded` field; the listing of its parent shows it correctly as not scanned. The same on Windows for `OneDrive`.
+
 ## Gates not passed
 
-No macOS older than 15, only one real Mac (Apple silicon, macOS 26), no Intel Mac, no Full Disk Access / iCloud / Time Machine behaviour, no real USB drive or SMB share, no Apple notarization or code-signing identity, and the signed packages were assembled here only with a throwaway key (no production key exists). The macOS items in `docs/release.md` stay unchecked.
+No macOS older than 15, only one real Mac (Apple silicon, macOS 26 and 27), no Intel Mac, no iCloud placeholder inside a scanned folder, no Time Machine behaviour, no real USB drive or SMB share, no second terminal app, and no Apple notarization or code-signing identity. Full Disk Access and the CI-built package signed with the production key were checked on 2026-11-21.

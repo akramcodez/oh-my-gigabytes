@@ -129,23 +129,22 @@ A user verifies a manual download with `sha256sum -c SHA256SUMS` in the download
 
 ## Current state
 
-Published: `0.1.0-beta.1` (npm `latest`, 2026-11-08) and `0.1.0-beta.2` (npm `beta`). The workspace and the npm launcher are at **`0.1.0`**, not yet built, signed or published. `0.1.0` keeps `cleanup: development-unqualified`; it is not a qualification of permanent delete.
+Published: `0.1.0-beta.1` (npm `latest`, 2026-11-08) and `0.1.0-beta.2` (npm `beta`). `0.1.0` is built (`Release build` run 44874343258 on `739f959`) and signed by the owner with `--publishable`; it is not published yet. `0.1.0` keeps `cleanup: development-unqualified`; it is not a qualification of permanent delete.
 
-Done for the betas (2026-11-08):
-- Production Ed25519 key created by the owner (held outside the repository, never in CI). Fingerprint (`KEY-FINGERPRINT.txt`): `01deacfe588025e045419b57c4f39abd9f151294c8310e0a0dd28a18c9d9adc0`. Publish it somewhere independent of the release before announcing.
-- Security contact in `SECURITY.md`; GitHub private vulnerability reporting enabled.
-- macOS, signed beta package installed with npm into a prefix with a space: `--version`, `doctor` (`development-unqualified`), no quarantine mark, Cancel kept the file, "Yes, delete permanently" removed only that file (a `.pem` and a neighbour stayed), one appended byte refused with "Binary integrity verification failed".
+Done for `0.1.0` (2026-11-21):
+- Production key fingerprint (`KEY-FINGERPRINT.txt`): `01deacfe588025e045419b57c4f39abd9f151294c8310e0a0dd28a18c9d9adc0`. Publish it somewhere independent of the release before announcing.
+- All signed files match `SHA256SUMS`; `verify-release.js` verifies all four targets; the packaged binaries are byte-identical to the CI artifacts.
+- Step 4 on all three systems with the signed offline packages: the Mac (including Full Disk Access, [macos-evidence.md](macos-evidence.md)), a Windows 11 PC ([windows-evidence.md](windows-evidence.md)) and WSL2 Ubuntu 24.04 ([linux-qualification.md](linux-qualification.md)). Each deleted only the confirmed file in a throwaway home, kept it on Cancel, and refused a changed binary.
+
+Known issues in `0.1.0`, to fix in the next release: `omg tree` on an excluded folder itself (`~/.ssh`, `OneDrive`) prints 0 bytes and `incomplete: false` instead of unknown; the Linux message for a link as the scan root lists several causes instead of naming the link; the scan's `estimated_total` counts the whole volume, not the root; `doctor` with `--state-dir` still prints the real systemd unit path.
 
 Next for `0.1.0`, in order (steps of [Releasing a version](#releasing-a-version)):
-1. `Release build` on the merged `main` commit that passed `Checks`, then the owner signs it with `--version 0.1.0 --publishable`.
-2. Owner: install the signed `0.1.0` package and do the throwaway delete on the Mac, a Windows 11 PC and a Linux machine (step 4). Windows and Linux were never done for a CI-built binary; record the results in the platform pages.
-3. Owner: the rest of [mac-final-check.md](mac-final-check.md) (Full Disk Access, iCloud placeholders, an external drive).
-4. Owner: draft GitHub Release `v0.1.0` with `signed/tarballs/*`, `signed/offline/*`, `SHA256SUMS`, `release-public.pem`, `KEY-FINGERPRINT.txt` and the SBOM.
-5. `Install smoke test` with `source=release`, the tag `v0.1.0`, the fingerprint and `previous_tag=v0.1.0-beta.2` (never run in this mode).
-6. Owner: `npm publish` (to `latest`), platform packages first and the wrapper last, check `npm dist-tag ls oh-my-gigabytes`, then publish the GitHub Release.
+1. Owner: draft GitHub Release `v0.1.0` with `signed/tarballs/*`, `signed/offline/*`, `SHA256SUMS`, `release-public.pem`, `KEY-FINGERPRINT.txt` and the SBOM. The notes say what is not in this release: moving to the system trash, a macOS or Windows background service, Authenticode signing, Apple notarization, Intel Macs, Windows on Arm and musl.
+2. `Install smoke test` with `source=release`, the tag `v0.1.0`, the fingerprint and `previous_tag=v0.1.0-beta.2` (never run in this mode).
+3. Owner: `npm publish` (to `latest`), platform packages first and the wrapper last, check `npm dist-tag ls oh-my-gigabytes`, then publish the GitHub Release.
 
 ## Not passed yet
 
-- Linux ARM64 and Windows on Arm have only hosted-runner evidence; macOS has hosted runners plus one Apple silicon Mac, without Full Disk Access, iCloud placeholder or real external-drive checks (`mac-final-check.md` steps 5 to 8b).
-- Permanent delete is not qualified on any platform: no recorded native evidence per filesystem, the XFS, Btrfs and old-kernel runs are missing, and no CI-built binary has deleted anything on a real Windows 11 or Linux machine yet. It ships as `development-unqualified` on the owner's decision, with that label in the README, `omg doctor` and the signed manifest.
+- Linux ARM64 and Windows on Arm have only hosted-runner evidence; macOS has hosted runners plus one Apple silicon Mac, without an iCloud placeholder inside a scanned folder, a real external drive or a second terminal app.
+- Permanent delete is not qualified on any platform: no recorded native evidence per filesystem, the XFS, Btrfs and old-kernel runs are missing, and the CI-built Linux binary has deleted only under WSL2, not on native Linux hardware. It ships as `development-unqualified` on the owner's decision, with that label in the README, `omg doctor` and the signed manifest.
 - Kernel floor, XFS and Btrfs native runs, service qualification, Windows hard-link totals, ConPTY and virtual-disk matrices, benchmarks, usability review.
