@@ -2,7 +2,7 @@ export const REPO = "https://github.com/akramcodez/oh-my-gigabytes";
 export const CREATOR = "@akramcodez";
 export const CREATOR_URL = "https://github.com/akramcodez";
 export const NPM = "https://www.npmjs.com/package/oh-my-gigabytes";
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 export const INSTALL = "npm install -g oh-my-gigabytes";
 
 export const doc = (path: string) => `${REPO}/blob/main/${path}`;

@@ -2,7 +2,7 @@
 
 Notable changes to OMG (Oh My Gigabytes). Every release is a development preview; full notes are on the [releases page](https://github.com/akramcodez/oh-my-gigabytes/releases).
 
-## Unreleased
+## 0.2.0
 
 - **Docker build cache with several items.** Cleaning two or more build cache records failed with `Docker refused (400)` for each, because the engine accepts only one id per prune request. Each record is now pruned on its own, and an engine refusal shows Docker's reason.
 - **Auto delete.** Off by default. From the options menu (`m`) or `omg auto-delete on --every 7`, after a permission screen, OMG deletes what has waited unchanged in OMG Trash for 1 day, 7 days, 1 month or 6 months, in the background after the computer starts and at most once a day. Changed items wait again, `K` keeps an item out, whole repositories, application data and toolchains need a second permission, and by default it runs only on mains power. A notification follows each run that deleted something, and the Deleted tab lists those items under "Auto-deleted". Turning it off takes effect at once, even during a run.

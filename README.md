@@ -4,7 +4,7 @@ Website: [oh-my-gigabytes.com](https://www.oh-my-gigabytes.com)
 
 OMG (Oh My Gigabytes) shows where your disk space went and helps you take it back. A Rust engine scans file metadata into a local index, and a terminal interface lets you browse folder sizes, see which developer caches and build folders take space and why, and delete what you choose.
 
-> **`0.1.0`, a development preview.** Scanning reads names, sizes and times, not the contents of your files. The one exception: to tell whether an old Git clone has nothing local to lose, it reads Git's own config and branch references. Nothing is uploaded. Delete is permanent and not qualified: read [Deleting files](#deleting-files) first.
+> **`0.2.0`, a development preview.** Scanning reads names, sizes and times, not the contents of your files. The one exception: to tell whether an old Git clone has nothing local to lose, it reads Git's own config and branch references. Nothing is uploaded. Delete is permanent and not qualified: read [Deleting files](#deleting-files) first.
 
 <img width="1171" height="551" alt="image" src="https://github.com/user-attachments/assets/b861e72f-6ac0-42f8-a5e6-f528a6db3c1c" />
 
@@ -27,7 +27,7 @@ Needs Node 22 or newer.
 npm install --global oh-my-gigabytes
 ```
 
-The package runs no install scripts and downloads nothing; each launch re-verifies the binary against an Ed25519-signed manifest. To install a downloaded release offline, check `SHA256SUMS` (`shasum -a 256 -c SHA256SUMS` on macOS), compare `KEY-FINGERPRINT.txt` with the fingerprint published in the release notes, then run `npm install --global --ignore-scripts --offline ./oh-my-gigabytes-offline-<target>-0.1.0.tgz`.
+The package runs no install scripts and downloads nothing; each launch re-verifies the binary against an Ed25519-signed manifest. To install a downloaded release offline, check `SHA256SUMS` (`shasum -a 256 -c SHA256SUMS` on macOS), compare `KEY-FINGERPRINT.txt` with the fingerprint published in the release notes, then run `npm install --global --ignore-scripts --offline ./oh-my-gigabytes-offline-<target>-0.2.0.tgz`.
 
 To uninstall, first remove the background jobs you turned on, or they stay registered and point at an omg that is gone: `omg auto-delete off`, `omg schedule disable` (macOS, Windows) and `omg service uninstall` (Linux). Then run `npm uninstall --global oh-my-gigabytes`. Your index and settings stay in the state folder until you delete it. After switching Node versions under nvm, run `omg auto-delete on` again so the job points at the omg you use now; `omg doctor` warns when a job's omg is missing.
 

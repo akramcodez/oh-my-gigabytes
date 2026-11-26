@@ -29,7 +29,7 @@ The assembly output parent must already exist; output itself must not exist. Exa
 node scripts/assemble-release.js \
   --binary target/release/omg \
   --target linux-x64-gnu \
-  --version 0.1.0 \
+  --version 0.2.0 \
   --public-key /trusted/key-location/omg-release-public.pem \
   --private-key /private/key-location/omg-release-private.pem \
   --out /existing/output-parent/omg-0.1.0
@@ -104,7 +104,7 @@ Everything below runs on a commit that has passed `Checks`. Steps marked **owner
 3. **Sign (owner).** With the production key kept outside the repository and `gh` 2.49 or newer:
 
    ```sh
-   node scripts/sign-release.js --artifacts ci-artifacts --version 0.1.0 \
+   node scripts/sign-release.js --artifacts ci-artifacts --version 0.2.0 \
      --public-key /safe/release-public.pem --private-key /safe/release-private.pem \
      --out signed --repo akramcodez/oh-my-gigabytes
    ```
@@ -129,19 +129,16 @@ A user verifies a manual download with `sha256sum -c SHA256SUMS` in the download
 
 ## Current state
 
-Published: `0.1.0-beta.1` (npm `latest`, 2026-11-08) and `0.1.0-beta.2` (npm `beta`). `0.1.0` is built (`Release build` run 44874343258 on `739f959`) and signed by the owner with `--publishable`; it is not published yet. `0.1.0` keeps `cleanup: development-unqualified`; it is not a qualification of permanent delete.
+Published: `0.1.0` (npm `latest` and GitHub Release `v0.1.0`, 2026-11-21), `0.1.0-beta.2` (npm `beta`) and `0.1.0-beta.1`. `0.1.0` was built by `Release build` run 44874343258 on `739f959` and signed with the production key, fingerprint (`KEY-FINGERPRINT.txt`) `01deacfe588025e045419b57c4f39abd9f151294c8310e0a0dd28a18c9d9adc0`. Step 4 ran on all three systems with its signed offline packages: the Mac (including Full Disk Access, [macos-evidence.md](macos-evidence.md)), a Windows 11 PC ([windows-evidence.md](windows-evidence.md)) and WSL2 Ubuntu 24.04 ([linux-qualification.md](linux-qualification.md)).
 
-Done for `0.1.0` (2026-11-21):
-- Production key fingerprint (`KEY-FINGERPRINT.txt`): `01deacfe588025e045419b57c4f39abd9f151294c8310e0a0dd28a18c9d9adc0`. Publish it somewhere independent of the release before announcing.
-- All signed files match `SHA256SUMS`; `verify-release.js` verifies all four targets; the packaged binaries are byte-identical to the CI artifacts.
-- Step 4 on all three systems with the signed offline packages: the Mac (including Full Disk Access, [macos-evidence.md](macos-evidence.md)), a Windows 11 PC ([windows-evidence.md](windows-evidence.md)) and WSL2 Ubuntu 24.04 ([linux-qualification.md](linux-qualification.md)). Each deleted only the confirmed file in a throwaway home, kept it on Cancel, and refused a changed binary.
+The next release is `0.2.0` on npm `latest`, still declaring `cleanup: development-unqualified`. It adds auto delete (decision D16), the new detections, the Findings total, small-terminal layout and the scan animation (`CHANGELOG.md`), and fixes the known issues of `0.1.0` (`docs/evidence.md`, 2026-11-26): `omg tree` on an excluded folder printed 0 bytes and `incomplete: false`; the Linux message for a link as the scan root listed several causes instead of naming the link; the scan's `estimated_total` counted the whole volume, not the root; `doctor` with `--state-dir` printed the real systemd unit path.
 
-Known issues in `0.1.0`, fixed for the next release (see `docs/evidence.md`, 2026-11-26): `omg tree` on an excluded folder itself printed 0 bytes and `incomplete: false`; the Linux message for a link as the scan root listed several causes instead of naming the link; the scan's `estimated_total` counted the whole volume, not the root; `doctor` with `--state-dir` printed the real systemd unit path.
-
-Next for `0.1.0`, in order (steps of [Releasing a version](#releasing-a-version)):
-1. Owner: draft GitHub Release `v0.1.0` with `signed/tarballs/*`, `signed/offline/*`, `SHA256SUMS`, `release-public.pem`, `KEY-FINGERPRINT.txt` and the SBOM. The notes say what is not in this release: moving to the system trash, a macOS or Windows background service, Authenticode signing, Apple notarization, Intel Macs, Windows on Arm and musl.
-2. `Install smoke test` with `source=release`, the tag `v0.1.0`, the fingerprint and `previous_tag=v0.1.0-beta.2` (never run in this mode).
-3. Owner: `npm publish` (to `latest`), platform packages first and the wrapper last, check `npm dist-tag ls oh-my-gigabytes`, then publish the GitHub Release.
+Next for `0.2.0`, in order (steps of [Releasing a version](#releasing-a-version)):
+1. `Release build` on the merged version commit, then download and sign with `--version 0.2.0 --publishable` (owner).
+2. Step 4 on the Mac, Windows and WSL2 with the signed offline packages, including turning auto delete on and off in a throwaway home and checking that `omg doctor` reports the job and `0.2.0`.
+3. Owner: draft GitHub Release `v0.2.0` with the same files as `0.1.0`; the notes repeat what is not in this release: moving to the system trash, a macOS or Windows background scan service, Authenticode signing, Apple notarization, Intel Macs, Windows on Arm and musl.
+4. `Install smoke test` with `source=release`, the tag `v0.2.0`, the fingerprint and `previous_tag=v0.1.0`.
+5. Owner: `npm publish` (to `latest`), platform packages first and the wrapper last, check `npm dist-tag ls oh-my-gigabytes`, publish the GitHub Release and add its date to `CHANGELOG.md`.
 
 ## Not passed yet
 

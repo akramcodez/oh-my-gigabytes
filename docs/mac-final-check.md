@@ -1,6 +1,6 @@
 # macOS final check before a release
 
-A hands-on pass for the owner's Apple silicon Mac, to run on the commit that will become the next release (now `0.1.0`). The automated suite and a first real-Mac pass already ran on 2026-11-01 ([macos-evidence.md](macos-evidence.md), "Real Mac"). This pass repeats them on the merged tree (macOS work plus the Linux and Windows delete release, 2026-11-02), and adds what has never been tested on real hardware: Full Disk Access, iCloud placeholder files, a real external drive, other terminal apps, and the binary that CI actually builds for release.
+A hands-on pass for the owner's Apple silicon Mac, to run on the commit that will become the next release (now `0.2.0`). The automated suite and a first real-Mac pass already ran on 2026-11-01 ([macos-evidence.md](macos-evidence.md), "Real Mac"). This pass repeats them on the merged tree (macOS work plus the Linux and Windows delete release, 2026-11-02), and adds what has never been tested on real hardware: Full Disk Access, iCloud placeholder files, a real external drive, other terminal apps, and the binary that CI actually builds for release.
 
 Since 2026-11-07 the macOS build can permanently delete, on APFS and only after you confirm. Step 8b is the only step that deletes, and only inside a throwaway `HOME`. Never press `d` in the other steps. Scanning reads names, sizes and times, never file contents. Use a private state folder for every experiment (`--state-dir`, below) so your normal omg data is not touched.
 
@@ -43,7 +43,7 @@ S=$(mktemp -d /private/tmp/omg-final.XXXXXX)   # private state folder (mode 700)
 "$OMG" --state-dir "$S" doctor
 ```
 
-- [ ] `--version` prints `omg 0.1.0`.
+- [ ] `--version` prints `omg 0.2.0`.
 - [ ] `doctor` prints a line starting `permanent delete: development-unqualified`, and `"cleanup": "development-unqualified"` in its JSON.
 
 ## 3. What omg must refuse
@@ -168,10 +168,10 @@ node -e "
   fs.mkdirSync('keys', { mode: 0o700 });
   fs.writeFileSync('keys/public.pem', publicKey.export({ type: 'spki', format: 'pem' }));
   fs.writeFileSync('keys/private.pem', privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });"
-node ~/path/to/oh-my-gigabytes/scripts/sign-release.js --artifacts ci-artifacts --version 0.1.0 \
+node ~/path/to/oh-my-gigabytes/scripts/sign-release.js --artifacts ci-artifacts --version 0.2.0 \
   --public-key keys/public.pem --private-key keys/private.pem --out signed --repo akramcodez/oh-my-gigabytes
 npm install --global --prefix "$W/prefix with space" --ignore-scripts --offline --no-audit --no-fund \
-  signed/tarballs/oh-my-gigabytes-0.1.0.tgz signed/tarballs/oh-my-gigabytes-darwin-arm64-0.1.0.tgz
+  signed/tarballs/oh-my-gigabytes-0.2.0.tgz signed/tarballs/oh-my-gigabytes-darwin-arm64-0.2.0.tgz
 "$W/prefix with space/bin/omg" --version
 "$W/prefix with space/bin/omg" --state-dir "$S" doctor
 "$W/prefix with space/bin/omg" --state-dir "$S" scan --root "$HOME" --accept-gaps
