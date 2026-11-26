@@ -383,7 +383,8 @@ test('offline npm install with scripts disabled runs verified native binary and 
   invoke('npm', ['install', '--global', '--prefix', prefix, '--ignore-scripts', '--offline', '--no-audit', '--no-fund', tarball]);
   const cli = path.join(prefix, 'bin/omg');
   const version = invoke(process.execPath, [cli, '--version']);
-  assert.match(version.stdout, /omg 0\.1\.0/);
+  const crate = fs.readFileSync(path.resolve(__dirname, '../../../Cargo.toml'), 'utf8').match(/^version = "([^"]+)"/m)[1];
+  assert.equal(version.stdout.trim(), `omg ${crate}`);
   const state = path.join(f.directory, 'state');
   assert.match(invoke(process.execPath, [cli, '--state-dir', state, 'doctor']).stdout, /permanent delete: development-unqualified/);
   assert.ok(!fs.existsSync(state));
