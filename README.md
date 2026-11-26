@@ -54,6 +54,7 @@ Folders omg cannot read show as `unknown`, never as empty. On macOS, allow your 
 - A finding's details show when its folder last changed ("Last built" for build output).
 - `D` deletes everything in OMG Trash after one confirmation, including whole projects and application data (their warnings are shown first). `omg clean` never takes those.
 - A suggestion you take out of OMG Trash is suggested again only once it has doubled or grown by 1 GB, or after 30 days.
+- `omg trash --add PATH` and `omg trash --remove PATH` do the same from the shell (nothing moves); `omg trash` lists what is saved.
 - Home folder only. Credentials, keys, databases, disk images, `.git`, `.ssh`, cloud-synced folders and active Git repositories are refused, and links are never followed. Container and VM disks (`.colima`, Docker Desktop) are shown but never deleted.
 - **Docker:** press `m` and choose **Clean unused Docker data**, or run `omg docker clean`. omg asks Docker itself, on this machine only, for dangling images older than 7 days and build cache unused for 30 days, and after you confirm, Docker removes exactly those, one by one and without force. `--include-unused-images` and `--include-stopped-containers` add tagged images and stopped containers older than 30 days. Volumes, running containers and anything in use are never touched.
 - On a Mac, iCloud placeholders, locked files, app bundles and folders such as `~/Library` itself are refused, and deleting inside Desktop or Documents warns that iCloud may remove the file everywhere.

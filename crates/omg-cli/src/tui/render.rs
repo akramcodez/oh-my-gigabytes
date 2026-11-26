@@ -185,9 +185,13 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                 .map(|p| state.shorten_home(&p))
                 .unwrap_or_default();
             let label = match status.last_report.as_ref().map(|r| r.state.as_str()) {
-                Some("partial") => {
-                    Span::styled(" · partial (some folders unreadable)", theme.warn())
-                }
+                Some("partial") => Span::styled(
+                    format!(
+                        " · partial ({} unreadable folders)",
+                        status.last_report.as_ref().map_or(0, |r| r.errors)
+                    ),
+                    theme.warn(),
+                ),
                 Some("running") => Span::styled(" · a scan is running", theme.brand()),
                 _ => Span::raw(""),
             };

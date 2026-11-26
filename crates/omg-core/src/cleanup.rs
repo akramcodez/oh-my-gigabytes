@@ -351,8 +351,7 @@ pub const SUGGESTION_RETURN_DAYS: i64 = 30;
 /// once it has doubled).
 pub const SUGGESTION_RETURN_GROWTH: i64 = 1 << 30;
 
-const ONE_AT_A_TIME: &str =
-    "a whole project or application data is never deleted with other items; delete it on its own";
+const ONE_AT_A_TIME: &str = "omg clean never deletes a whole project or application data; delete it from OMG Trash in the interface";
 
 /// Owner decisions 2026-11-07 and 2026-11-08: whole repositories and an application's own data
 /// cannot be recreated by a tool, so a scripted plan never takes them. Owner decision 2026-11-26:

@@ -851,6 +851,18 @@ impl App {
         match response {
             Response::Summary(summary) => {
                 s.busy = None;
+                if s.summary.is_none()
+                    && s.message.is_empty()
+                    && let Some(r) = summary.status.last_report.as_ref().filter(|r| {
+                        r.state == "partial" && r.errors > 0 && !crate::gap_hint().is_empty()
+                    })
+                {
+                    s.message = format!(
+                        "The last scan could not read {} folders.{}",
+                        r.errors,
+                        crate::gap_hint()
+                    );
+                }
                 s.summary = Some(summary);
                 s.selected.retain(|id| {
                     s.summary

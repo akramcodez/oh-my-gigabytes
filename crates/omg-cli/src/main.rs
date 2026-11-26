@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use omg_core::{Index, ScanOptions, platform};
 #[cfg(target_os = "linux")]
@@ -59,6 +59,12 @@ enum Command {
         /// Recompute scan suggestions from the current index first (no rescan)
         #[arg(long)]
         refresh: bool,
+        /// Add a scanned path to OMG Trash (nothing moves or is deleted)
+        #[arg(long, value_name = "PATH")]
+        add: Vec<PathBuf>,
+        /// Take a path back out of OMG Trash
+        #[arg(long, value_name = "PATH")]
+        remove: Vec<PathBuf>,
     },
     /// Finish removing rows of superseded scans (housekeeping; scans only prune for a few seconds)
     Prune,
@@ -235,6 +241,27 @@ impl Meter {
             let _ = handle.join();
         }
     }
+}
+/// A path given on the command line (absolute, or relative to the working directory) as a raw
+/// path relative to the scanned root. Links are not resolved.
+fn trash_path(index: &omg_core::index::Index, path: &std::path::Path) -> Result<Vec<u8>> {
+    let root = platform::path(
+        &index
+            .status()?
+            .root
+            .ok_or_else(|| anyhow::anyhow!("no scan yet; run `omg scan`"))?,
+    )?;
+    let absolute = std::path::absolute(path)?;
+    let relative = absolute
+        .strip_prefix(&root)
+        .map_err(|_| anyhow::anyhow!("{} is outside the scanned root", path.display()))?;
+    if relative.as_os_str().is_empty() || !omg_core::policy::safe_relative(relative) {
+        bail!(
+            "{} must be inside the scanned root without `..` components",
+            path.display()
+        );
+    }
+    platform::raw(relative)
 }
 /// The likely cause of unreadable folders where the platform has a known one (no paths named).
 fn gap_hint() -> &'static str {
@@ -447,9 +474,45 @@ fn run() -> Result<()> {
             }
             println!("{}", serde_json::to_string_pretty(&value)?);
         }
-        Some(Command::Trash { refresh }) => {
+        Some(Command::Trash {
+            refresh,
+            add,
+            remove,
+        }) => {
             if refresh {
                 index.suggest(&platform::home()?)?;
+            }
+            if !add.is_empty() || !remove.is_empty() {
+                let home = platform::home()?;
+                for path in &add {
+                    let raw = trash_path(&index, path)?;
+                    let allocated = match index.subtree(&raw)? {
+                        Some(totals) => totals.allocated,
+                        None => {
+                            index
+                                .entry(&raw)?
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "{} is not in the current index; rescan first",
+                                        path.display()
+                                    )
+                                })?
+                                .allocated
+                        }
+                    };
+                    index
+                        .mark(&raw, allocated, &home)
+                        .with_context(|| path.display().to_string())?;
+                }
+                let marked = index.marked()?;
+                for path in &remove {
+                    let raw = trash_path(&index, path)?;
+                    let item = marked
+                        .iter()
+                        .find(|m| m.path == raw)
+                        .ok_or_else(|| anyhow::anyhow!("{} is not in OMG Trash", path.display()))?;
+                    index.unmark(item.id)?;
+                }
             }
             let items: Vec<_> = index
                 .marked()?

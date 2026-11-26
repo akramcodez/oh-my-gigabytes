@@ -2,6 +2,16 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## `omg trash --add/--remove`, partial-scan hint, changelog (2026-11-26)
+
+- `omg trash --add PATH` and `--remove PATH` take a path that is absolute or relative to the working directory, refuse one outside the scanned root or with `..`, and call the same `Index::mark` and `unmark` as the interface (so `verdict`, the home-only rule and the creation-time check apply). Links are not resolved. The size saved is the folder's `dir_totals` total, or the file's own size.
+- When the interface opens after a partial scan it says how many folders could not be read, with the macOS privacy hint; the header reads `partial (N unreadable folders)`.
+- `omg clean`'s refusal for a whole project or application data now points to the interface. The website no longer says `D` skips them. `CHANGELOG.md` added.
+
+Verification: `trash_adds_and_removes_scanned_paths_from_the_shell` (crates/omg-cli/tests/cli.rs) adds a folder by a relative path and a file by an absolute one, checks size and source, refuses `/etc`, `../escape`, a missing path and the root itself, removes one, and checks nothing on disk changed. Run with the full suite below on macOS 27.2 (Apple silicon).
+
+Not passed: the partial-scan message and header were not checked in a real terminal; Linux and Windows run in CI only.
+
 ## `D` takes everything listed; removed suggestions return (2026-11-26)
 
 - Owner decision 2026-11-26: the interface's `D` deletes every item in OMG Trash after its one confirmation, whole repositories and application data included. `one_at_a_time` now applies to scripted plans (`omg clean`) only. Every other gate is unchanged: `cleanup::verdict` denials, protected or sensitive items inside a folder, missing creation times, and the revalidation in `delete_permanently`. Repository and application data warnings stay on their plan items.

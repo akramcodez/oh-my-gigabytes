@@ -113,7 +113,7 @@ const FINDS: { title: string; tag: string; body: string; note?: string }[] = [
     title: "Unused Git clones",
     tag: "unused_clones",
     body: "Untouched for 30 days, every branch equal to the remote, no local commits or stashes, and every file matching Git's own index exactly: same files, sizes and times, nothing extra. Git itself is never run.",
-    note: "deleted one at a time",
+    note: "never taken by omg clean",
   },
   {
     title: "Old tool versions",
@@ -245,7 +245,7 @@ const RULES = [
   "Links are never followed, and scans stop at mount boundaries.",
   "Protection rules run separately from the finding catalog. A catalog rule can only explain, never grant a delete.",
   "Every delete is a plan you confirm. Before removing each item omg checks it is still the same file, and skips it if not.",
-  "Whole projects and an app's data are deleted only on their own, never with D.",
+  "Whole projects and an app's data are deleted only after you confirm them in the interface, never by omg clean.",
   "No telemetry. Notifications and default diagnostics never contain paths or file names.",
   "The npm package runs no install scripts and downloads nothing. Every launch re-verifies the binary against an Ed25519-signed manifest.",
 ];
