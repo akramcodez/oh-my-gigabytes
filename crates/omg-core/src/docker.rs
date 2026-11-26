@@ -234,7 +234,6 @@ impl Engine {
             bail!("Docker changed since you reviewed this; review it again");
         }
         let mut outcome = Outcome::default();
-        let mut caches = Vec::new();
         for item in &plan.items {
             // Each item is checked again right before its own removal.
             let fresh = self.report()?;
@@ -245,7 +244,34 @@ impl Engine {
                 continue;
             }
             match item.kind {
-                Kind::BuildCache => caches.push(item.clone()),
+                Kind::BuildCache => {
+                    // Moby's /build/prune rejects multiple values per filter key ("filters expect
+                    // only one value"), so each cache record is pruned individually.
+                    let filters = serde_json::json!({
+                        "id": [item.id.as_str()],
+                        "inuse": ["false"]
+                    })
+                    .to_string();
+                    let (status, body) = self.call(
+                        "POST",
+                        &format!("/build/prune?filters={}", encode(&filters)),
+                    )?;
+                    if (200..300).contains(&status) {
+                        let pruned: BuildPrune = serde_json::from_slice(&body).unwrap_or_default();
+                        if pruned.caches_deleted.iter().any(|d| d == &item.id) {
+                            outcome.reclaimed = outcome
+                                .reclaimed
+                                .saturating_add(pruned.space_reclaimed.max(0) as u64);
+                            outcome.removed.push(item.clone());
+                        } else {
+                            outcome
+                                .skipped
+                                .push((item.clone(), "Docker kept it".into()));
+                        }
+                    } else {
+                        record_error(&mut outcome, item, status, &body);
+                    }
+                }
                 Kind::DanglingImage | Kind::UnusedImage => {
                     let (status, body) = self.call(
                         "DELETE",
@@ -259,33 +285,6 @@ impl Engine {
                         &format!("/containers/{}?v=false&force=false&link=false", item.id),
                     )?;
                     record(&mut outcome, item, status, &body);
-                }
-            }
-        }
-        if !caches.is_empty() {
-            let ids: Vec<&str> = caches.iter().map(|c| c.id.as_str()).collect();
-            let filters = serde_json::json!({ "id": ids, "inuse": ["false"] }).to_string();
-            let (status, body) = self.call(
-                "POST",
-                &format!("/build/prune?filters={}", encode(&filters)),
-            )?;
-            if status == 200 {
-                let pruned: BuildPrune = serde_json::from_slice(&body).unwrap_or_default();
-                outcome.reclaimed = outcome
-                    .reclaimed
-                    .saturating_add(pruned.space_reclaimed.max(0) as u64);
-                for cache in caches {
-                    if pruned.caches_deleted.iter().any(|d| d == &cache.id) {
-                        outcome.removed.push(cache);
-                    } else {
-                        outcome.skipped.push((cache, "Docker kept it".into()));
-                    }
-                }
-            } else {
-                for cache in caches {
-                    outcome
-                        .skipped
-                        .push((cache, format!("Docker refused ({status})")));
                 }
             }
         }
@@ -309,21 +308,26 @@ fn record(outcome: &mut Outcome, item: &Item, status: u16, body: &[u8]) {
         outcome.reclaimed = outcome.reclaimed.saturating_add(item.bytes);
         outcome.removed.push(item.clone());
     } else {
-        let message: ApiError = serde_json::from_slice(body).unwrap_or_default();
-        let reason = if status == 409 {
-            "in use or shared, so Docker kept it".to_string()
-        } else {
-            format!("Docker refused ({status})")
-        };
-        outcome.skipped.push((
-            item.clone(),
-            if message.message.is_empty() {
-                reason
-            } else {
-                format!("{reason}: {}", clip(&message.message))
-            },
-        ));
+        record_error(outcome, item, status, body);
     }
+}
+
+#[cfg(feature = "permanent-delete")]
+fn record_error(outcome: &mut Outcome, item: &Item, status: u16, body: &[u8]) {
+    let message: ApiError = serde_json::from_slice(body).unwrap_or_default();
+    let reason = if status == 409 {
+        "in use or shared, so Docker kept it".to_string()
+    } else {
+        format!("Docker refused ({status})")
+    };
+    outcome.skipped.push((
+        item.clone(),
+        if message.message.is_empty() {
+            reason
+        } else {
+            format!("{reason}: {}", clip(&message.message))
+        },
+    ));
 }
 
 fn clip(text: &str) -> String {
