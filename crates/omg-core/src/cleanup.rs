@@ -345,12 +345,18 @@ fn remove_target(
     windows::delete_one(root, root_path, home, item, kind)
 }
 
+/// Days after which a suggestion the user removed from OMG Trash may be suggested again.
+pub const SUGGESTION_RETURN_DAYS: i64 = 30;
+/// Growth in bytes since removal after which a removed suggestion returns early (it also returns
+/// once it has doubled).
+pub const SUGGESTION_RETURN_GROWTH: i64 = 1 << 30;
+
 const ONE_AT_A_TIME: &str =
     "a whole project or application data is never deleted with other items; delete it on its own";
 
 /// Owner decisions 2026-11-07 and 2026-11-08: whole repositories and an application's own data
-/// cannot be recreated by a tool, so they never ride along with other items. Owner decision
-/// 2026-11-18: old session transcripts may.
+/// cannot be recreated by a tool, so a scripted plan never takes them. Owner decision 2026-11-26:
+/// the interface may delete them together with other items after its confirmation.
 fn one_at_a_time(root: &Path, home: &Path, entry: &Entry, kind: Kind) -> bool {
     if kind == Kind::StaleRepo {
         return true;
@@ -752,10 +758,12 @@ impl Index {
                 params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth],
             )?;
         } else {
-            // Suggestions refresh their own facts but never resurrect something the user removed.
+            // A removed suggestion stays out until it has grown a lot since, or until
+            // `SUGGESTION_RETURN_DAYS` have passed: caches refill on their own. `dismissed` holds
+            // when it was removed (1 for removals recorded before that time was kept).
             self.db.execute(
-                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed) VALUES(?,?,?,?,?,?,?,?,'auto',0) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth WHERE marked.dismissed=0",
-                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth],
+                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'auto',0) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth,added=CASE WHEN marked.dismissed=0 THEN marked.added ELSE excluded.added END,dismissed=0 WHERE marked.dismissed=0 OR marked.dismissed<=?9 OR (marked.allocated>0 AND excluded.allocated>=marked.allocated*2) OR excluded.allocated>=marked.allocated+?10",
+                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth, now() - SUGGESTION_RETURN_DAYS * 86_400, SUGGESTION_RETURN_GROWTH],
             )?;
         }
         Ok(verdict)
@@ -868,11 +876,12 @@ impl Index {
             })?
             .collect::<rusqlite::Result<_>>()?)
     }
-    /// Take an item off the list. A removed suggestion stays dismissed so scans don't re-add it.
+    /// Take an item off the list. Scans re-add a removed suggestion only once it has grown a lot or
+    /// `SUGGESTION_RETURN_DAYS` have passed.
     pub fn unmark(&self, id: i64) -> Result<()> {
         self.db.execute(
-            "UPDATE marked SET dismissed=1 WHERE id=? AND source='auto'",
-            [id],
+            "UPDATE marked SET dismissed=max(?,1) WHERE id=? AND source='auto'",
+            params![now(), id],
         )?;
         self.db
             .execute("DELETE FROM marked WHERE id=? AND source='user'", [id])?;
@@ -890,7 +899,7 @@ impl Index {
     }
     /// What `prepare_delete` would plan: items deletable whole, refusals, and cache folders that
     /// can only be deleted around the protected items inside them. A scripted plan never takes a
-    /// whole project or application data, even alone.
+    /// whole project or application data.
     #[allow(clippy::type_complexity)]
     fn classify(
         &self,
@@ -936,9 +945,7 @@ impl Index {
                         Gate::Warn(text) => Some(text),
                         Gate::Allowed => None,
                     };
-                    if (scripted || ids.len() > 1)
-                        && one_at_a_time(&root, home, &entry, verdict.kind)
-                    {
+                    if scripted && one_at_a_time(&root, home, &entry, verdict.kind) {
                         denied.push((item.path.clone(), ONE_AT_A_TIME.into()));
                         continue;
                     }

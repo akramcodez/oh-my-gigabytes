@@ -259,7 +259,30 @@ fn scans_suggest_regenerable_caches_but_never_large_files_and_respect_dismissal(
     index.suggest(h).unwrap();
     let after = index.marked().unwrap();
     assert!(after.is_empty(), "a dismissed suggestion is not re-added");
+    // It comes back once it has doubled since it was removed.
+    fs::write(h.join(".cache/uv/archive/wheel2"), vec![1u8; 500_000]).unwrap();
+    scan(&mut index, h);
+    index.suggest(h).unwrap();
+    let back = index.marked().unwrap();
+    assert_eq!(back.len(), 1, "a suggestion that doubled returns");
+    assert_eq!(back[0].source, "auto");
+    // And once enough time has passed, even without growth.
+    index.unmark(back[0].id).unwrap();
+    index.suggest(h).unwrap();
+    assert!(index.marked().unwrap().is_empty());
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    let long_ago = omg_core::now() - (omg_core::cleanup::SUGGESTION_RETURN_DAYS + 1) * 86_400;
+    db.execute("UPDATE marked SET dismissed=?", [long_ago])
+        .unwrap();
+    index.suggest(h).unwrap();
+    assert_eq!(index.marked().unwrap().len(), 1, "an old removal expires");
+    // A removal recorded before removal times were kept has expired too.
+    index.unmark(index.marked().unwrap()[0].id).unwrap();
+    db.execute("UPDATE marked SET dismissed=1", []).unwrap();
+    index.suggest(h).unwrap();
+    assert_eq!(index.marked().unwrap().len(), 1);
     // The user can still add it explicitly.
+    index.unmark(index.marked().unwrap()[0].id).unwrap();
     assert_eq!(index.mark(b".cache/uv", 1, h).unwrap(), Gate::Allowed);
     assert_eq!(index.marked().unwrap()[0].source, "user");
     assert!(index.auto_trash().unwrap(), "auto-fill is on by default");
@@ -1788,7 +1811,7 @@ fn a_scripted_clean_leaves_a_whole_repository_for_review_even_when_it_is_the_onl
 }
 
 #[test]
-fn projects_are_only_deleted_on_their_own_and_transcripts_go_together() {
+fn delete_everything_takes_projects_and_transcripts_together() {
     let (home, state) = setup();
     let h = home.path();
     let source = clone_source();
@@ -1812,7 +1835,7 @@ fn projects_are_only_deleted_on_their_own_and_transcripts_go_together() {
     let ids: Vec<i64> = index.marked().unwrap().iter().map(|m| m.id).collect();
     assert_eq!(ids.len(), 4, "{:?}", suggested(&index));
 
-    // "Delete everything listed" leaves the repository out, with the reason, and keeps the rest.
+    // "Delete everything listed" takes the repository too, after the interface's confirmation.
     let plan = index.prepare_delete(&ids, h).unwrap();
     let mut planned: Vec<_> = plan.items.iter().map(|i| i.path.clone()).collect();
     planned.sort();
@@ -1821,27 +1844,18 @@ fn projects_are_only_deleted_on_their_own_and_transcripts_go_together() {
         vec![
             b".claude/projects/p/a.jsonl".to_vec(),
             b".claude/projects/p/b.jsonl".to_vec(),
+            b"clone".to_vec(),
             b"rusty/target".to_vec()
         ]
     );
-    let held: Vec<_> = plan.denied.iter().map(|(p, _)| p.clone()).collect();
-    assert_eq!(held, vec![b"clone".to_vec()]);
-    assert!(plan.denied[0].1.contains("on its own"));
+    assert!(plan.denied.is_empty(), "{:?}", plan.denied);
     let report = index
         .delete_permanently(&plan, &plan.fingerprint, h)
         .unwrap();
-    assert_eq!(report.deleted.len(), 3, "{report:?}");
+    assert_eq!(report.deleted.len(), 4, "{report:?}");
+    assert!(!h.join("clone").exists());
     assert!(!h.join(".claude/projects/p/a.jsonl").exists());
     assert!(!h.join("rusty/target").exists());
-
-    // On its own, the repository can still be deleted.
-    let plan = index.prepare_delete(&[id_of(&index, b"clone")], h).unwrap();
-    assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
-    let report = index
-        .delete_permanently(&plan, &plan.fingerprint, h)
-        .unwrap();
-    assert_eq!(report.deleted.len(), 1, "{report:?}");
-    assert!(!h.join("clone").exists());
 }
 
 #[test]
@@ -1934,7 +1948,7 @@ fn apps_untouched_for_five_months_are_suggested_with_a_warning_and_can_be_delete
         h.join(platform_path(&old)).exists(),
         "listing never deletes"
     );
-    // With anything else, an application's data is held back; on its own it can go.
+    // Together with anything else, an application's data goes in the same confirmed plan.
     write_bytes(&h.join("rusty/Cargo.toml"), 10);
     write_bytes(&h.join("rusty/target/debug/app"), 60 << 20);
     index.unmark(item.id).unwrap();
@@ -1943,17 +1957,19 @@ fn apps_untouched_for_five_months_are_suggested_with_a_warning_and_can_be_delete
     index.mark(b"rusty/target", 1, h).unwrap();
     let ids: Vec<i64> = index.marked().unwrap().iter().map(|m| m.id).collect();
     let both = index.prepare_delete(&ids, h).unwrap();
-    assert_eq!(both.items.len(), 1, "{:?}", both.items);
-    assert_eq!(both.denied.len(), 1, "{:?}", both.denied);
-    assert_eq!(both.denied[0].0, old);
-    assert!(both.denied[0].1.contains("on its own"));
-    index.discard_plan(&both.fingerprint);
-    let plan = index.prepare_delete(&[id_of(&index, &old)], h).unwrap();
-    assert_eq!(plan.items.len(), 1, "{:?}", plan.denied);
+    assert_eq!(both.items.len(), 2, "{:?}", both.denied);
+    assert!(both.denied.is_empty(), "{:?}", both.denied);
+    assert!(
+        both.items
+            .iter()
+            .any(|i| i.path == old && i.warning.is_some()),
+        "the application data keeps its warning in the plan"
+    );
     index
-        .delete_permanently(&plan, &plan.fingerprint.clone(), h)
+        .delete_permanently(&both, &both.fingerprint.clone(), h)
         .unwrap();
     assert!(!area.join("OldApp").exists());
+    assert!(!h.join("rusty/target").exists());
     for kept in [
         "RecentApp",
         "DatabaseApp",

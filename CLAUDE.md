@@ -146,7 +146,7 @@ Entries follow these conventions:
 
 The same `cleanup::verdict` that gates deletion decides each finding's tier, so `protected` means it really cannot be deleted. Findings are sorted by `estimate` and paged. The active catalog is either `bundled.toml` or an Ed25519-signed import stored in `catalog_releases`.
 
-`Index::suggest` adds findings of `cleanup::SUGGESTED_CATEGORIES` to OMG Trash after a published scan, unless the user turned `auto_trash` off (default on). `omg scan` then prints a line to stderr, so scripts that parse its JSON must not merge stderr or must pass `--no-suggest`. Listing authorizes nothing. `prepare_delete` refuses whole repositories and application data in a plan of several items (`one_at_a_time`), so `D` never takes them; old session transcripts (Claude Code, Pi, Codex) may go together.
+`Index::suggest` adds findings of `cleanup::SUGGESTED_CATEGORIES` to OMG Trash after a published scan, unless the user turned `auto_trash` off (default on). `omg scan` then prints a line to stderr, so scripts that parse its JSON must not merge stderr or must pass `--no-suggest`. Listing authorizes nothing. `one_at_a_time` keeps whole repositories and application data out of scripted plans (`omg clean`) only; the interface's `D` takes them with everything else after its confirmation (owner decision 2026-11-26). A suggestion the user removed (`marked.dismissed` holds the removal time, 1 for older rows) is re-added once it has doubled or grown by `SUGGESTION_RETURN_GROWTH` (1 GiB), or after `SUGGESTION_RETURN_DAYS` (30).
 
 `catalog::parse` admits only:
 - tiers `info` or `review`

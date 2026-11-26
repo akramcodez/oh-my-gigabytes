@@ -2,6 +2,15 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## `D` takes everything listed; removed suggestions return (2026-11-26)
+
+- Owner decision 2026-11-26: the interface's `D` deletes every item in OMG Trash after its one confirmation, whole repositories and application data included. `one_at_a_time` now applies to scripted plans (`omg clean`) only. Every other gate is unchanged: `cleanup::verdict` denials, protected or sensitive items inside a folder, missing creation times, and the revalidation in `delete_permanently`. Repository and application data warnings stay on their plan items.
+- A suggestion removed from OMG Trash used to stay out forever (`marked.dismissed=1`), so caches that refill on their own (npm `_cacache`, `.cargo/registry`) disappeared from the list for good. `unmark` now stores the removal time in `dismissed`, and `suggest` re-adds the item once it has doubled or grown by 1 GiB since removal (`SUGGESTION_RETURN_GROWTH`), or after 30 days (`SUGGESTION_RETURN_DAYS`). Rows removed before this change hold 1 and so return on the next scan. No migration: `dismissed` was already an integer.
+
+Verification: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` in both builds; `TMPDIR=$(cd "$TMPDIR" && pwd -P) OMG_REQUIRE_DISK_IMAGES=1 cargo test --workspace --locked` on macOS 27.2 (Apple silicon), 174 passed. `scans_suggest_regenerable_caches_but_never_large_files_and_respect_dismissal` covers return by growth, by age and for old rows; `delete_everything_takes_projects_and_transcripts_together` and the application data test cover `D` with a repository and with application data.
+
+Not passed: Linux and Windows run in CI only. The interface was not driven by hand for this change.
+
 ## Closing the gaps of the clone and build output work (2026-11-19)
 
 - Same-second edits: `policy::Tracked` now also keeps the nanoseconds of each index entry and compares them when Git stored them (Git writes 0 without nanosecond support; a stored value of 0 is not compared). `Index::matches_checkout` also refuses a tracked file modified at or after the index was written, which Git itself calls racily clean and checks by content. Together they cover a same-size edit within the second of the index write. A clone whose times moved only by nanoseconds while Git ignored them is now kept out; that only loses a suggestion.
