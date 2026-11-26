@@ -814,7 +814,7 @@ fn item_without_a_recorded_creation_time_is_never_deleted() {
 
 #[test]
 fn delete_waits_out_housekeeping_but_a_running_scan_still_stops_it() {
-    use omg_core::index::{LOCK_WAIT, lock, lock_wait};
+    use omg_core::index::{LOCK_WAIT, lock_wait};
     let (home, state) = setup();
     let h = home.path();
     fs::write(h.join("big.iso"), vec![2u8; 200_000]).unwrap();
@@ -824,7 +824,8 @@ fn delete_waits_out_housekeeping_but_a_running_scan_still_stops_it() {
 
     // The scan lock is held for good (a scan is running): after the wait the delete is refused, says
     // why, and the file is untouched.
-    let scanning = lock(state.path(), "scan.lock").unwrap();
+    // A Git child forked by a parallel test can hold an inherited lock descriptor until it execs.
+    let scanning = lock_wait(state.path(), "scan.lock", LOCK_WAIT).unwrap();
     let plan = index
         .prepare_delete(&[id_of(&index, b"big.iso")], h)
         .unwrap();
