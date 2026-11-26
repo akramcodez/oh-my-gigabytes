@@ -1,7 +1,7 @@
 //! Keyboard-first terminal UI. A worker thread (`worker.rs`) owns the index; this thread only
 //! handles keys, keeps an in-memory `AppState`, and redraws when something changed.
 mod render;
-mod theme;
+pub(crate) mod theme;
 mod worker;
 
 use anyhow::Result;
@@ -131,6 +131,7 @@ pub struct ScanView {
     pub started: Instant,
     /// When traversal ended and the finishing phase began.
     pub finishing_since: Option<Instant>,
+    pub label: &'static str,
 }
 
 /// A scan run by another process, polled from the database.
@@ -370,6 +371,7 @@ impl App {
             total,
             started: Instant::now(),
             finishing_since: None,
+            label: theme::scan_label(),
         });
         let (path, flag) = (self.state_path.clone(), self.cancel.clone());
         self.job = Some(std::thread::spawn(move || {

@@ -18,6 +18,7 @@ Notable changes to OMG (Oh My Gigabytes). Every release is a development preview
 - **Uninstall steps** in the README and `docs/release.md`: run `omg auto-delete off` and `omg schedule disable` before `npm uninstall`.
 - **Fixes.** `omg tree` on an excluded folder (`~/.ssh`, `OneDrive`) reports its size as unknown (`null`), `excluded` and `incomplete: true` instead of 0 bytes. The Linux refusal of a link as the scan root names the link. The scan's `estimated_total` (the progress estimate) is the last scan's count for the same root, or the volume's only when the root is a whole volume, instead of the whole volume for any folder.
 - **Small terminals.** Below about 60 columns the header drops the tagline and the less important scan numbers, long paths and messages end with "…" instead of being cut mid-word, the key bar shows only the keys that fit, tab names stay whole when there is room, and folder names in Browse get the space the bar used to take.
+- **Scan animation.** While a scan runs, a small muncher eats the progress bar and leaves a quiet dotted trail behind it, in the interface and in `omg scan` on a terminal. Each scan shows one of eight labels for its whole run.
 - **Clearer refusal from `omg clean`** for a whole project or application data: it says to delete it from OMG Trash in the interface.
 
 ## 0.1.0 (2026-11-21)

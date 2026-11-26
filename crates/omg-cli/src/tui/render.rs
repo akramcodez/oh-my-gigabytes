@@ -344,7 +344,8 @@ fn tabs(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
 fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
     let frame = FRAMES[state.tick % FRAMES.len()];
     let progress_line =
-        |label: String, done: u64, total: u64, left: f64, finishing: bool, rate: f64| {
+        |label: &str, done: u64, total: u64, left: f64, finishing: bool, rate: f64| {
+            let mut spans = vec![Span::styled(format!(" {frame} {label} "), theme.accent())];
             let detail = if finishing {
                 format!(
                     "finishing up: comparing, totalling folders, saving · ~{} left",
@@ -352,9 +353,11 @@ fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
                 )
             } else if total > 0 && done > 0 {
                 let pct = (done as f64 / total as f64).min(1.0);
+                for cell in muncher(pct, 12, state.tick) {
+                    spans.push(Span::styled(cell.glyph(), theme.munch(cell)));
+                }
                 format!(
-                    "{} {} / ~{} · ≤{:.0}% · {:.0}/s · ~{} left",
-                    bar(pct, 12),
+                    " {} / ~{} · ≤{:.0}% · {:.0}/s · ~{} left",
                     count(done),
                     short_count(total),
                     pct * 100.0,
@@ -364,10 +367,8 @@ fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
             } else {
                 format!("{} entries · {:.0}/s", count(done), rate)
             };
-            Line::from(vec![
-                Span::styled(format!(" {frame} {label}… "), theme.accent()),
-                Span::styled(detail, theme.dim()),
-            ])
+            spans.push(Span::styled(detail, theme.dim()));
+            Line::from(spans)
         };
     if let Some(scan) = &state.scan {
         let raw = scan.progress.load(Ordering::Relaxed);
@@ -376,9 +377,8 @@ fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
         let finishing = scan.finishing_since.map(|t| t.elapsed().as_secs_f64());
         let walking = finishing.map_or(secs, |f| secs - f);
         let left = omg_core::scanner::eta(done, scan.total, walking, finishing);
-        let verb = VERBS[(secs as usize / 4) % VERBS.len()];
         let mut line = progress_line(
-            verb.to_string(),
+            scan.label,
             done,
             scan.total,
             left,
@@ -396,7 +396,7 @@ fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
             other.finishing_secs,
         );
         return progress_line(
-            "Another omg scan is running".into(),
+            "Another omg scan is running",
             other.progress,
             other.total,
             left,

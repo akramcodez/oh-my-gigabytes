@@ -310,8 +310,7 @@ fn progress_meter(total: u64, progress: Arc<std::sync::atomic::AtomicU64>) -> Me
     let flag = stop.clone();
     let handle = std::thread::spawn(move || {
         let started = std::time::Instant::now();
-        let frames = ["·", "✢", "✳", "✶", "✻", "✽"];
-        let mut tick = 0usize;
+        let label = tui::theme::scan_label();
         let mut walked: Option<f64> = None;
         while !flag.load(std::sync::atomic::Ordering::Relaxed) {
             let raw = progress.load(std::sync::atomic::Ordering::Relaxed);
@@ -327,25 +326,28 @@ fn progress_meter(total: u64, progress: Arc<std::sync::atomic::AtomicU64>) -> Me
                 walked.unwrap_or(secs),
                 walked.map(|w| secs - w),
             );
+            let tick = (started.elapsed().as_millis() / 100) as usize;
             let detail = if finishing {
                 format!(
                     "finishing up: comparing, totalling folders, saving · {done} entries · ~{left:.0}s left"
                 )
             } else if total > 0 && done > 0 {
+                let fraction = (done as f64 / total as f64).min(1.0);
                 format!(
-                    "{} / ~{} · ≤{:.0}% · {:.0}/s · ~{:.0}s left",
+                    "{} {} / ~{} · ≤{:.0}% · {:.0}/s · ~{:.0}s left",
+                    munch_text(fraction, tick),
                     done,
                     total,
-                    (done as f64 / total as f64 * 100.0).min(100.0),
+                    fraction * 100.0,
                     done as f64 / secs,
                     left
                 )
             } else {
                 format!("{done} entries · {:.0}/s", done as f64 / secs)
             };
-            eprint!("\r\x1b[2K{} Weighing gigabytes… {detail}", frames[tick % 6]);
-            tick += 1;
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            let frame = tui::theme::FRAMES[tick % tui::theme::FRAMES.len()];
+            eprint!("\r\x1b[2K{frame} {label} {detail}");
+            std::thread::sleep(std::time::Duration::from_millis(100));
         }
         eprint!("\r\x1b[2K");
     });
@@ -353,6 +355,18 @@ fn progress_meter(total: u64, progress: Arc<std::sync::atomic::AtomicU64>) -> Me
         stop,
         handle: Some(handle),
     }
+}
+/// The scan muncher for a plain terminal line: the trail and the cells ahead are dimmed.
+fn munch_text(fraction: f64, tick: usize) -> String {
+    use tui::theme::Munch;
+    tui::theme::muncher(fraction, 12, tick)
+        .into_iter()
+        .map(|cell| match cell {
+            Munch::Eaten | Munch::Ahead(_) => format!("\x1b[2m{}\x1b[22m", cell.glyph()),
+            Munch::Head(_) => format!("\x1b[1m{}\x1b[22m", cell.glyph()),
+            Munch::Blink | Munch::Spark(_) => cell.glyph(),
+        })
+        .collect()
 }
 
 fn main() {

@@ -22,13 +22,69 @@ pub struct Theme {
 }
 
 pub const FRAMES: [&str; 6] = ["·", "✢", "✳", "✶", "✻", "✽"];
-pub const VERBS: [&str; 5] = [
+/// One of these names a scan for its whole run, picked afresh each time.
+pub const SCAN_LABELS: [&str; 8] = [
     "Weighing gigabytes",
     "Sniffing caches",
     "Counting bytes",
     "Measuring folders",
-    "Gobbling inodes",
+    "Munching bytes",
+    "Digging through folders",
+    "Hunting big folders",
+    "Tallying space",
 ];
+
+pub fn scan_label() -> &'static str {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos() as u64);
+    SCAN_LABELS[(mix(nanos ^ u64::from(std::process::id())) % SCAN_LABELS.len() as u64) as usize]
+}
+
+fn mix(x: u64) -> u64 {
+    let x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    x ^ (x >> 31)
+}
+
+/// One cell of the scan progress muncher.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Munch {
+    Eaten,
+    Blink,
+    Spark(&'static str),
+    Head(char),
+    Ahead(char),
+}
+
+impl Munch {
+    pub fn glyph(self) -> String {
+        match self {
+            Munch::Eaten | Munch::Blink => "·".into(),
+            Munch::Spark(s) => s.into(),
+            Munch::Head(c) | Munch::Ahead(c) => c.into(),
+        }
+    }
+}
+
+/// A progress bar the muncher eats from left to right, at `tick` (one per 100 ms). Two sparks
+/// follow it, and about every two seconds one dot of the quiet trail behind it brightens briefly.
+pub fn muncher(fraction: f64, width: usize, tick: usize) -> Vec<Munch> {
+    let width = width.max(1);
+    let pos = ((fraction.clamp(0.0, 1.0) * width as f64) as usize).min(width - 1);
+    let blink = (tick % 20 < 3 && pos >= 5).then(|| mix((tick / 20) as u64) as usize % (pos - 3));
+    (0..width)
+        .map(|i| match i.cmp(&pos) {
+            std::cmp::Ordering::Less => match pos - i {
+                1 => Munch::Spark(FRAMES[tick % FRAMES.len()]),
+                3 => Munch::Spark(FRAMES[(tick + 3) % FRAMES.len()]),
+                _ if blink == Some(i) => Munch::Blink,
+                _ => Munch::Eaten,
+            },
+            std::cmp::Ordering::Equal => Munch::Head(if tick % 4 < 2 { 'ᗧ' } else { '●' }),
+            std::cmp::Ordering::Greater => Munch::Ahead(if i % 2 == 1 { '•' } else { '·' }),
+        })
+        .collect()
+}
 
 struct Colors {
     brand: ((u8, u8, u8), Color),
@@ -36,6 +92,7 @@ struct Colors {
     warn: ((u8, u8, u8), Color),
     danger: ((u8, u8, u8), Color),
     dim: ((u8, u8, u8), Color),
+    faint: ((u8, u8, u8), Color),
     ink: (u8, u8, u8),
     paper: (u8, u8, u8),
 }
@@ -46,6 +103,7 @@ const DARK: Colors = Colors {
     warn: ((255, 181, 71), Color::Yellow),
     danger: ((255, 107, 87), Color::Red),
     dim: ((122, 127, 140), Color::DarkGray),
+    faint: ((61, 52, 128), Color::DarkGray),
     ink: (230, 229, 238),
     paper: (11, 11, 14),
 };
@@ -56,6 +114,7 @@ const LIGHT: Colors = Colors {
     warn: ((150, 88, 0), Color::Yellow),
     danger: ((179, 38, 30), Color::Magenta),
     dim: ((122, 118, 108), Color::DarkGray),
+    faint: ((226, 190, 172), Color::DarkGray),
     ink: (27, 26, 23),
     paper: (244, 242, 236),
 };
@@ -147,6 +206,21 @@ impl Theme {
         match self.mode {
             Mode::Mono => Style::new().add_modifier(Modifier::DIM),
             _ => self.style(self.colors().dim),
+        }
+    }
+    /// The eaten trail behind the scan muncher, quieter than `dim`.
+    pub fn faint(&self) -> Style {
+        match self.mode {
+            Mode::Mono => Style::new().add_modifier(Modifier::DIM),
+            _ => self.style(self.colors().faint),
+        }
+    }
+    pub fn munch(&self, cell: Munch) -> Style {
+        match cell {
+            Munch::Eaten => self.faint(),
+            Munch::Blink | Munch::Spark(_) => self.brand(),
+            Munch::Head(_) => self.warn().add_modifier(Modifier::BOLD),
+            Munch::Ahead(_) => self.dim(),
         }
     }
     pub fn bold(&self) -> Style {

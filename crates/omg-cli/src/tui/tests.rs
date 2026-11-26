@@ -139,6 +139,7 @@ fn browse_shows_sizes_escapes_names_and_progress() {
             total: 1000,
             started: Instant::now(),
             finishing_since: None,
+            label: "Counting bytes",
         }),
         ..Default::default()
     };
@@ -1033,4 +1034,48 @@ fn theme_cycles_and_a_chosen_light_theme_paints_the_screen() {
         buffer[(99, 0)].bg,
         ratatui::style::Color::Rgb(244, 242, 236)
     );
+}
+
+#[test]
+fn scan_muncher_leaves_a_quiet_trail_with_rare_blinks() {
+    use theme::Munch;
+    let cells = theme::muncher(0.5, 12, 7);
+    assert_eq!(cells.len(), 12);
+    assert!(matches!(cells[6], Munch::Head(_)));
+    assert!(matches!(cells[5], Munch::Spark(_)) && matches!(cells[3], Munch::Spark(_)));
+    assert!(cells[7..].iter().all(|c| matches!(c, Munch::Ahead(_))));
+    assert!([0, 1, 2, 4].iter().all(|&i| cells[i] == Munch::Eaten));
+    assert!(matches!(theme::muncher(0.0, 12, 0)[0], Munch::Head(_)));
+    assert!(matches!(theme::muncher(1.0, 12, 0)[11], Munch::Head(_)));
+
+    let mut blinking = 0;
+    for tick in 0..2000 {
+        let cells = theme::muncher(0.9, 12, tick);
+        let blinks: Vec<usize> = (0..12).filter(|&i| cells[i] == Munch::Blink).collect();
+        assert!(blinks.len() <= 1);
+        if let Some(&i) = blinks.first() {
+            assert!(tick % 20 < 3 && i + 4 <= 10, "blink {i} at tick {tick}");
+            blinking += 1;
+        }
+    }
+    assert_eq!(blinking, 300, "one dot for 300 ms of every two seconds");
+}
+
+#[test]
+fn scan_keeps_one_label_for_the_whole_run() {
+    assert!(theme::SCAN_LABELS.contains(&theme::scan_label()));
+    let state = AppState {
+        tab: Tab::Browse,
+        scan: Some(ScanView {
+            progress: Arc::new(AtomicU64::new(500)),
+            total: 1000,
+            started: Instant::now() - Duration::from_secs(30),
+            finishing_since: None,
+            label: "Tallying space",
+        }),
+        ..Default::default()
+    };
+    let text = draw(&state, 140, 30);
+    assert!(text.contains("Tallying space ") && !text.contains("Tallying space…"));
+    assert!(text.contains('ᗧ') || text.contains('●'), "{text}");
 }
