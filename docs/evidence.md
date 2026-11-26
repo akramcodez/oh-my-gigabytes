@@ -2,6 +2,18 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## More developer leftovers, Findings total (2026-11-26)
+
+- Store rules with discovery `tool_caches` (category `app_caches`, suggested): `dev.bazel.output-base` (Linux, `{cache}/bazel/*/*`, 30 days, 50 MB), `dev.xcode.previews` (`~/Library/Developer/Xcode/UserData/Previews`, 30 days), `dev.xcode.other-device-support` (watchOS, tvOS, xrOS and visionOS DeviceSupport, one folder per device and version, 30 days), `dev.poetry.cache` (`cache` and `artifacts` only, never `virtualenvs`), `dev.pdm.cache`, `dev.hatch.cache`, `dev.pipx.cache` (each with a Windows variant under its documented `Cache` folder; Hatch's Windows data folder is not used) and `dev.yarn-berry.global-cache`. Caches need 50 MB.
+- New store kind `developer_stores` (category `developer_data`, never suggested): `dev.xcode.simulator-devices` (`~/Library/Developer/CoreSimulator/Devices/*`, 90 days, 100 MB; only folder times are read, never the device plist), `dev.vscode.cached-data` and `-linux` (older builds' `CachedData`, 30 days, 20 MB), `dev.vagrant.boxes`, `dev.dotnet.sdks` (`~/.dotnet/sdk/*`, `$DOTNET_ROOT/sdk/*`) and `dev.android.system-images` (90 days, 100 MB).
+- `check_store` admits `~` roots under `Library/Developer/`, `Library/Android/` and `Android/Sdk/` in addition to dot folders; `~/Library/Preferences`, `~/Library/Developer` itself and `~/Android/Other` are still refused (tested). The catalog has 89 rules (was 72).
+- Bazel's macOS default output root (`/private/var/tmp/_bazel_$USER`) is outside the home folder and not covered.
+- Findings tab: the first line shows the number of listed items and their size (protected items not counted), followed by the tier filter. Checked in `tests/test_terminal.py` and `tests/test_terminal_windows.py`.
+
+Verification (macOS 27, Apple silicon, Rust 1.95.0): `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` in both builds; `TMPDIR=$(cd "$TMPDIR" && pwd -P) OMG_REQUIRE_DISK_IMAGES=1 cargo test --workspace --locked` 176 passed; `cargo test --workspace --no-default-features --locked` 109 passed; `python3 -m unittest discover -s tests -p 'test_*.py'` OK (3 skipped, Windows only); `node --test packages/oh-my-gigabytes/test/release.test.js` 21 passed. New test `more_developer_leftovers_are_suggested_or_listed_by_kind` checks which items are suggested and which only listed.
+
+Not passed: the rules are tested with folders laid out as each tool documents them, not with the tools' own output. The Linux and Windows layouts are checked by CI only.
+
 ## `omg trash --add/--remove`, partial-scan hint, changelog (2026-11-26)
 
 - `omg trash --add PATH` and `--remove PATH` take a path that is absolute or relative to the working directory, refuse one outside the scanned root or with `..`, and call the same `Index::mark` and `unmark` as the interface (so `verdict`, the home-only rule and the creation-time check apply). Links are not resolved. The size saved is the folder's `dir_totals` total, or the file's own size.

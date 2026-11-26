@@ -823,13 +823,24 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
 
 fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines {
     let rows = visible_findings(state);
-    let mut out: Lines = vec![Line::from(Span::styled(
-        format!(
-            "  tier filter: {}",
-            ["all", "review", "info", "protected"][state.tier]
+    let total: u64 = rows
+        .iter()
+        .filter(|f| f.effective_tier != "protected")
+        .map(|f| f.estimate)
+        .sum();
+    let mut out: Lines = vec![Line::from(vec![
+        Span::styled(
+            format!("  {} item(s) · ≈ {}", rows.len(), bytes(total)),
+            theme.bold(),
         ),
-        theme.dim(),
-    ))];
+        Span::styled(
+            format!(
+                "   tier filter: {} · protected items not counted in the size",
+                ["all", "review", "info", "protected"][state.tier]
+            ),
+            theme.dim(),
+        ),
+    ])];
     if state.summary.is_none() {
         out.push(Line::from(Span::styled("  Loading…", theme.dim())));
         return out;

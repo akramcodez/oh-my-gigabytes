@@ -1839,3 +1839,513 @@ patterns = ["*"]
 target = "directory"
 min_age_days = 30
 min_bytes = 52428800
+
+[[rules]]
+id = "dev.bazel.output-base"
+name = "Bazel output base"
+revision = 1
+platforms = ["linux"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "The build outputs and fetched dependencies of one Bazel workspace, unchanged for 30 days."
+side_effects = "The next build of that workspace fetches and builds everything again."
+regeneration = "Recreated by the tool on demand."
+warnings = ["The first build after deleting is slow."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://bazel.build/remote/output-directories"
+
+[rules.store]
+roots = ["{cache}/bazel"]
+patterns = ["*", "*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.xcode.previews"
+name = "SwiftUI preview data"
+revision = 1
+platforms = ["macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Simulator devices and builds Xcode made for SwiftUI previews, unchanged for 30 days."
+side_effects = "Xcode builds preview data again when a preview is next shown."
+regeneration = "Recreated by the tool on demand."
+warnings = ["The next preview takes longer to appear."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://developer.apple.com/documentation/xcode/previewing-your-apps-interface-in-xcode"
+
+[rules.store]
+roots = ["~/Library/Developer/Xcode/UserData/Previews"]
+patterns = []
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.xcode.other-device-support"
+name = "watchOS, tvOS and visionOS device support"
+revision = 1
+platforms = ["macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Debug symbols Xcode copied from a watch, TV or Vision device of one OS version, unchanged for 30 days."
+side_effects = "Xcode copies them again the next time a device with that version is connected."
+regeneration = "Recreated by the tool on demand."
+warnings = ["Debugging on that OS version waits for symbols to be copied again."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://developer.apple.com/documentation/xcode/running-your-app-on-a-device"
+
+[rules.store]
+roots = ["~/Library/Developer/Xcode/watchOS DeviceSupport", "~/Library/Developer/Xcode/tvOS DeviceSupport", "~/Library/Developer/Xcode/xrOS DeviceSupport", "~/Library/Developer/Xcode/visionOS DeviceSupport"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.poetry.cache"
+name = "Poetry package cache"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Packages and built wheels Poetry downloaded. Its virtual environments are not included."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Poetry downloads packages again on the next install."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://python-poetry.org/docs/configuration/#cache-dir"
+
+[rules.store]
+roots = ["{cache}/pypoetry/cache", "{cache}/pypoetry/artifacts", "{cache}/pypoetry/Cache/cache", "{cache}/pypoetry/Cache/artifacts"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.pdm.cache"
+name = "PDM package cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Wheels, hashes and metadata PDM downloaded."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "PDM downloads packages again on the next install."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://pdm-project.org/en/latest/usage/config/"
+
+[rules.store]
+roots = ["{cache}/pdm"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.pdm.cache-windows"
+name = "PDM package cache"
+revision = 1
+platforms = ["windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Wheels, hashes and metadata PDM downloaded."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "PDM downloads packages again on the next install."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://pdm-project.org/en/latest/usage/config/"
+
+[rules.store]
+roots = ["{cache}/pdm/pdm/Cache"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.hatch.cache"
+name = "Hatch cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Downloads Hatch cached. Its environments are kept elsewhere and not included."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Hatch downloads them again when needed."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://hatch.pypa.io/latest/config/hatch/#cache"
+
+[rules.store]
+roots = ["{cache}/hatch"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.hatch.cache-windows"
+name = "Hatch cache"
+revision = 1
+platforms = ["windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Downloads Hatch cached. Its environments are kept elsewhere and not included."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Hatch downloads them again when needed."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://hatch.pypa.io/latest/config/hatch/#cache"
+
+[rules.store]
+roots = ["{cache}/hatch/Cache"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.pipx.cache"
+name = "pipx run cache"
+revision = 1
+platforms = ["linux", "macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Temporary environments pipx made for `pipx run`. Apps installed with pipx are not included."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "pipx creates them again on the next `pipx run`."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://pipx.pypa.io/stable/docs/"
+
+[rules.store]
+roots = ["{cache}/pipx"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.pipx.cache-windows"
+name = "pipx run cache"
+revision = 1
+platforms = ["windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Temporary environments pipx made for `pipx run`. Apps installed with pipx are not included."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "pipx creates them again on the next `pipx run`."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://pipx.pypa.io/stable/docs/"
+
+[rules.store]
+roots = ["{cache}/pipx/pipx/Cache"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.yarn-berry.global-cache"
+name = "Yarn global package cache"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "app_caches"
+tier = "info"
+action = "info"
+discovery = "tool_caches"
+explanation = "Package archives Yarn 2 and later keep in their global cache."
+side_effects = "The tool downloads or builds it again the next time it is needed."
+regeneration = "Yarn downloads packages again on the next install."
+warnings = ["Offline work may need it."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://yarnpkg.com/configuration/yarnrc#globalFolder"
+
+[rules.store]
+roots = ["~/.yarn/berry/cache"]
+patterns = []
+target = "directory"
+min_age_days = 0
+min_bytes = 52428800
+
+[[rules]]
+id = "dev.xcode.simulator-devices"
+name = "Simulator devices unused for 90 days"
+revision = 1
+platforms = ["macos"]
+tool_versions = ["unknown-inventory-only"]
+category = "developer_data"
+tier = "info"
+action = "info"
+discovery = "developer_stores"
+explanation = "A Simulator device in which nothing changed for 90 days, often one made for an iOS version no longer installed. It holds the apps and data installed on it."
+side_effects = "Apps, settings and files on that simulated device are gone."
+regeneration = "Create the device again in Xcode; its contents are not recreated."
+warnings = ["Holds app data you may want."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://developer.apple.com/documentation/xcode/running-your-app-in-simulator-or-on-a-device"
+
+[rules.store]
+roots = ["~/Library/Developer/CoreSimulator/Devices"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 90
+min_bytes = 104857600
+
+[[rules]]
+id = "dev.vscode.cached-data"
+name = "VS Code and Cursor compiled code of older builds"
+revision = 1
+platforms = ["macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "developer_data"
+tier = "info"
+action = "info"
+discovery = "developer_stores"
+explanation = "Compiled code an older VS Code or Cursor build left behind, unchanged for 30 days."
+side_effects = "The editor compiles it again if that build runs."
+regeneration = "Recreated by the editor on demand."
+warnings = ["The current build keeps its own folder, which is newer."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://code.visualstudio.com/docs/setup/uninstall"
+
+[rules.store]
+roots = ["{data}/Code/CachedData", "{data}/Cursor/CachedData"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 20971520
+
+[[rules]]
+id = "dev.vscode.cached-data-linux"
+name = "VS Code and Cursor compiled code of older builds"
+revision = 1
+platforms = ["linux"]
+tool_versions = ["unknown-inventory-only"]
+category = "developer_data"
+tier = "info"
+action = "info"
+discovery = "developer_stores"
+explanation = "Compiled code an older VS Code or Cursor build left behind, unchanged for 30 days."
+side_effects = "The editor compiles it again if that build runs."
+regeneration = "Recreated by the editor on demand."
+warnings = ["The current build keeps its own folder, which is newer."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://code.visualstudio.com/docs/setup/uninstall"
+
+[rules.store]
+roots = ["{config}/Code/CachedData", "{config}/Cursor/CachedData"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 30
+min_bytes = 20971520
+
+[[rules]]
+id = "dev.vagrant.boxes"
+name = "Vagrant boxes unused for 90 days"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "developer_data"
+tier = "info"
+action = "info"
+discovery = "developer_stores"
+explanation = "A Vagrant base box image in which nothing changed for 90 days."
+side_effects = "Machines built from it cannot be recreated until it is downloaded again."
+regeneration = "`vagrant box add` downloads it again."
+warnings = ["Large downloads; check `vagrant box list` first."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://developer.hashicorp.com/vagrant/docs/boxes"
+
+[rules.store]
+roots = ["~/.vagrant.d/boxes", "$VAGRANT_HOME/boxes"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 90
+min_bytes = 104857600
+
+[[rules]]
+id = "dev.dotnet.sdks"
+name = "Installed .NET SDK versions unchanged for 90 days"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "developer_data"
+tier = "info"
+action = "info"
+discovery = "developer_stores"
+explanation = "A .NET SDK version installed for the current user and unchanged for 90 days. It may be the one you build with; `dotnet --list-sdks` shows all of them."
+side_effects = "Projects pinned to that version by global.json stop building."
+regeneration = "Install it again with the dotnet-install script."
+warnings = ["Keep the newest version and any a global.json pins."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://learn.microsoft.com/dotnet/core/install/remove-runtime-sdk-versions"
+
+[rules.store]
+roots = ["~/.dotnet/sdk", "$DOTNET_ROOT/sdk"]
+patterns = ["*"]
+target = "directory"
+min_age_days = 90
+min_bytes = 104857600
+
+[[rules]]
+id = "dev.android.system-images"
+name = "Android emulator system images unused for 90 days"
+revision = 1
+platforms = ["linux", "macos", "windows"]
+tool_versions = ["unknown-inventory-only"]
+category = "developer_data"
+tier = "info"
+action = "info"
+discovery = "developer_stores"
+explanation = "An Android system image in which nothing changed for 90 days."
+side_effects = "Emulators built on it stop starting until it is installed again."
+regeneration = "The SDK manager downloads it again."
+warnings = ["Check which emulators use it in the Device Manager first."]
+preconditions = ["known_root", "metadata_only"]
+exclusions = ["protected", "cloud", "active_work"]
+privileges = "current-user"
+failure_behavior = "informational"
+compatibility = "inventory-only"
+deprecated = false
+fixtures = ["unused-cache-positive", "recent-cache-near-miss"]
+source = "https://developer.android.com/studio/run/managing-avds"
+
+[rules.store]
+roots = ["~/Library/Android/sdk/system-images", "~/Android/Sdk/system-images", "{cache}/Android/Sdk/system-images", "$ANDROID_HOME/system-images", "$ANDROID_SDK_ROOT/system-images"]
+patterns = ["*", "*"]
+target = "directory"
+min_age_days = 90
+min_bytes = 104857600

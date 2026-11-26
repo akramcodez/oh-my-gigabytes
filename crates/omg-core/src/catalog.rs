@@ -21,7 +21,7 @@ pub const MAX_CATALOG: usize = 256 * 1024;
 const MAX_RULES: usize = 128;
 /// Builtin discovery kinds. A catalog can only refer to these. Only the store kinds take locations
 /// from a rule, and only as a validated `Store` inside the tool areas of the home folder.
-pub const DISCOVERIES: [&str; 49] = [
+pub const DISCOVERIES: [&str; 50] = [
     "npm_content_cache",
     "pip_cache",
     "uv_cache",
@@ -39,6 +39,7 @@ pub const DISCOVERIES: [&str; 49] = [
     "tool_sessions",
     "tool_caches",
     "tool_logs",
+    "developer_stores",
     "unrecognized_store",
     "superseded_copies",
     "old_installers",
@@ -334,7 +335,12 @@ pub struct Rule {
 }
 
 /// Discovery kinds whose locations come from the rule's `store` instead of code.
-pub const STORE_KINDS: [&str; 3] = ["tool_sessions", "tool_caches", "tool_logs"];
+pub const STORE_KINDS: [&str; 4] = [
+    "tool_sessions",
+    "tool_caches",
+    "tool_logs",
+    "developer_stores",
+];
 
 /// A tool's own store, described with fixed parts only: root folders inside the tool areas of the
 /// home folder and name patterns at an exact depth below them. It can only find items; deleting
@@ -502,7 +508,7 @@ pub fn category_of(discovery: &str) -> Option<&'static str> {
         "huggingface_hub" | "ollama_models" | "lm_studio_models" => "ml_models",
         "home_logs_and_temp" => "logs_and_temp",
         "jetbrains_old_versions" => "old_tool_versions",
-        "xcode_archives" | "android_avd" | "conda_envs" => "developer_data",
+        "xcode_archives" | "android_avd" | "conda_envs" | "developer_stores" => "developer_data",
         "app_leftovers" => "app_leftovers",
         "fast_growing" => "growth",
         _ => return None,
@@ -1349,12 +1355,15 @@ mod tests {
     #[test]
     fn strict_catalog_and_tier_contract() {
         let payload = include_str!("../../../catalog/bundled.toml");
-        assert_eq!(parse(payload).unwrap().rules.len(), 72);
+        assert_eq!(parse(payload).unwrap().rules.len(), 89);
         let claude = "roots = [\"~/.claude/projects\"]";
         assert!(payload.contains(claude));
         for bad in [
             "roots = [\"/etc\"]",
             "roots = [\"~/Documents\"]",
+            "roots = [\"~/Library/Preferences\"]",
+            "roots = [\"~/Library/Developer\"]",
+            "roots = [\"~/Android/Other\"]",
             "roots = [\"~/.claude/../Documents\"]",
             "roots = [\"$home/.x\"]",
             "roots = [\"~\"]",

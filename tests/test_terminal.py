@@ -263,6 +263,9 @@ class TerminalSmokeTests(unittest.TestCase):
             subprocess.run([str(binary), "--state-dir", str(state), "scan", "--root", str(home)], check=True, capture_output=True, env=env)
             ui = Interface(binary, state, env)
             try:
+                ui.send(b"3")
+                self.assertTrue(ui.until("item(s) · ≈"), ui.screen.text())
+                self.assertIn("tier filter: all", ui.screen.text())
                 ui.send(b"2")
                 self.assertTrue(ui.until(".cache"), ui.screen.text())
                 ui.send(b"\r")

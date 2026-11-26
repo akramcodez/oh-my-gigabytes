@@ -2599,6 +2599,67 @@ fn tool_caches_of_more_ecosystems_come_from_store_rules() {
 }
 
 #[test]
+fn more_developer_leftovers_are_suggested_or_listed_by_kind() {
+    let (home, state) = setup();
+    let h = home.path();
+    let mut files = vec![
+        ".yarn/berry/cache/react-npm-18.3.1.zip",
+        ".vagrant.d/boxes/ubuntu-VAGRANTSLASH-jammy64/box.img",
+        ".dotnet/sdk/6.0.100/sdk.dll",
+        ".dotnet/sdk/8.0.100/sdk.dll",
+    ];
+    if cfg!(target_os = "macos") {
+        files.extend([
+            "Library/Developer/Xcode/watchOS DeviceSupport/Watch7,1 10.0/symbols",
+            "Library/Developer/Xcode/UserData/Previews/Simulator Devices/data",
+            "Library/Developer/CoreSimulator/Devices/0A1B/data/disk",
+        ]);
+    }
+    for file in &files {
+        write_bytes(&h.join(file), 120 << 20);
+    }
+    for folder in [
+        ".yarn",
+        ".vagrant.d",
+        ".dotnet/sdk/6.0.100",
+        "Library/Developer/Xcode/watchOS DeviceSupport",
+        "Library/Developer/Xcode/UserData",
+        "Library/Developer/CoreSimulator/Devices/0A1B",
+    ] {
+        if h.join(folder).exists() {
+            age(&h.join(folder), days_ago(100));
+        }
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    let mut listed = findings_of(&index, h, "developer_stores");
+    listed.sort();
+    let mut want: Vec<Vec<u8>> = vec![
+        b".dotnet/sdk/6.0.100".to_vec(),
+        b".vagrant.d/boxes/ubuntu-VAGRANTSLASH-jammy64".to_vec(),
+    ];
+    if cfg!(target_os = "macos") {
+        want.push(b"Library/Developer/CoreSimulator/Devices/0A1B".to_vec());
+    }
+    assert_eq!(listed, want);
+    index.suggest(h).unwrap();
+    let mut found = suggested(&index);
+    found.sort();
+    let mut want: Vec<Vec<u8>> = vec![b".yarn/berry/cache".to_vec()];
+    if cfg!(target_os = "macos") {
+        want.splice(
+            0..0,
+            [
+                b"Library/Developer/Xcode/UserData/Previews".to_vec(),
+                b"Library/Developer/Xcode/watchOS DeviceSupport/Watch7,1 10.0".to_vec(),
+            ],
+        );
+    }
+    want.sort();
+    assert_eq!(found, want);
+}
+
+#[test]
 fn output_of_more_languages_needs_its_project_file_beside_it() {
     let (home, state) = setup();
     let h = home.path();

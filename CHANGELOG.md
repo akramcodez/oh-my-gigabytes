@@ -8,6 +8,8 @@ Notable changes to OMG (Oh My Gigabytes). Every release is a development preview
 - **Removed suggestions come back.** A cache you took out of OMG Trash is suggested again once it has doubled or grown by 1 GB, or after 30 days. Suggestions removed with an earlier version return on the next scan.
 - **`omg trash --add PATH` and `--remove PATH`** add a scanned path to OMG Trash or take it out from the shell, under the same rules as the interface. Nothing moves or is deleted.
 - **The interface explains a partial scan.** It shows how many folders could not be read and, on macOS, which privacy setting to allow.
+- **More developer leftovers.** Suggested: Poetry, PDM, Hatch, pipx and Yarn 2+ caches, Bazel output bases (Linux), SwiftUI preview data and watchOS, tvOS and visionOS device support files. Listed in Findings only: Simulator devices, Android system images, Vagrant boxes and user-installed .NET SDKs unchanged for 90 days, and VS Code and Cursor compiled code of older builds.
+- **The Findings tab shows a total** at the top: how many items are listed and their size, like OMG Trash. Protected items are not counted in the size.
 - **Clearer refusal from `omg clean`** for a whole project or application data: it says to delete it from OMG Trash in the interface.
 
 ## 0.1.0 (2026-11-21)
