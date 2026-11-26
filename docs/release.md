@@ -93,7 +93,7 @@ Use a verified matching-version package, retain readable user state and allow ap
 npm uninstall --global oh-my-gigabytes
 ```
 
-Uninstall removes the launcher/platform package; it **preserves the local index/history/preferences**. No service is installed by these packages. If you registered the service, run `omg service uninstall` first (npm lifecycle hooks are not relied on); `omg doctor` reports an orphaned registration whose binary no longer exists. Uninstall never cleans scanned user files or Trash. State removal is a separate explicit scoped user decision.
+Uninstall removes the launcher/platform package; it **preserves the local index/history/preferences**. The packages install no service or job by themselves, and npm lifecycle hooks are not relied on, so remove what you turned on **before** uninstalling, or the registrations stay behind and point at a binary that is gone: `omg auto-delete off` (all platforms), `omg schedule disable` (macOS, Windows) and `omg service uninstall` (Linux). `omg doctor` reports a service or job whose binary no longer exists, and the interface warns when auto delete is on but its job's binary is missing. After a Node version switch under nvm, `omg auto-delete on` registers the job again at the current path. Uninstall never cleans scanned user files or Trash. State removal is a separate explicit scoped user decision.
 
 ## Releasing a version
 
@@ -136,7 +136,7 @@ Done for `0.1.0` (2026-11-21):
 - All signed files match `SHA256SUMS`; `verify-release.js` verifies all four targets; the packaged binaries are byte-identical to the CI artifacts.
 - Step 4 on all three systems with the signed offline packages: the Mac (including Full Disk Access, [macos-evidence.md](macos-evidence.md)), a Windows 11 PC ([windows-evidence.md](windows-evidence.md)) and WSL2 Ubuntu 24.04 ([linux-qualification.md](linux-qualification.md)). Each deleted only the confirmed file in a throwaway home, kept it on Cancel, and refused a changed binary.
 
-Known issues in `0.1.0`, to fix in the next release: `omg tree` on an excluded folder itself (`~/.ssh`, `OneDrive`) prints 0 bytes and `incomplete: false` instead of unknown; the Linux message for a link as the scan root lists several causes instead of naming the link; the scan's `estimated_total` counts the whole volume, not the root; `doctor` with `--state-dir` still prints the real systemd unit path.
+Known issues in `0.1.0`, fixed for the next release (see `docs/evidence.md`, 2026-11-26): `omg tree` on an excluded folder itself printed 0 bytes and `incomplete: false`; the Linux message for a link as the scan root listed several causes instead of naming the link; the scan's `estimated_total` counted the whole volume, not the root; `doctor` with `--state-dir` printed the real systemd unit path.
 
 Next for `0.1.0`, in order (steps of [Releasing a version](#releasing-a-version)):
 1. Owner: draft GitHub Release `v0.1.0` with `signed/tarballs/*`, `signed/offline/*`, `SHA256SUMS`, `release-public.pem`, `KEY-FINGERPRINT.txt` and the SBOM. The notes say what is not in this release: moving to the system trash, a macOS or Windows background service, Authenticode signing, Apple notarization, Intel Macs, Windows on Arm and musl.

@@ -142,3 +142,41 @@ fn auto_delete_agent_is_separate_from_the_daily_scan() {
     assert!(scan.state().unwrap().registered);
     assert!(!auto.state().unwrap().registered);
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn a_job_whose_omg_is_gone_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let name = if cfg!(target_os = "macos") {
+        "launchctl"
+    } else {
+        "systemctl"
+    };
+    let (tool, _) = fake_tool(dir.path(), name);
+    fs::create_dir(dir.path().join("bin")).unwrap();
+    let (omg, _) = fake_tool(&dir.path().join("bin"), "omg");
+    let scheduler = Scheduler {
+        tool,
+        agents: dir.path().join("agents"),
+        job: Job::AutoDelete,
+    };
+    let spec = Spec {
+        job: Job::AutoDelete,
+        executable: omg.clone(),
+        state_dir: dir.path().join("state"),
+        hour: 0,
+    };
+    scheduler.enable(&spec).unwrap();
+    let state = scheduler.state().unwrap();
+    assert!(state.registered && !state.executable_missing, "{state:?}");
+    assert_eq!(state.executable.as_deref(), Some(omg.as_path()));
+    assert_eq!(state.state_dir, Some(dir.path().join("state")));
+    fs::remove_file(&omg).unwrap();
+    let state = scheduler.state().unwrap();
+    assert!(state.executable_missing, "{state:?}");
+    assert!(
+        state.detail.contains("omg auto-delete on"),
+        "{}",
+        state.detail
+    );
+}

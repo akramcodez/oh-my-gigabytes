@@ -90,6 +90,9 @@ pub struct Preview {
     pub waiting: usize,
     pub held: usize,
     pub excluded: usize,
+    /// Where each item in OMG Trash stands, by id, for the interface's row tags.
+    #[serde(skip)]
+    pub standings: std::collections::BTreeMap<i64, Standing>,
 }
 impl Preview {
     pub fn due_bytes(&self) -> u64 {
@@ -149,6 +152,20 @@ pub fn enabled_in(state: &Path) -> bool {
         return false;
     };
     read(&db).is_ok_and(|s| s.active())
+}
+
+/// Auto delete settings for `omg doctor`, from a read-only connection.
+pub fn diagnosis(db: &rusqlite::Connection) -> serde_json::Value {
+    match read(db) {
+        Ok(s) => serde_json::json!({
+            "enabled": s.active(),
+            "period_days": s.period_days,
+            "include_risky": s.include_risky,
+            "plugged_in_only": s.plugged_in_only,
+            "last_run": s.last_run,
+        }),
+        Err(error) => serde_json::json!({ "enabled": "unknown", "error": format!("{error:#}") }),
+    }
 }
 
 fn read(db: &rusqlite::Connection) -> Result<Settings> {
@@ -328,6 +345,7 @@ impl Index {
             return Ok(preview);
         }
         for (item, standing) in self.auto_standing(home)? {
+            preview.standings.insert(item.id, standing.clone());
             match standing {
                 Standing::Due => preview.due.push((item.id, item.allocated)),
                 Standing::Waiting(at) => {

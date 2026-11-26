@@ -11,6 +11,11 @@ Notable changes to OMG (Oh My Gigabytes). Every release is a development preview
 - **The interface explains a partial scan.** It shows how many folders could not be read and, on macOS, which privacy setting to allow.
 - **More developer leftovers.** Suggested: Poetry, PDM, Hatch, pipx and Yarn 2+ caches, Bazel output bases (Linux), SwiftUI preview data and watchOS, tvOS and visionOS device support files. Listed in Findings only: Simulator devices, Android system images, Vagrant boxes and user-installed .NET SDKs unchanged for 90 days, and VS Code and Cursor compiled code of older builds.
 - **The Findings tab shows a total** at the top: how many items are listed and their size, like OMG Trash. Protected items are not counted in the size.
+- **Why each item waits.** `omg auto-delete status --items` lists each item in OMG Trash as due, waiting (with the days left), kept, changed or left for you, and OMG Trash shows the same as a tag on each row while auto delete is on.
+- **Auto delete in `omg doctor`**: whether it is on, the period, the last run and whether the job is registered. With `--state-dir`, doctor shows only jobs for that folder and no longer shows the default profile's service unit.
+- **A job whose omg is gone is caught.** After `npm uninstall` or a Node version switch under nvm, the auto delete and daily scan jobs can point at a missing binary. `omg doctor`, `omg auto-delete status`, `omg schedule status` and the interface now say so; `omg auto-delete on` registers the job again at the current path.
+- **Uninstall steps** in the README and `docs/release.md`: run `omg auto-delete off` and `omg schedule disable` before `npm uninstall`.
+- **Fixes.** `omg tree` on an excluded folder (`~/.ssh`, `OneDrive`) reports its size as unknown (`null`), `excluded` and `incomplete: true` instead of 0 bytes. The Linux refusal of a link as the scan root names the link. The scan's `estimated_total` (the progress estimate) is the last scan's count for the same root, or the volume's only when the root is a whole volume, instead of the whole volume for any folder.
 - **Clearer refusal from `omg clean`** for a whole project or application data: it says to delete it from OMG Trash in the interface.
 
 ## 0.1.0 (2026-11-21)

@@ -144,7 +144,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let database = absolute.join("index.sqlite");
     if !database.exists() {
         return Ok(
-            serde_json::json!({"state":"no index","output_schema":crate::OUTPUT_SCHEMA,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status"}),
+            serde_json::json!({"state":"no index","output_schema":crate::OUTPUT_SCHEMA,"sqlite":sqlite_version(),"auto_delete":{"enabled":false},"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status"}),
         );
     }
     for name in ["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"] {
@@ -163,7 +163,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","output_schema":crate::OUTPUT_SCHEMA,"schema":schema,"schema_supported":schema<=15,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
+        serde_json::json!({"state":"existing index","output_schema":crate::OUTPUT_SCHEMA,"schema":schema,"schema_supported":schema<=15,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis(),"auto_delete":crate::cleanup::auto::diagnosis(&db)}),
     )
 }
 

@@ -415,8 +415,23 @@ mod service {
         let out = omg(&fx).arg("doctor").output().unwrap();
         assert!(out.status.success());
         let text = String::from_utf8_lossy(&out.stdout);
+        // A --state-dir profile is not the one the background service uses, so its unit is not shown.
+        assert!(text.contains("service: not checked"), "{text}");
+        assert!(!text.contains("systemd/user"), "{text}");
         assert!(
-            text.contains("service:") && text.contains("\"registered\": false"),
+            text.contains("auto delete: off; job not registered"),
+            "{text}"
+        );
+        let out = Command::new(BINARY)
+            .arg("doctor")
+            .env("OMG_STATE_DIR", &fx.state)
+            .env("XDG_CONFIG_HOME", &fx.config_home)
+            .env("HOME", &fx.config_home)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("service: {") && text.contains("\"registered\": false"),
             "{text}"
         );
         assert!(!Path::new(&fx.config_home.join("systemd")).exists());
@@ -432,6 +447,8 @@ fn tree_reports_subtree_sizes_and_rejects_escapes() {
     std::fs::create_dir(root.join("small")).unwrap();
     std::fs::write(root.join("big/inner/data"), vec![1u8; 2 << 20]).unwrap();
     std::fs::write(root.join("small/data"), vec![1u8; 4096]).unwrap();
+    std::fs::create_dir(root.join(".ssh")).unwrap();
+    std::fs::write(root.join(".ssh/id"), vec![1u8; 4096]).unwrap();
     let omg = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_omg"))
             .arg("--state-dir")
@@ -463,6 +480,10 @@ fn tree_reports_subtree_sizes_and_rejects_escapes() {
         "1",
     ]));
     assert_eq!(absolute["children"].as_array().unwrap().len(), 1);
+    let secret = json(&omg(&["tree", ".ssh"]));
+    assert_eq!(secret["incomplete"], true, "{secret}");
+    assert!(secret["excluded"].is_string(), "{secret}");
+    assert!(secret["totals"]["allocated"].is_null(), "{secret}");
     assert!(!omg(&["tree", "../escape"]).status.success());
     assert!(!omg(&["tree", "/etc"]).status.success());
     assert!(!omg(&["tree", "no-such-dir"]).status.success());
@@ -737,4 +758,56 @@ fn auto_delete_cannot_be_turned_on_from_a_script() {
     assert!(stderr.contains("needs your permission"), "{stderr}");
     assert!(!state.exists(), "refusal must not create state");
     assert!(!fixture.path().join("config").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn auto_delete_status_items_explains_each_item() {
+    let fixture = tempfile::tempdir().unwrap();
+    let home = fixture.path().canonicalize().unwrap();
+    let (root, state) = (home.join("work"), home.join("state"));
+    std::fs::create_dir_all(root.join("old")).unwrap();
+    std::fs::write(root.join("old/data"), vec![1u8; 8192]).unwrap();
+    let omg = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_omg"))
+            .arg("--state-dir")
+            .arg(&state)
+            .args(args)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join("config"))
+            .output()
+            .unwrap()
+    };
+    let root_text = root.to_str().unwrap();
+    assert!(
+        omg(&["scan", "--root", root_text, "--no-suggest"])
+            .status
+            .success()
+    );
+    let old = root.join("old");
+    assert!(
+        omg(&["trash", "--add", old.to_str().unwrap()])
+            .status
+            .success()
+    );
+    let out = omg(&["auto-delete", "status", "--items"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let rows = rows.as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["standing"]["state"], "waiting");
+    assert!(
+        rows[0]["explanation"]
+            .as_str()
+            .unwrap()
+            .starts_with("waiting: due in 7 day(s)"),
+        "{rows:?}"
+    );
+    let summary: serde_json::Value =
+        serde_json::from_slice(&omg(&["auto-delete", "status"]).stdout).unwrap();
+    assert!(summary["job"]["registered"] == false && summary.get("settings").is_some());
 }

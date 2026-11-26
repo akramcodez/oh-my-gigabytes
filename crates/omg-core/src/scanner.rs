@@ -59,19 +59,47 @@ pub fn default_workers() -> usize {
     std::thread::available_parallelism().map_or(2, |n| n.get().clamp(2, 8))
 }
 
-/// Approximate number of entries to expect: the filesystem's used-inode count. This is an upper
-/// bound when the scan root is smaller than its volume, and it includes skipped locations.
-pub fn estimate_entries(root: &std::path::Path) -> Option<u64> {
-    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-    {
-        let dir =
-            crate::platform::native::open_root(&crate::platform::absolute(root).ok()?).ok()?;
-        crate::platform::native::inode_usage(&dir).ok().flatten()
+/// Approximate number of entries to expect: what the last finished scan of this root found. For a
+/// root never scanned before, the volume's used-inode count when the root is the whole volume, and
+/// unknown otherwise (a folder's volume count would be far too large).
+pub fn estimate_entries(index: &Index, root: &std::path::Path) -> Option<u64> {
+    let absolute = crate::platform::absolute(root).ok()?;
+    let raw = crate::platform::raw(&absolute).ok()?;
+    let previous: Option<i64> = index
+        .db
+        .query_row(
+            "SELECT entry_count FROM scans WHERE root=? AND state IN ('complete','partial') AND entry_count IS NOT NULL ORDER BY id DESC LIMIT 1",
+            [raw],
+            |r| r.get(0),
+        )
+        .ok();
+    if let Some(count) = previous.and_then(|n| u64::try_from(n).ok()) {
+        return Some(count);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    if volume_root(&absolute) {
+        let dir = crate::platform::native::open_root(&absolute).ok()?;
+        return crate::platform::native::inode_usage(&dir).ok().flatten();
+    }
+    None
+}
+
+fn volume_root(path: &std::path::Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return true;
+    };
+    #[cfg(unix)]
     {
-        let _ = root;
-        None
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(path), std::fs::metadata(parent)) {
+            (Ok(a), Ok(b)) => a.dev() != b.dev(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = parent;
+        false
     }
 }
 
@@ -296,7 +324,7 @@ mod walk {
         }
         let root = native::open_root(&root_path)?;
         let root_meta = native::dir_meta(&root)?;
-        let estimated_total = native::inode_usage(&root)?.unwrap_or(0);
+        let estimated_total = estimate_entries(index, &root_path).unwrap_or(0);
         let mut exclusions = options
             .exclusions
             .iter()

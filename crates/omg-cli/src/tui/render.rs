@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Clear, Paragraph, Wrap},
 };
-use std::sync::atomic::Ordering;
+use std::{borrow::Cow, sync::atomic::Ordering};
 
 type Lines = Vec<Line<'static>>;
 
@@ -1014,20 +1014,39 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
                 },
             ),
             Span::styled(
-                if auto.is_some() && item.hold {
-                    "  · kept from auto delete"
+                if let Some(tag) = auto
+                    .and(summary.auto.standings.get(&item.id))
+                    .map(|s| auto_tag(s, state.now))
+                {
+                    tag
                 } else if item.warning.is_some() {
-                    "  ⚠ in a Git repo"
+                    "  ⚠ in a Git repo".into()
                 } else if item.source == "auto" {
-                    "  · suggested by scan (you did not add this)"
+                    "  · suggested by scan (you did not add this)".into()
                 } else {
-                    ""
+                    "".into()
                 },
                 theme.warn(),
             ),
         ]));
     }
     out
+}
+
+fn auto_tag(standing: &omg_core::cleanup::auto::Standing, now: i64) -> Cow<'static, str> {
+    use omg_core::cleanup::auto::Standing;
+    match standing {
+        Standing::Due => "  · auto delete: next run".into(),
+        Standing::Waiting(at) => format!(
+            "  · auto delete in {} day(s)",
+            ((at - now).max(0) + 86_399) / 86_400
+        )
+        .into(),
+        Standing::Held => "  · kept from auto delete".into(),
+        Standing::NeedsPermission => "  · left for you (needs the wider permission)".into(),
+        Standing::Changed(_) => "  · changed, waits again".into(),
+        Standing::Unknown(_) => "  · not fully scanned, waits".into(),
+    }
 }
 
 fn deleted(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines {

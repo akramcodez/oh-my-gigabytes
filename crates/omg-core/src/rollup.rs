@@ -429,7 +429,17 @@ impl Index {
         let Some(mut totals) = totals else {
             return Ok(None);
         };
-        totals.incomplete = self.gaps(id)?.covers(path);
+        // An excluded folder was never opened, so its totals say nothing about its contents.
+        let excluded = !path.is_empty()
+            && {
+                let (parent, name) = crate::index::split_path(path);
+                self.db
+                .prepare_cached(
+                    "SELECT 1 FROM entries WHERE scan_id=? AND parent=? AND name=? AND excluded IS NOT NULL",
+                )?
+                .exists(params![id, parent, name])?
+            };
+        totals.incomplete = excluded || self.gaps(id)?.covers(path);
         Ok(Some(totals))
     }
     /// Paths the scan could not read (stored up to `MAX_ISSUES`).

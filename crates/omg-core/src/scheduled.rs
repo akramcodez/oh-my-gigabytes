@@ -223,10 +223,111 @@ pub struct Scheduler {
     pub job: Job,
 }
 
-#[derive(Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Default, PartialEq, Eq, serde::Serialize)]
 pub struct State {
     pub registered: bool,
     pub detail: String,
+    /// The omg the registered job runs, and the state folder it passes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_dir: Option<PathBuf>,
+    /// The job is registered but its omg is gone (uninstalled, or another Node version under nvm).
+    pub executable_missing: bool,
+}
+
+/// The arguments in a launchd property list's `ProgramArguments`.
+pub fn plist_arguments(text: &str) -> Option<Vec<String>> {
+    let start = text.find("<key>ProgramArguments</key>")?;
+    let rest = &text[start..];
+    let array = &rest[rest.find("<array>")?..rest.find("</array>")?];
+    Some(
+        array
+            .split("<string>")
+            .skip(1)
+            .filter_map(|s| s.split_once("</string>").map(|(v, _)| v))
+            .map(|v| {
+                v.replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&quot;", "\"")
+                    .replace("&amp;", "&")
+            })
+            .collect(),
+    )
+}
+
+/// The arguments of a systemd unit's `ExecStart`, as `systemd_quote` wrote them.
+pub fn systemd_arguments(text: &str) -> Option<Vec<String>> {
+    let line = text.lines().find_map(|l| l.strip_prefix("ExecStart="))?;
+    let mut out = Vec::new();
+    let mut chars = line.chars().peekable();
+    loop {
+        while chars.next_if(|c| *c == ' ').is_some() {}
+        if chars.next()? != '"' {
+            return None;
+        }
+        let mut arg = String::new();
+        loop {
+            match chars.next()? {
+                '"' => break,
+                '\\' => arg.push(chars.next()?),
+                c @ ('%' | '$') => {
+                    chars.next_if(|n| *n == c);
+                    arg.push(c);
+                }
+                c => arg.push(c),
+            }
+        }
+        out.push(arg);
+        if chars.peek().is_none() {
+            return Some(out);
+        }
+    }
+}
+
+/// The command and arguments of a task exported with `schtasks /Query /XML`.
+pub fn task_arguments(xml_text: &str) -> Option<Vec<String>> {
+    let text: String = xml_text.chars().filter(|c| *c != '\0').collect();
+    let field = |name: &str| -> Option<String> {
+        let open = format!("<{name}>");
+        let start = text.find(&open)? + open.len();
+        let end = start + text[start..].find(&format!("</{name}>"))?;
+        Some(
+            text[start..end]
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&"),
+        )
+    };
+    let command = field("Command")?;
+    let mut out = vec![command.trim().trim_matches('"').to_string()];
+    let mut current = String::new();
+    let (mut quoted, mut any) = (false, false);
+    for c in field("Arguments").unwrap_or_default().chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                any = true;
+            }
+            ' ' if !quoted => {
+                if any || !current.is_empty() {
+                    out.push(std::mem::take(&mut current));
+                }
+                any = false;
+            }
+            c => current.push(c),
+        }
+    }
+    if any || !current.is_empty() {
+        out.push(current);
+    }
+    Some(out)
+}
+
+fn after_state_dir(arguments: &[String]) -> Option<PathBuf> {
+    let at = arguments.iter().position(|a| a == "--state-dir")?;
+    arguments.get(at + 1).map(PathBuf::from)
 }
 
 impl Scheduler {
@@ -437,6 +538,41 @@ impl Scheduler {
         Ok(true)
     }
     pub fn state(&self) -> Result<State> {
+        let mut state = self.registration()?;
+        if state.registered
+            && let Some(arguments) = self.registered_arguments()
+        {
+            state.executable = arguments.first().map(PathBuf::from);
+            state.state_dir = after_state_dir(&arguments);
+            state.executable_missing = state.executable.as_ref().is_some_and(|p| !p.is_file());
+            if state.executable_missing {
+                state.detail = format!(
+                    "registered, but the omg it runs is gone; {}",
+                    match self.job {
+                        Job::Scan => "run `omg schedule enable` again",
+                        Job::AutoDelete => "run `omg auto-delete on` again",
+                    }
+                );
+            }
+        }
+        Ok(state)
+    }
+    fn registered_arguments(&self) -> Option<Vec<String>> {
+        if cfg!(windows) {
+            let output = Command::new(&self.tool)
+                .args(["/Query", "/TN", self.job.task(), "/XML"])
+                .stdin(Stdio::null())
+                .output()
+                .ok()?;
+            return task_arguments(&String::from_utf8_lossy(&output.stdout));
+        }
+        if self.linux() {
+            let [service, _] = self.unit_paths();
+            return systemd_arguments(&std::fs::read_to_string(service).ok()?);
+        }
+        plist_arguments(&std::fs::read_to_string(self.plist_path()).ok()?)
+    }
+    fn registration(&self) -> Result<State> {
         let what = match self.job {
             Job::Scan => "daily scan",
             Job::AutoDelete => "auto delete job",
@@ -444,6 +580,7 @@ impl Scheduler {
         let missing = || State {
             registered: false,
             detail: "not registered".into(),
+            ..Default::default()
         };
         if cfg!(windows) {
             let (ok, _) = self.run(&["/Query".into(), "/TN".into(), self.job.task().into()])?;
@@ -454,6 +591,7 @@ impl Scheduler {
                 } else {
                     "not registered".into()
                 },
+                ..Default::default()
             });
         }
         if self.linux() {
@@ -472,6 +610,7 @@ impl Scheduler {
                 } else {
                     "registered but the timer is not active; turn auto delete on again".into()
                 },
+                ..Default::default()
             });
         }
         let path = self.plist_path();
@@ -487,6 +626,7 @@ impl Scheduler {
             } else {
                 "registered but not loaded; turn it on again".into()
             },
+            ..Default::default()
         })
     }
     fn ours(&self, path: &Path) -> bool {

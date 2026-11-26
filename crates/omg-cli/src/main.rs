@@ -183,7 +183,11 @@ enum ScheduleCommand {
 #[derive(Subcommand)]
 enum AutoDeleteCommand {
     /// Show the settings, the job and what the next run would delete
-    Status,
+    Status {
+        /// List each item in OMG Trash and why it is due, waiting, kept, changed or left for you
+        #[arg(long)]
+        items: bool,
+    },
     /// Give permission and turn auto delete on (asks you to type yes)
     On {
         /// Days an item waits in OMG Trash before it is deleted: 1, 7, 30 or 180
@@ -298,12 +302,11 @@ fn gap_hint() -> &'static str {
         ""
     }
 }
-fn progress_meter(root: &std::path::Path, progress: Arc<std::sync::atomic::AtomicU64>) -> Meter {
+fn progress_meter(total: u64, progress: Arc<std::sync::atomic::AtomicU64>) -> Meter {
     let stop = Arc::new(AtomicBool::new(false));
     if !std::io::stderr().is_terminal() {
         return Meter { stop, handle: None };
     }
-    let total = omg_core::scanner::estimate_entries(root).unwrap_or(0);
     let flag = stop.clone();
     let handle = std::thread::spawn(move || {
         let started = std::time::Instant::now();
@@ -392,9 +395,28 @@ fn run() -> Result<()> {
         println!("omg: this platform is not certified; native scanning and cleanup disabled");
         return Ok(());
     }
+    let default_profile = cli.state_dir.as_ref().is_none_or(|dir| {
+        platform::default_state()
+            .is_ok_and(|d| platform::absolute(dir).ok() == platform::absolute(&d).ok())
+    });
     let state = cli.state_dir.unwrap_or(platform::default_state()?);
     if let Some(Command::Doctor { json }) = cli.command {
         let mut diagnosis = omg_core::index::diagnose(&state)?;
+        let home = platform::home()?;
+        diagnosis["auto_delete"]["job"] = job_report(
+            &home,
+            omg_core::scheduled::Job::AutoDelete,
+            &state,
+            default_profile,
+        );
+        if cfg!(any(target_os = "macos", windows)) {
+            diagnosis["daily_scan"] = job_report(
+                &home,
+                omg_core::scheduled::Job::Scan,
+                &state,
+                default_profile,
+            );
+        }
         if json {
             diagnosis["permanent_delete"] = omg_core::capability::platform_permanent_delete()
                 .as_str()
@@ -417,11 +439,26 @@ fn run() -> Result<()> {
             omg_core::capability::platform_permanent_delete().as_str(),
             omg_core::capability::os_trash().as_str()
         );
-        #[cfg(target_os = "linux")]
         println!(
-            "service: {}",
-            serde_json::to_string_pretty(&svc::registration()?)?
+            "auto delete: {}",
+            auto_delete_line(&diagnosis["auto_delete"])
         );
+        for job in [&diagnosis["auto_delete"]["job"], &diagnosis["daily_scan"]] {
+            if job["executable_missing"] == true {
+                println!("warning: {}", job["detail"].as_str().unwrap_or_default());
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if default_profile {
+            println!(
+                "service: {}",
+                serde_json::to_string_pretty(&svc::registration()?)?
+            );
+        } else {
+            println!(
+                "service: not checked; the background service uses the default state folder, not --state-dir"
+            );
+        }
         return Ok(());
     }
     // Refuse before opening state: a nonterminal run must not create or migrate anything.
@@ -460,7 +497,10 @@ fn run() -> Result<()> {
                 publish_partial: accept_gaps,
             };
             let progress = Arc::new(std::sync::atomic::AtomicU64::new(0));
-            let meter = progress_meter(&options.root, progress.clone());
+            let meter = progress_meter(
+                omg_core::scanner::estimate_entries(&index, &options.root).unwrap_or(0),
+                progress.clone(),
+            );
             #[cfg(target_os = "linux")]
             let report = svc::scan_with_handoff(&mut index, &options, cancel, progress);
             #[cfg(not(target_os = "linux"))]
@@ -631,13 +671,26 @@ fn run() -> Result<()> {
                     })
                 })
                 .collect();
+            let excluded = if raw.is_empty() {
+                None
+            } else {
+                index.entry(&raw)?.and_then(|e| e.excluded)
+            };
+            let mut totals_value = serde_json::to_value(&totals)?;
+            if excluded.is_some() {
+                for field in ["allocated", "apparent", "files", "dirs"] {
+                    totals_value[field] = serde_json::Value::Null;
+                }
+            }
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "directory": omg_core::display_path(&raw),
                     // Some folder below could not be read: the totals are a lower bound.
                     "incomplete": totals.incomplete,
-                    "totals": totals,
+                    // Excluded by policy and never opened: its size is unknown.
+                    "excluded": excluded,
+                    "totals": totals_value,
                     "scan_state": status.last_report.as_ref().map(|r| r.state.clone()),
                     "last_successful": status.last_successful,
                     "note": "Allocated bytes from scan metadata; hard links counted once; shared/cloned blocks unknown; excluded entries are counted but not traversed.",
@@ -784,6 +837,97 @@ fn schedule(command: &ScheduleCommand, state: PathBuf) -> Result<()> {
     Ok(())
 }
 
+/// A scheduled job's registration for doctor. With `--state-dir` it shows only a job for that folder.
+fn job_report(
+    home: &std::path::Path,
+    job: omg_core::scheduled::Job,
+    state: &std::path::Path,
+    default_profile: bool,
+) -> serde_json::Value {
+    match omg_core::scheduled::Scheduler::for_job(home, job).and_then(|s| s.state()) {
+        Ok(found)
+            if default_profile
+                || found.state_dir.as_deref().is_some_and(|d| {
+                    platform::absolute(d).ok() == platform::absolute(state).ok()
+                }) =>
+        {
+            serde_json::to_value(found).unwrap_or_default()
+        }
+        Ok(_) => serde_json::json!({
+            "registered": false,
+            "detail": "no job for this state folder",
+            "executable_missing": false,
+        }),
+        Err(error) => serde_json::json!({
+            "registered": false,
+            "detail": format!("{error:#}"),
+            "executable_missing": false,
+        }),
+    }
+}
+
+fn auto_delete_line(auto: &serde_json::Value) -> String {
+    if auto["enabled"] != true {
+        return format!(
+            "off; job {}",
+            if auto["job"]["registered"] == true {
+                "still registered (it does nothing; `omg auto-delete off` removes it)"
+            } else {
+                "not registered"
+            }
+        );
+    }
+    let last = match auto["last_run"].as_i64() {
+        Some(at) => {
+            let hours = (now_secs() - at).max(0) / 3600;
+            if hours < 48 {
+                format!("{hours} h ago")
+            } else {
+                format!("{} days ago", hours / 24)
+            }
+        }
+        None => "never".into(),
+    };
+    format!(
+        "on, every {} day(s){}{}; last run {last}; job {}",
+        auto["period_days"],
+        if auto["include_risky"] == true {
+            ", whole repositories and app data included"
+        } else {
+            ""
+        },
+        if auto["plugged_in_only"] == true {
+            ", plugged in only"
+        } else {
+            ""
+        },
+        auto["job"]["detail"].as_str().unwrap_or("unknown"),
+    )
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+fn standing_text(standing: &omg_core::cleanup::auto::Standing) -> String {
+    use omg_core::cleanup::auto::Standing;
+    match standing {
+        Standing::Due => "due: the next run deletes it, after checking it again".into(),
+        Standing::Waiting(at) => format!(
+            "waiting: due in {} day(s)",
+            ((at - now_secs()).max(0) + 86_399) / 86_400
+        ),
+        Standing::Held => "kept: you chose to keep it out of auto delete".into(),
+        Standing::NeedsPermission => {
+            "left for you: a whole repository, application data or a toolchain, which needs --include-risky".into()
+        }
+        Standing::Changed(why) => format!("changed: {why}; its wait starts again at the next run"),
+        Standing::Unknown(why) => format!("unknown: {why}; it waits for a scan that reads it"),
+    }
+}
+
 fn parse_period(text: &str) -> std::result::Result<u32, String> {
     text.strip_suffix('d')
         .unwrap_or(text)
@@ -798,7 +942,26 @@ fn auto_delete(command: &AutoDeleteCommand, state: PathBuf) -> Result<()> {
     let home = platform::home()?;
     let scheduler = || Scheduler::for_job(&home, Job::AutoDelete);
     match command {
-        AutoDeleteCommand::Status => {
+        AutoDeleteCommand::Status { items: true } => {
+            let index = Index::open(&state)?;
+            let rows: Vec<_> = index
+                .auto_standing(&home)?
+                .into_iter()
+                .map(|(m, standing)| {
+                    serde_json::json!({
+                        "id": m.id,
+                        "path": omg_core::display_path(&m.path),
+                        "size": omg_core::bytes(m.allocated),
+                        "allocated": m.allocated,
+                        "added": m.added,
+                        "explanation": standing_text(&standing),
+                        "standing": standing,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        }
+        AutoDeleteCommand::Status { items: false } => {
             let index = Index::open(&state)?;
             let preview = index.auto_preview(&home)?;
             let job = scheduler()

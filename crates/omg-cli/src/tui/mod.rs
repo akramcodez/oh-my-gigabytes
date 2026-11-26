@@ -357,6 +357,7 @@ impl App {
             full: true,
             publish_partial: false,
         });
+        let total = omg_core::scanner::estimate_entries(&index, &options.root).unwrap_or(0);
         drop(index);
         options.workers = omg_core::scanner::default_workers();
         options.full = full || options.full;
@@ -366,7 +367,7 @@ impl App {
         self.cancel.store(false, Ordering::Relaxed);
         self.state.scan = Some(ScanView {
             progress: progress.clone(),
-            total: omg_core::scanner::estimate_entries(&options.root).unwrap_or(0),
+            total,
             started: Instant::now(),
             finishing_since: None,
         });

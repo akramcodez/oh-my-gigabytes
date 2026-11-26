@@ -175,6 +175,21 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
     })
 }
 
+/// Auto delete is on but its job runs an omg that is gone, so no run would ever start.
+fn missing_job_warning(index: &Index, home: &std::path::Path) -> Option<String> {
+    use omg_core::scheduled::{Job, Scheduler};
+    if !index.auto_delete().ok()?.active() {
+        return None;
+    }
+    let job = Scheduler::for_job(home, Job::AutoDelete)
+        .ok()?
+        .state()
+        .ok()?;
+    job.executable_missing.then(|| {
+        "Auto delete is on, but its background job runs an omg that is no longer there, so it never runs. Turn auto delete off and on again in the menu (m), or run `omg auto-delete on`.".into()
+    })
+}
+
 pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
     let (request_tx, request_rx) = channel::<Request>();
     let (response_tx, response_rx) = channel::<Response>();
@@ -189,6 +204,9 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
         let home = platform::home().unwrap_or_default();
         if let Ok(Some(text)) = index.auto_take_message() {
             let _ = response_tx.send(Response::Info(text));
+        }
+        if let Some(warning) = missing_job_warning(&index, &home) {
+            let _ = response_tx.send(Response::Error(warning));
         }
         while let Ok(first) = request_rx.recv() {
             // Coalesce bursts: many queued refreshes cost one query.

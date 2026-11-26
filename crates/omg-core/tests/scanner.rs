@@ -357,7 +357,26 @@ fn explicit_partial_publication_is_labelled_and_opt_in() {
     assert!(status.entries >= 2, "partial view is published");
     assert!(index.rollups_available().unwrap());
     assert_eq!(report.changed_entries, Some(report.entries));
-    assert!(report.estimated_total > 0);
+    // A folder never scanned before has no estimate; the volume's count would be far too large.
+    assert_eq!(report.estimated_total, 0);
+    assert_eq!(
+        scanner::estimate_entries(&index, root.path()),
+        Some(report.entries)
+    );
+    let again = scanner::scan(
+        &mut index,
+        &ScanOptions {
+            root: root.path().to_path_buf(),
+            workers: 4,
+            exclusions: vec![],
+            full: true,
+            publish_partial: true,
+        },
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .unwrap();
+    assert_eq!(again.estimated_total, report.entries);
 }
 
 #[test]

@@ -31,4 +31,4 @@ A rule of the kinds `tool_sessions`, `tool_caches` or `tool_logs` must carry a `
 
 ## Index
 
-The index is a SQLite database at schema 14. A newer omg migrates an older index forward on open. An older omg refuses an index newer than it knows and changes nothing; `omg doctor` shows `schema` and `schema_supported`. The index is a cache: moving the state folder aside and scanning again is always safe, but loses the deletion history and trend samples.
+The index is a SQLite database at schema 15. A newer omg migrates an older index forward on open. An older omg refuses an index newer than it knows and changes nothing; `omg doctor` shows `schema` and `schema_supported`. The index is a cache: moving the state folder aside and scanning again is always safe, but loses the deletion history and trend samples.

@@ -405,12 +405,29 @@ pub mod linux {
             ResolveFlags::NO_SYMLINKS,
         )
         .map_err(|error| {
-            if error == rustix::io::Errno::NOSYS {
-                anyhow::anyhow!("openat2 is unavailable: omg needs Linux 5.6 or newer")
-            } else {
-                anyhow::anyhow!(
-                    "root acquisition denied: missing, inaccessible, redirected or unsupported openat2"
-                )
+            use rustix::io::Errno;
+            match error {
+                Errno::NOSYS => {
+                    anyhow::anyhow!("openat2 is unavailable: omg needs Linux 5.6 or newer")
+                }
+                Errno::LOOP => match first_link(path) {
+                    Some(link) => anyhow::anyhow!(
+                        "root acquisition denied: {} is a symbolic link; give the real path",
+                        link.display()
+                    ),
+                    None => anyhow::anyhow!(
+                        "root acquisition denied: the path passes through a symbolic link; give the real path"
+                    ),
+                },
+                Errno::NOENT => anyhow::anyhow!("root acquisition denied: the path does not exist"),
+                Errno::NOTDIR => anyhow::anyhow!("root acquisition denied: not a folder"),
+                Errno::ACCESS | Errno::PERM => {
+                    anyhow::anyhow!("root acquisition denied: permission denied")
+                }
+                Errno::XDEV => anyhow::anyhow!(
+                    "root acquisition denied: the path is redirected through a mount"
+                ),
+                _ => anyhow::anyhow!("root acquisition denied: {error}"),
             }
         })?;
         if filesystem(&fd)? == crate::capability::Filesystem::Other {
@@ -419,6 +436,21 @@ pub mod linux {
             );
         }
         Ok(fd)
+    }
+    /// The first component of `path` that is a symbolic link, for the refusal message only.
+    fn first_link(path: &Path) -> Option<std::path::PathBuf> {
+        let mut current = std::path::PathBuf::new();
+        for part in path.components() {
+            current.push(part);
+            if std::fs::symlink_metadata(&current)
+                .ok()?
+                .file_type()
+                .is_symlink()
+            {
+                return Some(current);
+            }
+        }
+        None
     }
     pub fn acquire(root: &OwnedFd, relative: &Path, directory: bool) -> Result<OwnedFd> {
         let flags = if directory {
@@ -537,6 +569,24 @@ pub mod linux {
             assert_eq!(Filesystem::from_magic(0x9123_683e), Filesystem::Btrfs);
             assert_eq!(Filesystem::from_magic(0x5846_5342), Filesystem::Xfs);
             assert_eq!(Filesystem::from_magic(0xdead_beef), Filesystem::Other);
+        }
+
+        #[test]
+        fn a_link_as_the_root_is_named_in_the_refusal() {
+            let base = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+            let target = base.join(format!("omg-linux-target-{}", std::process::id()));
+            let link = base.join(format!("omg-linux-link-{}", std::process::id()));
+            std::fs::create_dir(&target).unwrap();
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let error = super::root(&link.join("inner")).unwrap_err().to_string();
+            let direct = super::root(&link).unwrap_err().to_string();
+            std::fs::remove_file(&link).unwrap();
+            std::fs::remove_dir(&target).unwrap();
+            let expected = format!("{} is a symbolic link", link.display());
+            assert!(direct.contains(&expected), "{direct}");
+            assert!(error.contains(&expected), "{error}");
+            let missing = super::root(&base.join("omg-no-such-root")).unwrap_err();
+            assert!(missing.to_string().contains("does not exist"), "{missing}");
         }
     }
 }
