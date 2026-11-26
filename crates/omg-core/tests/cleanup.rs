@@ -20,19 +20,31 @@ fn setup() -> (tempfile::TempDir, tempfile::TempDir) {
     (home, state)
 }
 fn scan(index: &mut Index, root: &Path) {
-    let report = scanner::scan(
-        index,
-        &ScanOptions {
-            root: root.to_path_buf(),
-            workers: 2,
-            exclusions: vec![],
-            full: true,
-            publish_partial: false,
-        },
-        Arc::new(AtomicBool::new(false)),
-        Arc::new(AtomicU64::new(0)),
-    )
-    .unwrap();
+    // A Git or chflags child forked by a parallel test can hold an inherited lock descriptor until
+    // it execs, so a strict scan here may briefly see the lock as taken.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let report = loop {
+        match scanner::scan(
+            index,
+            &ScanOptions {
+                root: root.to_path_buf(),
+                workers: 2,
+                exclusions: vec![],
+                full: true,
+                publish_partial: false,
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+        ) {
+            Err(error)
+                if error.downcast_ref::<omg_core::index::Busy>().is_some()
+                    && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            other => break other.unwrap(),
+        }
+    };
     assert_eq!(report.state, "complete");
 }
 fn id_of(index: &Index, path: &[u8]) -> i64 {
