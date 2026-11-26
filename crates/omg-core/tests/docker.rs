@@ -64,11 +64,23 @@ fn serve(state: Arc<Mutex<Fake>>) -> (tempfile::TempDir, Engine) {
                     .filter(|c| line.contains(c["ID"].as_str().unwrap()))
                     .map(|c| c["ID"].as_str().unwrap().to_string())
                     .collect();
-                (
-                    200,
-                    serde_json::json!({ "CachesDeleted": deleted, "SpaceReclaimed": 300 })
-                        .to_string(),
-                )
+                // Mirror Moby's filter parser: /build/prune rejects more than one id per call.
+                if deleted.len() > 1 {
+                    (
+                        400,
+                        r#"{"message":"failed to prune build cache: filters expect only one value"}"#
+                            .to_string(),
+                    )
+                } else {
+                    if let Some(list) = fake.df["BuildCache"].as_array_mut() {
+                        list.retain(|c| !deleted.iter().any(|d| d == c["ID"].as_str().unwrap()));
+                    }
+                    (
+                        200,
+                        serde_json::json!({ "CachesDeleted": deleted, "SpaceReclaimed": 300 })
+                            .to_string(),
+                    )
+                }
             } else {
                 (404, "{\"message\":\"no\"}".to_string())
             };
@@ -249,4 +261,33 @@ fn removed_docker_items_go_in_the_deleted_log_and_skipped_ones_do_not() {
         (log[0].source.as_str(), log[0].path.as_slice(), log[0].bytes),
         ("docker", &b"build cache: cache-1"[..], 4096)
     );
+}
+
+#[test]
+fn multiple_build_cache_items_are_pruned_one_by_one() {
+    let mut df = sample();
+    df["BuildCache"] = serde_json::json!([
+        { "ID": "abc123", "Type": "regular", "Description": "RUN npm ci", "InUse": false, "Size": 300, "LastUsedAt": "2023-11-14T22:13:20Z" },
+        { "ID": "ghi789", "Type": "regular", "Description": "RUN cargo build", "InUse": false, "Size": 500, "LastUsedAt": "2023-11-14T22:13:20Z" },
+        { "ID": "def456", "Type": "regular", "Description": "", "InUse": true, "Size": 999 }
+    ]);
+    let state = Arc::new(Mutex::new(Fake {
+        df,
+        ..Default::default()
+    }));
+    let (_dir, engine) = serve(state.clone());
+    let plan = engine.plan(&[Kind::BuildCache]).unwrap();
+    assert_eq!(plan.items.len(), 2);
+    let outcome = engine.remove(&plan, &plan.fingerprint).unwrap();
+    assert_eq!(outcome.removed.len(), 2, "{outcome:?}");
+    assert!(outcome.skipped.is_empty(), "{outcome:?}");
+    let prunes: Vec<String> = state
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .filter(|r| r.starts_with("POST /build/prune"))
+        .cloned()
+        .collect();
+    assert_eq!(prunes.len(), 2, "{prunes:?}");
 }
