@@ -1,7 +1,9 @@
 //! Job registration against a fake `launchctl` or `systemctl` and a temporary folder, so the real
 //! user session is never touched.
 #![cfg(unix)]
-use omg_core::scheduled::{Job, LABEL, Scheduler, Spec};
+#[cfg(target_os = "macos")]
+use omg_core::scheduled::LABEL;
+use omg_core::scheduled::{Job, Scheduler, Spec};
 use std::{fs, os::unix::fs::PermissionsExt};
 
 #[cfg(target_os = "macos")]
