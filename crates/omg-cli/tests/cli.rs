@@ -663,3 +663,78 @@ fn a_shared_cargo_target_folder_is_found_only_where_cargo_target_dir_points() {
     assert!(scan.status.success(), "{scan:?}");
     assert!(outputs(&shared).is_empty());
 }
+
+#[test]
+#[cfg(unix)]
+fn trash_adds_and_removes_scanned_paths_from_the_shell() {
+    let fixture = tempfile::tempdir().unwrap();
+    let home = fixture.path().canonicalize().unwrap();
+    let (root, state) = (home.join("root"), home.join("state"));
+    std::fs::create_dir_all(root.join("cache/inner")).unwrap();
+    std::fs::write(root.join("cache/inner/data"), vec![1u8; 1 << 20]).unwrap();
+    std::fs::write(root.join("file"), vec![1u8; 4096]).unwrap();
+    let omg = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_omg"))
+            .current_dir(&root)
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join("config"))
+            .arg("--state-dir")
+            .arg(&state)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let root_arg = root.to_str().unwrap();
+    assert!(
+        omg(&["scan", "--root", root_arg, "--no-suggest"])
+            .status
+            .success()
+    );
+    let absolute = root.join("file");
+    let out = omg(&[
+        "trash",
+        "--add",
+        "cache",
+        "--add",
+        absolute.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let items: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 2);
+    assert_eq!(items[0]["path"], "\"cache\"");
+    assert!(items[0]["allocated"].as_u64().unwrap() >= 1 << 20);
+    assert_eq!(items[0]["source"], "user");
+    for bad in ["/etc", "../escape", "missing", "."] {
+        assert!(!omg(&["trash", "--add", bad]).status.success(), "{bad}");
+    }
+    let out = omg(&["trash", "--remove", "cache"]);
+    let items: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(items.as_array().unwrap().len(), 1);
+    assert_eq!(items[0]["path"], "\"file\"");
+    assert!(!omg(&["trash", "--remove", "cache"]).status.success());
+    assert!(root.join("cache/inner/data").exists() && root.join("file").exists());
+}
+
+#[test]
+fn auto_delete_cannot_be_turned_on_from_a_script() {
+    let fixture = tempfile::tempdir().unwrap();
+    let state = fixture.path().join("state");
+    let result = Command::new(env!("CARGO_BIN_EXE_omg"))
+        .arg("--state-dir")
+        .arg(&state)
+        .args(["auto-delete", "on", "--every", "7"])
+        .env("HOME", fixture.path())
+        .env("XDG_CONFIG_HOME", fixture.path().join("config"))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("needs your permission"), "{stderr}");
+    assert!(!state.exists(), "refusal must not create state");
+    assert!(!fixture.path().join("config").exists());
+}

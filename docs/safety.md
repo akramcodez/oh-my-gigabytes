@@ -21,6 +21,15 @@ Status: mandatory. No flag, configuration, catalog rule or user preference may w
 
 No force flag, user exclusion override, or custom rule may weaken these invariants.
 
+> **Owner decision D16 (2026-11-26): auto delete, an amendment to S01 and S02.** The user may give a standing permission to permanently delete what has waited in OMG Trash for a period they choose (1 day, 7 days, 1 month or 6 months). That permission, given once in a terminal or in the interface after a screen that says what it does, stands in for the per-run confirmation of S01; it is the only thing that does, and S02 still holds for everything else (a selection, a suggestion, a scan or a service event alone never deletes). The limits, none of which a setting can loosen:
+>
+> - It is off by default, cannot be turned on from a script (`omg auto-delete on` needs a terminal and the typed word `yes`), and exists only in builds with permanent delete.
+> - It takes only items in OMG Trash that have waited the whole period and have not changed since they were added: no file newer than the time it was added, and not grown by more than half or by 1 GiB. A changed item, or one the last scan could not read completely, waits again from the start. Items the user keeps out (`K` in OMG Trash) are never taken.
+> - Whole repositories, application data and toolchains are left out unless the user gave the wider permission on a second permission screen.
+> - Every run scans first and deletes through the same `prepare_delete` and `delete_with_control` path as a manual delete, so S03, S06, S10 and S11 apply to each item unchanged.
+> - Turning it off withdraws the permission at once; a run in progress stops before its next item.
+> - A run starts at most once every 20 hours, by default only on mains power, from a scheduled job (launchd agent, Task Scheduler task or systemd user timer) that runs only `omg auto-delete run`. The scan-only background service never deletes. Each run that deletes something shows a notification with counts and sizes only, no paths (S12), and its items are listed under "Auto-deleted" in the Deleted tab.
+
 > **Current implementation note (2026-10-15, WP01):** S07 is the design baseline for *ordinary* cleanup. Owner decision D15 adds an explicit, home-only **permanent** deletion flow (`cleanup::Index::delete_permanently`) on Linux and, since 2026-10-15 at the owner's request, Windows NTFS (delete by verified handle; see [windows-evidence.md](windows-evidence.md)). That flow is not Trash, is not recoverable, and is a development implementation without qualification. The `0.1.0-beta.1` release builds for Linux and Windows include it, on the owner's decision of 2026-10-24, declared `development-unqualified` (macOS builds have no delete). S02, S03, S06, S10 and S11 still apply to it. The older `planning::execute` Trash path still always denies. OS Trash is not implemented. See linux-release-implementation-plan.md for the qualification gates.
 
 ## 2. Protected data

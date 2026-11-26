@@ -2,6 +2,42 @@
 
 What was verified for behaviour that is not specific to one platform. Platform pages: [Linux](linux-qualification.md), [macOS](macos-evidence.md), [Windows](windows-evidence.md). The earlier phase, planning and research pages were removed to keep the repository small; they are in Git history at `970809b`.
 
+## Auto delete (2026-11-26)
+
+Owner decision D16 ([safety.md](safety.md)) amends S01 and S02: a standing permission, given once after a permission screen, lets OMG permanently delete what has waited unchanged in OMG Trash for 1 day, 7 days, 1 month or 6 months. Off by default and only in builds with permanent delete.
+
+- **Storage.** Migration 015 adds `marked.hold` and `marked.added_bytes` (the indexed size when the item was added, at least the size the caller showed). Settings live under the `auto_delete` key of `settings` (strict JSON, `deny_unknown_fields`). Deleted-log rows of a run carry `source='auto'` and are kept 200 days.
+- **Eligibility** (`cleanup/auto.rs`, `Index::auto_standing`). Due only when the item has been listed the whole period, is not held (`K`), the last scan read all of it, its newest change time is not after it was added, and it has not grown by more than half or by 1 GiB. A changed item restarts its wait at its new size. Without the wider permission, whole repositories, application data (`one_at_a_time`) and toolchains are left out.
+- **Run** (`omg auto-delete run`, `Index::auto_run`). At most once per 20 hours, by default only on mains power (`alert::on_battery`: `pmset -g batt`, `GetSystemPowerStatus`, Linux power supply), after a scan of the saved root that is complete or partial. Due items go through `classify`, `issue` and `delete_with_control`, the same checks as a manual delete. A watcher reads the setting every 250 ms and stops the run before its next item once auto delete is turned off. A notification (`alert::notify`: osascript, a PowerShell toast, notify-send) reports counts and sizes only.
+- **Jobs** (`scheduled::Job::AutoDelete`). launchd agent `dev.omg.auto-delete` at load and every 6 hours; Task Scheduler `omg\auto-delete` every 6 hours; systemd user units `omg-auto-delete.service` and `.timer` (10 minutes after start, every 6 hours, persistent). Each runs only `omg auto-delete run`, carries omg's marker and is only overwritten or removed when it does. The scan-only service is unchanged.
+- **Interface.** Options menu entry "Auto delete" with the four periods, a permission screen ("Yes, I give permission", Cancel first), and when on: turn off now, change the period, the battery rule, and the wider permission (asks again). OMG Trash shows the next run and "kept from auto delete"; the Deleted tab lists "Auto-deleted" above "Deleted by you". The report of the last run is shown once at launch.
+
+Verified on macOS 27.2.1 (APFS, Apple silicon), with `TMPDIR` canonical and `OMG_REQUIRE_DISK_IMAGES=1`: `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` in both builds; `cargo test --workspace --locked` (all pass, `tests/cleanup.rs` 64) and `cargo test --workspace --no-default-features --locked`; the pseudo-terminal tests (8, 3 skipped); `node --test packages/oh-my-gigabytes/test/release.test.js` (21). New tests: `auto_delete_takes_only_unchanged_items_that_waited_the_whole_period`, `auto_delete_waits_again_for_items_with_newer_files_and_stops_when_revoked`, `auto_delete_leaves_whole_repositories_unless_the_wider_permission_was_given` (`tests/cleanup.rs`), `auto_delete_cannot_be_turned_on_from_a_script` (`tests/cli.rs`), the systemd timer and separate launchd agent tests (`tests/scheduled.rs`), and the job and notification unit tests. A CLI smoke run against a private state folder: `auto-delete status` reports it off, `auto-delete run` does nothing while off, and an unsupported period is refused.
+
+Not verified: a real scheduled run after login on any platform, notifications as shown by each desktop, the battery check on real hardware, a withdrawal that lands in the middle of a run (the watcher is exercised only by its setting check), and Linux and Windows outside CI.
+
+## More developer leftovers, Findings total (2026-11-26)
+
+- Store rules with discovery `tool_caches` (category `app_caches`, suggested): `dev.bazel.output-base` (Linux, `{cache}/bazel/*/*`, 30 days, 50 MB), `dev.xcode.previews` (`~/Library/Developer/Xcode/UserData/Previews`, 30 days), `dev.xcode.other-device-support` (watchOS, tvOS, xrOS and visionOS DeviceSupport, one folder per device and version, 30 days), `dev.poetry.cache` (`cache` and `artifacts` only, never `virtualenvs`), `dev.pdm.cache`, `dev.hatch.cache`, `dev.pipx.cache` (each with a Windows variant under its documented `Cache` folder; Hatch's Windows data folder is not used) and `dev.yarn-berry.global-cache`. Caches need 50 MB.
+- New store kind `developer_stores` (category `developer_data`, never suggested): `dev.xcode.simulator-devices` (`~/Library/Developer/CoreSimulator/Devices/*`, 90 days, 100 MB; only folder times are read, never the device plist), `dev.vscode.cached-data` and `-linux` (older builds' `CachedData`, 30 days, 20 MB), `dev.vagrant.boxes`, `dev.dotnet.sdks` (`~/.dotnet/sdk/*`, `$DOTNET_ROOT/sdk/*`) and `dev.android.system-images` (90 days, 100 MB).
+- `check_store` admits `~` roots under `Library/Developer/`, `Library/Android/` and `Android/Sdk/` in addition to dot folders; `~/Library/Preferences`, `~/Library/Developer` itself and `~/Android/Other` are still refused (tested). The catalog has 89 rules (was 72).
+- Bazel's macOS default output root (`/private/var/tmp/_bazel_$USER`) is outside the home folder and not covered.
+- Findings tab: the first line shows the number of listed items and their size (protected items not counted), followed by the tier filter. Checked in `tests/test_terminal.py` and `tests/test_terminal_windows.py`.
+
+Verification (macOS 27, Apple silicon, Rust 1.95.0): `cargo fmt --all -- --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings` in both builds; `TMPDIR=$(cd "$TMPDIR" && pwd -P) OMG_REQUIRE_DISK_IMAGES=1 cargo test --workspace --locked` 176 passed; `cargo test --workspace --no-default-features --locked` 109 passed; `python3 -m unittest discover -s tests -p 'test_*.py'` OK (3 skipped, Windows only); `node --test packages/oh-my-gigabytes/test/release.test.js` 21 passed. New test `more_developer_leftovers_are_suggested_or_listed_by_kind` checks which items are suggested and which only listed.
+
+Not passed: the rules are tested with folders laid out as each tool documents them, not with the tools' own output. The Linux and Windows layouts are checked by CI only.
+
+## `omg trash --add/--remove`, partial-scan hint, changelog (2026-11-26)
+
+- `omg trash --add PATH` and `--remove PATH` take a path that is absolute or relative to the working directory, refuse one outside the scanned root or with `..`, and call the same `Index::mark` and `unmark` as the interface (so `verdict`, the home-only rule and the creation-time check apply). Links are not resolved. The size saved is the folder's `dir_totals` total, or the file's own size.
+- When the interface opens after a partial scan it says how many folders could not be read, with the macOS privacy hint; the header reads `partial (N unreadable folders)`.
+- `omg clean`'s refusal for a whole project or application data now points to the interface. The website no longer says `D` skips them. `CHANGELOG.md` added.
+
+Verification: `trash_adds_and_removes_scanned_paths_from_the_shell` (crates/omg-cli/tests/cli.rs) adds a folder by a relative path and a file by an absolute one, checks size and source, refuses `/etc`, `../escape`, a missing path and the root itself, removes one, and checks nothing on disk changed. Run with the full suite below on macOS 27.2 (Apple silicon).
+
+Not passed: the partial-scan message and header were not checked in a real terminal; Linux and Windows run in CI only.
+
 ## `D` takes everything listed; removed suggestions return (2026-11-26)
 
 - Owner decision 2026-11-26: the interface's `D` deletes every item in OMG Trash after its one confirmation, whole repositories and application data included. `one_at_a_time` now applies to scripted plans (`omg clean`) only. Every other gate is unchanged: `cleanup::verdict` denials, protected or sensitive items inside a folder, missing creation times, and the revalidation in `delete_permanently`. Repository and application data warnings stay on their plan items.

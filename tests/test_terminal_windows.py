@@ -193,6 +193,9 @@ class ConPtyDeleteTests(unittest.TestCase):
             self.scan(binary, state, home, env)
             ui = Interface(binary, state, env)
             try:
+                ui.send("3")
+                self.assertTrue(ui.until("item(s) · ≈"), ui.screen.text())
+                self.assertIn("tier filter: all", ui.screen.text())
                 ui.send("2")
                 # Open each folder only once its row is listed, and wait for the path to show it.
                 for folder in ("AppData", "Local", "uv"):

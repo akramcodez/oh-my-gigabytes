@@ -185,9 +185,13 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                 .map(|p| state.shorten_home(&p))
                 .unwrap_or_default();
             let label = match status.last_report.as_ref().map(|r| r.state.as_str()) {
-                Some("partial") => {
-                    Span::styled(" · partial (some folders unreadable)", theme.warn())
-                }
+                Some("partial") => Span::styled(
+                    format!(
+                        " · partial ({} unreadable folders)",
+                        status.last_report.as_ref().map_or(0, |r| r.errors)
+                    ),
+                    theme.warn(),
+                ),
                 Some("running") => Span::styled(" · a scan is running", theme.brand()),
                 _ => Span::raw(""),
             };
@@ -411,6 +415,7 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
                 ("D", "empty all…"),
                 ("u", "remove from list"),
                 ("U", "remove all…"),
+                ("K", "keep from auto delete"),
             ],
             Tab::Deleted => &[
                 ("j k", "move"),
@@ -423,6 +428,9 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
     let mut spans = vec![Span::raw(" ")];
     for (key, label) in options {
         let danger = label.starts_with("delete") || label.starts_with("empty");
+        if *key == "K" && !super::auto_on(state) {
+            continue;
+        }
         if danger && !super::delete_available() {
             continue;
         }
@@ -819,13 +827,24 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
 
 fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines {
     let rows = visible_findings(state);
-    let mut out: Lines = vec![Line::from(Span::styled(
-        format!(
-            "  tier filter: {}",
-            ["all", "review", "info", "protected"][state.tier]
+    let total: u64 = rows
+        .iter()
+        .filter(|f| f.effective_tier != "protected")
+        .map(|f| f.estimate)
+        .sum();
+    let mut out: Lines = vec![Line::from(vec![
+        Span::styled(
+            format!("  {} item(s) · ≈ {}", rows.len(), bytes(total)),
+            theme.bold(),
         ),
-        theme.dim(),
-    ))];
+        Span::styled(
+            format!(
+                "   tier filter: {} · protected items not counted in the size",
+                ["all", "review", "info", "protected"][state.tier]
+            ),
+            theme.dim(),
+        ),
+    ])];
     if state.summary.is_none() {
         out.push(Line::from(Span::styled("  Loading…", theme.dim())));
         return out;
@@ -936,19 +955,31 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
         ];
     };
     let total: u64 = summary.marked.iter().map(|m| m.allocated).sum();
-    let mut out: Lines = vec![
-        Line::from(vec![
+    let mut out: Lines = vec![Line::from(vec![
+        Span::styled(
+            format!("  {} item(s) · ≈ {}", summary.marked.len(), bytes(total)),
+            theme.bold(),
+        ),
+        Span::styled(
+            "   saved paths only; nothing has been moved or deleted",
+            theme.dim(),
+        ),
+    ])];
+    let auto = summary.auto.settings.as_ref().filter(|a| a.active());
+    if let Some(settings) = auto {
+        out.push(Line::from(vec![
             Span::styled(
-                format!("  {} item(s) · ≈ {}", summary.marked.len(), bytes(total)),
-                theme.bold(),
+                format!(
+                    "  Auto delete after {}: ",
+                    super::period_name(settings.period_days)
+                ),
+                theme.warn(),
             ),
-            Span::styled(
-                "   saved paths only; nothing has been moved or deleted",
-                theme.dim(),
-            ),
-        ]),
-        Line::from(""),
-    ];
+            Span::styled(super::auto_next_line(&summary.auto, state.now), theme.dim()),
+            Span::styled("   K keeps an item out", theme.dim()),
+        ]));
+    }
+    out.push(Line::from(""));
     if summary.marked.is_empty() {
         out.push(Line::from(Span::styled(
             "  Empty. In Browse or Findings press space to add something you want gone.",
@@ -956,7 +987,9 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
         )));
         return out;
     }
-    let visible = height.saturating_sub(2).max(1);
+    let visible = height
+        .saturating_sub(2 + usize::from(auto.is_some()))
+        .max(1);
     let start = scroll_start(state, summary.marked.len(), visible);
     for (n, item) in summary.marked.iter().enumerate().skip(start).take(visible) {
         let selected = n == state.cursor;
@@ -981,7 +1014,9 @@ fn trash(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines 
                 },
             ),
             Span::styled(
-                if item.warning.is_some() {
+                if auto.is_some() && item.hold {
+                    "  · kept from auto delete"
+                } else if item.warning.is_some() {
                     "  ⚠ in a Git repo"
                 } else if item.source == "auto" {
                     "  · suggested by scan (you did not add this)"
@@ -1026,9 +1061,23 @@ fn deleted(state: &AppState, theme: &Theme, width: usize, height: usize) -> Line
         )));
         return out;
     }
-    let visible = height.saturating_sub(2).max(1);
+    let autos = summary
+        .deleted
+        .iter()
+        .take_while(|d| d.source == "auto")
+        .count();
+    let headers = if autos > 0 { 2 } else { 0 };
+    let visible = height.saturating_sub(2 + headers).max(1);
     let start = scroll_start(state, summary.deleted.len(), visible);
     for (n, record) in summary.deleted.iter().enumerate().skip(start).take(visible) {
+        if autos > 0 && (n == start || n == autos) {
+            let label = if n < autos {
+                format!("  Auto-deleted ({autos})")
+            } else {
+                "  Deleted by you".into()
+            };
+            out.push(Line::from(Span::styled(label, theme.accent())));
+        }
         let selected = n == state.cursor;
         let name = if record.source == "docker" {
             format!("Docker {}", clean(&record.path))
@@ -1117,6 +1166,10 @@ fn help(theme: &Theme, wsl: bool) -> Lines {
             "delete permanently… (always asks; cannot be undone)",
         ));
         out.push(row("D", "in OMG Trash: delete everything listed…"));
+        out.push(row(
+            "K",
+            "in OMG Trash: keep an item from auto delete (set auto delete up in the menu, m)",
+        ));
     }
     out.extend([
         row("u  U", "remove from OMG Trash  ·  remove everything (asks first)"),

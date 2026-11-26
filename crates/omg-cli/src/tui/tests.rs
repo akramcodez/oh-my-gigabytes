@@ -405,6 +405,8 @@ fn summary_with_marked(path: &[u8]) -> worker::Summary {
             warning: None,
             birth: None,
             source: "user".into(),
+            hold: false,
+            added_bytes: 1,
         }],
         trend_delta: None,
         root: None,
@@ -415,6 +417,7 @@ fn summary_with_marked(path: &[u8]) -> worker::Summary {
         freed: 0,
         grew: vec![],
         deleted: vec![],
+        auto: Default::default(),
     }
 }
 
@@ -644,6 +647,8 @@ fn piece(id: i64, path: &str) -> omg_core::cleanup::Marked {
         warning: None,
         birth: Some("1".into()),
         source: "keep-protected".into(),
+        hold: false,
+        added_bytes: 1 << 20,
     }
 }
 

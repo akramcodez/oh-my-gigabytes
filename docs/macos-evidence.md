@@ -209,4 +209,4 @@ Found, not fixed in 0.1.0: `omg tree` on an excluded folder itself (for example 
 
 ## Gates not passed
 
-No macOS older than 15, only one real Mac (Apple silicon, macOS 26 and 27), no Intel Mac, no iCloud placeholder inside a scanned folder, no Time Machine behaviour, no real USB drive or SMB share, no second terminal app, and no Apple notarization or code-signing identity. Full Disk Access and the CI-built package signed with the production key were checked on 2026-11-21.
+No macOS older than 15, only one real Mac (Apple silicon, macOS 26 and 27), no Intel Mac, no iCloud placeholder inside a scanned folder, no Time Machine behaviour, no real USB drive or SMB share, no second terminal app, and no Apple notarization or code-signing identity. Full Disk Access and the CI-built package signed with the production key were checked on 2026-11-21. Auto delete (D16, [evidence.md](evidence.md)) has passed its tests on one Mac, but its launchd agent has not run after a real login, and its notification and battery check have not been seen on real hardware.

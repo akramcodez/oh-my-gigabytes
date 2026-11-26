@@ -36,6 +36,40 @@ fn docker_kept(report: &omg_core::docker::Report) -> String {
     )
 }
 
+pub fn auto_on(state: &AppState) -> bool {
+    state
+        .summary
+        .as_ref()
+        .and_then(|s| s.auto.settings.as_ref())
+        .is_some_and(|a| a.active())
+}
+
+/// One line on what the next automatic run would take.
+pub fn auto_next_line(preview: &omg_core::cleanup::auto::Preview, now: i64) -> String {
+    if !preview.due.is_empty() {
+        format!(
+            "Next run takes {} item(s), ≈ {}.",
+            preview.due.len(),
+            omg_core::bytes(preview.due_bytes())
+        )
+    } else if let Some(at) = preview.next {
+        let days = ((at - now).max(0) + 86_399) / 86_400;
+        format!("Nothing is due yet; the next item is due in {days} day(s).")
+    } else {
+        "Nothing in OMG Trash is waiting for auto delete.".into()
+    }
+}
+
+/// How the interface names an auto delete period.
+pub fn period_name(days: u32) -> String {
+    match days {
+        1 => "1 day".into(),
+        30 => "1 month".into(),
+        180 => "6 months".into(),
+        n => format!("{n} days"),
+    }
+}
+
 pub fn delete_available() -> bool {
     omg_core::capability::platform_permanent_delete() != omg_core::capability::Support::Unsupported
 }
@@ -161,6 +195,27 @@ pub enum Action {
     AcknowledgePreview,
     ToggleAutoTrash,
     CycleTheme,
+    /// The auto delete screen: choose a period when off, change settings when on.
+    AutoDelete,
+    /// The permission screen for these settings.
+    AutoDeleteAsk {
+        days: u32,
+        risky: bool,
+        plugged_in_only: bool,
+    },
+    AutoDeleteGrant {
+        days: u32,
+        risky: bool,
+        plugged_in_only: bool,
+    },
+    AutoDeleteOff,
+    AutoDeleteTune {
+        days: Option<u32>,
+        plugged_in_only: Option<bool>,
+        narrow: bool,
+    },
+    /// Keep the item under the cursor out of automatic runs, or let it back in.
+    Hold,
     /// Ask Docker what it can safely remove.
     DockerCheck,
     /// The confirmation of a reviewed Docker plan.
@@ -394,6 +449,23 @@ impl App {
                 Tone::Danger,
             );
         }
+        if s.tab == Tab::Trash && !s.marked_ids().is_empty() && auto_on(s) {
+            let held = s
+                .summary
+                .as_ref()
+                .and_then(|x| x.marked.get(s.cursor))
+                .is_some_and(|m| m.hold);
+            push(
+                if held {
+                    "Let auto delete take this item again"
+                } else {
+                    "Keep this item from auto delete"
+                },
+                Some('K'),
+                Action::Hold,
+                Tone::Normal,
+            );
+        }
         if s.tab == Tab::Trash && !s.marked_ids().is_empty() {
             push(
                 "Remove from OMG Trash",
@@ -442,6 +514,21 @@ impl App {
             Action::ToggleAutoTrash,
             Tone::Normal,
         );
+        if delete_available() {
+            let auto = s.summary.as_ref().and_then(|x| x.auto.settings.clone());
+            push(
+                &match auto.filter(|a| a.active()) {
+                    Some(a) => format!(
+                        "Auto delete: ON, after {} in OMG Trash (change or turn off…)",
+                        period_name(a.period_days)
+                    ),
+                    None => "Auto delete: OFF (set up…)".into(),
+                },
+                None,
+                Action::AutoDelete,
+                Tone::Normal,
+            );
+        }
         let current = s.summary.as_ref().map_or("auto", |x| x.theme);
         push(
             &format!("Theme: {current} (change to {})", next_theme(current)),
@@ -605,6 +692,9 @@ impl App {
                 | Action::PrepareKeeping { .. }
                 | Action::DockerCheck
                 | Action::DockerConfirm(_)
+                | Action::AutoDelete
+                | Action::AutoDeleteAsk { .. }
+                | Action::AutoDeleteGrant { .. }
         ) && !delete_available()
         {
             self.state.message = if omg_core::PERMANENT_DELETE {
@@ -777,12 +867,243 @@ impl App {
                 let current = self.state.summary.as_ref().map_or("auto", |x| x.theme);
                 self.request(Request::SetTheme(next_theme(current)), None);
             }
+            Action::AutoDelete => self.auto_delete_menu(),
+            Action::AutoDeleteAsk {
+                days,
+                risky,
+                plugged_in_only,
+            } => self.auto_delete_permission(days, risky, plugged_in_only),
+            Action::AutoDeleteGrant {
+                days,
+                risky,
+                plugged_in_only,
+            } => self.request(
+                Request::AutoDeleteGrant {
+                    days,
+                    risky,
+                    plugged_in_only,
+                },
+                Some("Turning on auto delete"),
+            ),
+            Action::AutoDeleteOff => self.request(Request::AutoDeleteOff, None),
+            Action::AutoDeleteTune {
+                days,
+                plugged_in_only,
+                narrow,
+            } => self.request(
+                Request::AutoDeleteTune {
+                    days,
+                    plugged_in_only,
+                    narrow,
+                },
+                None,
+            ),
+            Action::Hold => {
+                let item = self
+                    .state
+                    .summary
+                    .as_ref()
+                    .and_then(|s| s.marked.get(self.state.cursor))
+                    .map(|m| (m.id, m.hold));
+                if let Some((id, held)) = item {
+                    self.request(Request::Hold(id, !held), None);
+                }
+            }
             Action::DockerCheck => self.request(Request::DockerPlan, Some("Asking Docker")),
             Action::DockerConfirm(plan) => {
                 self.request(Request::DockerRemove(plan), Some("Removing through Docker"))
             }
         }
         Ok(false)
+    }
+    fn auto_delete_menu(&mut self) {
+        let settings = self
+            .state
+            .summary
+            .as_ref()
+            .and_then(|s| s.auto.settings.clone())
+            .unwrap_or_default();
+        let choice = |label: String, action: Action, tone: Tone| Choice {
+            label,
+            key: None,
+            action,
+            tone,
+        };
+        if !settings.active() {
+            let mut choices = vec![choice("Cancel".into(), Action::Dismiss, Tone::Normal)];
+            for days in omg_core::cleanup::auto::PERIODS {
+                choices.push(choice(
+                    format!(
+                        "Delete what has been in OMG Trash for {}…",
+                        period_name(days)
+                    ),
+                    Action::AutoDeleteAsk {
+                        days,
+                        risky: false,
+                        plugged_in_only: true,
+                    },
+                    Tone::Normal,
+                ));
+            }
+            self.state.menu = Some(Menu {
+                title: "Auto delete".into(),
+                body: vec![
+                    (
+                        "OMG can delete what waits in OMG Trash for you, in the background, after the period you choose. It asks your permission first.".into(),
+                        Tone::Normal,
+                    ),
+                    (
+                        "Items that changed since you added them wait again, and you can keep any item out or turn it all off at any time.".into(),
+                        Tone::Normal,
+                    ),
+                ],
+                choices,
+                cursor: 0,
+                tone: Tone::Normal,
+            });
+            return;
+        }
+        let preview = self
+            .state
+            .summary
+            .as_ref()
+            .map(|s| s.auto.clone())
+            .unwrap_or_default();
+        let mut body = vec![(
+            format!(
+                "On: items are deleted once they have been in OMG Trash for {}, unchanged.",
+                period_name(settings.period_days)
+            ),
+            Tone::Normal,
+        )];
+        body.push((auto_next_line(&preview, self.state.now), Tone::Normal));
+        if let Some(at) = settings.last_run {
+            body.push((
+                format!("Last run: {}", theme::ago(self.state.now, Some(at))),
+                Tone::Normal,
+            ));
+        }
+        let mut choices = vec![
+            choice("Close".into(), Action::Dismiss, Tone::Normal),
+            choice(
+                "Turn auto delete off now".into(),
+                Action::AutoDeleteOff,
+                Tone::Danger,
+            ),
+        ];
+        for days in omg_core::cleanup::auto::PERIODS {
+            if days != settings.period_days {
+                choices.push(choice(
+                    format!("Change the period to {}", period_name(days)),
+                    Action::AutoDeleteTune {
+                        days: Some(days),
+                        plugged_in_only: None,
+                        narrow: false,
+                    },
+                    Tone::Normal,
+                ));
+            }
+        }
+        choices.push(choice(
+            if settings.plugged_in_only {
+                "Only while plugged in: ON (also run on battery)".into()
+            } else {
+                "Only while plugged in: OFF (wait for power)".into()
+            },
+            Action::AutoDeleteTune {
+                days: None,
+                plugged_in_only: Some(!settings.plugged_in_only),
+                narrow: false,
+            },
+            Tone::Normal,
+        ));
+        choices.push(if settings.include_risky {
+            choice(
+                "Repositories, app data and toolchains: INCLUDED (leave them for me)".into(),
+                Action::AutoDeleteTune {
+                    days: None,
+                    plugged_in_only: None,
+                    narrow: true,
+                },
+                Tone::Normal,
+            )
+        } else {
+            choice(
+                "Repositories, app data and toolchains: LEFT FOR YOU (include them…)".into(),
+                Action::AutoDeleteAsk {
+                    days: settings.period_days,
+                    risky: true,
+                    plugged_in_only: settings.plugged_in_only,
+                },
+                Tone::Warn,
+            )
+        });
+        self.state.menu = Some(Menu {
+            title: "Auto delete".into(),
+            body,
+            choices,
+            cursor: 0,
+            tone: Tone::Normal,
+        });
+    }
+    fn auto_delete_permission(&mut self, days: u32, risky: bool, plugged_in_only: bool) {
+        let line = |text: &str| (text.to_string(), Tone::Normal);
+        let body = vec![
+            (
+                format!(
+                    "OMG will permanently delete items that have been in OMG Trash for {}, in the background, without asking each time.",
+                    period_name(days)
+                ),
+                Tone::Danger,
+            ),
+            line(
+                "Only items that have not changed since they were added. An item that changed waits again.",
+            ),
+            line(
+                "Every item is checked again right before it is deleted. Protected items are never deleted.",
+            ),
+            line(if risky {
+                "Whole repositories, application data and toolchains are included."
+            } else {
+                "Whole repositories, application data and toolchains are left for you."
+            }),
+            line(if plugged_in_only {
+                "It runs only while the computer is plugged in."
+            } else {
+                "It runs on battery power too."
+            }),
+            line(
+                "You get a notification after every run that deletes something. Press K in OMG Trash to keep an item out, and turn it off any time from this menu.",
+            ),
+            (
+                "Deleted items do not go to the system Trash and cannot be restored.".into(),
+                Tone::Danger,
+            ),
+        ];
+        self.state.menu = Some(Menu {
+            title: "Allow auto delete?".into(),
+            body,
+            choices: vec![
+                Choice {
+                    label: "Cancel".into(),
+                    key: None,
+                    action: Action::Dismiss,
+                    tone: Tone::Normal,
+                },
+                Choice {
+                    label: "Yes, I give permission".into(),
+                    key: None,
+                    action: Action::AutoDeleteGrant {
+                        days,
+                        risky,
+                        plugged_in_only,
+                    },
+                    tone: Tone::Danger,
+                },
+            ],
+            cursor: 0,
+            tone: Tone::Danger,
+        });
     }
     fn confirm_docker(&mut self, plan: omg_core::docker::Plan, report: omg_core::docker::Report) {
         if plan.items.is_empty() {
@@ -851,6 +1172,18 @@ impl App {
         match response {
             Response::Summary(summary) => {
                 s.busy = None;
+                if s.summary.is_none()
+                    && s.message.is_empty()
+                    && let Some(r) = summary.status.last_report.as_ref().filter(|r| {
+                        r.state == "partial" && r.errors > 0 && !crate::gap_hint().is_empty()
+                    })
+                {
+                    s.message = format!(
+                        "The last scan could not read {} folders.{}",
+                        r.errors,
+                        crate::gap_hint()
+                    );
+                }
                 s.summary = Some(summary);
                 s.selected.retain(|id| {
                     s.summary
@@ -1165,6 +1498,9 @@ impl App {
             }
             KeyCode::Char('u') if tab == Tab::Trash => {
                 self.run_action(Action::Unmark).map(|_| ())?
+            }
+            KeyCode::Char('K') if tab == Tab::Trash && auto_on(&self.state) => {
+                self.run_action(Action::Hold).map(|_| ())?
             }
             KeyCode::Char('U') if tab == Tab::Trash => {
                 self.run_action(Action::UnmarkAll).map(|_| ())?

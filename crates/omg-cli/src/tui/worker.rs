@@ -54,6 +54,21 @@ pub enum Request {
     PollRunning,
     /// Ask Docker what is unused and plan its removal (the safe kinds only).
     DockerPlan,
+    /// The user accepted the permission screen: turn auto delete on and register its job.
+    AutoDeleteGrant {
+        days: u32,
+        risky: bool,
+        plugged_in_only: bool,
+    },
+    AutoDeleteOff,
+    /// Settings that need no new permission.
+    AutoDeleteTune {
+        days: Option<u32>,
+        plugged_in_only: Option<bool>,
+        narrow: bool,
+    },
+    /// Keep an item in OMG Trash out of automatic runs, or let it back in.
+    Hold(i64, bool),
     /// Remove a reviewed Docker plan through the Docker API.
     #[cfg_attr(not(feature = "permanent-delete"), allow(dead_code))]
     DockerRemove(Box<omg_core::docker::Plan>),
@@ -85,8 +100,9 @@ pub struct Summary {
     pub freed: u64,
     /// Folders that grew between the last two complete scans, largest growth first.
     pub grew: Vec<omg_core::service::trend::Grown>,
-    /// What omg deleted in the last 20 days, newest first.
+    /// What omg deleted in the last 20 days, newest first; automatic runs' lines come first.
     pub deleted: Vec<omg_core::index::DeletedRecord>,
+    pub auto: omg_core::cleanup::auto::Preview,
 }
 
 pub enum Response {
@@ -139,7 +155,16 @@ fn summary(index: &Index) -> anyhow::Result<Summary> {
         theme: index.theme()?,
         freed: index.freed_total()?,
         grew: index.grew(3).map(|g| g.items).unwrap_or_default(),
-        deleted: index.deleted_log()?,
+        deleted: {
+            let mut deleted = index.deleted_log()?;
+            deleted.sort_by_key(|d| d.source != "auto");
+            deleted
+        },
+        auto: platform::home()
+            .ok()
+            .map(|home| index.auto_preview(&home))
+            .transpose()?
+            .unwrap_or_default(),
         volume: status
             .root
             .as_deref()
@@ -162,6 +187,9 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
             }
         };
         let home = platform::home().unwrap_or_default();
+        if let Ok(Some(text)) = index.auto_take_message() {
+            let _ = response_tx.send(Response::Info(text));
+        }
         while let Ok(first) = request_rx.recv() {
             // Coalesce bursts: many queued refreshes cost one query.
             let mut batch = vec![first];
@@ -308,6 +336,68 @@ pub fn spawn(state: PathBuf) -> (Sender<Request>, Receiver<Response>) {
                             index.set_theme(name)?;
                             send(Response::Info(format!("Theme set to {name}.")));
                             refresh = true;
+                        }
+                        Request::AutoDeleteGrant {
+                            days,
+                            risky,
+                            plugged_in_only,
+                        } => {
+                            use omg_core::scheduled::{Job, Scheduler, Spec};
+                            index.grant_auto_delete(days, risky, plugged_in_only)?;
+                            let spec = Spec {
+                                job: Job::AutoDelete,
+                                executable: std::env::current_exe()?,
+                                state_dir: index.state.clone(),
+                                hour: 0,
+                            };
+                            refresh = true;
+                            if let Err(error) = Scheduler::for_job(&home, Job::AutoDelete)
+                                .and_then(|s| s.enable(&spec))
+                            {
+                                index.revoke_auto_delete()?;
+                                anyhow::bail!(
+                                    "could not register the background job, so auto delete stays off: {error:#}"
+                                );
+                            }
+                            send(Response::Info(format!(
+                                "Auto delete is on: items in OMG Trash for {} are deleted in the background. Turn it off any time in the menu (m).",
+                                super::period_name(days)
+                            )));
+                        }
+                        Request::AutoDeleteOff => {
+                            use omg_core::scheduled::{Job, Scheduler};
+                            index.revoke_auto_delete()?;
+                            refresh = true;
+                            let removed = Scheduler::for_job(&home, Job::AutoDelete)
+                                .and_then(|s| s.disable());
+                            send(Response::Info(match removed {
+                                Ok(_) => {
+                                    "Auto delete is off. Nothing will be deleted automatically."
+                                        .into()
+                                }
+                                Err(error) => format!(
+                                    "Auto delete is off. The background job could not be removed ({error:#}); it does nothing while auto delete is off."
+                                ),
+                            }));
+                        }
+                        Request::AutoDeleteTune {
+                            days,
+                            plugged_in_only,
+                            narrow,
+                        } => {
+                            index.tune_auto_delete(days, plugged_in_only, narrow)?;
+                            refresh = true;
+                            send(Response::Info("Auto delete settings saved.".into()));
+                        }
+                        Request::Hold(id, keep) => {
+                            index.hold(id, keep)?;
+                            refresh = true;
+                            send(Response::Info(if keep {
+                                "Kept: auto delete will not take this item. It stays in OMG Trash."
+                                    .into()
+                            } else {
+                                "Auto delete may take this item again once it is due.".into()
+                            }));
                         }
                         Request::DiscardPlan(fingerprint) => index.discard_plan(&fingerprint),
                         Request::CancelPlan { fingerprint, undo } => {

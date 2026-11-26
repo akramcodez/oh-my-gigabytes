@@ -185,7 +185,7 @@ const FINDINGS: Finding[] = [
     path: "~/code/old-fork", size: g(1.84), tier: "review", category: "unused_clones",
     rule: "Unused Git clone", reason: "a clone untouched for 73 days with nothing that is not on its remote", changed: "73d ago",
     evidence: "every branch on the remote, no stash or local tag, every file matches Git's index", effects: "the folder is gone; clone it again to get it back",
-    regen: "git clone", warnings: "deleted one at a time", suggest: false,
+    regen: "git clone", warnings: "a whole repository; omg clean never takes it", suggest: false,
   },
   {
     path: "~/Downloads/Docker.dmg", size: m(498.6), tier: "review", category: "old_downloads",

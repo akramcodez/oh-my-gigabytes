@@ -52,8 +52,14 @@ pub(crate) fn check_store(store: &Store) -> Result<()> {
         if !base_ok || rest.split('/').any(|p| !plain_name(p)) || rest.split('/').count() > 8 {
             bail!("invalid store root {root:?}");
         }
-        // Under the home folder itself only a tool's own hidden folder can hold a store.
-        if base == "~" && !rest.starts_with('.') {
+        // Under the home folder itself only a tool's own hidden folder, a developer tool's folder
+        // in Library or the Android SDK's default location can hold a store.
+        if base == "~"
+            && !rest.starts_with('.')
+            && !["Library/Developer/", "Library/Android/", "Android/Sdk/"]
+                .iter()
+                .any(|prefix| rest.starts_with(prefix))
+        {
             bail!("store root {root:?} is not a tool folder");
         }
     }
