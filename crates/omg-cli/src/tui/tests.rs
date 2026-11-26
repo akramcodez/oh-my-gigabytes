@@ -57,6 +57,68 @@ fn banner_is_full_when_wide_and_omg_when_narrow() {
 }
 
 #[test]
+fn small_terminals_drop_the_tagline_and_cut_lines_with_an_ellipsis() {
+    let summary = || {
+        let mut summary = summary_with_marked(b"/cache");
+        summary.status.root = Some(b"/Users/someone/a/very/long/folder/name/that/goes/on".to_vec());
+        summary.status.entries = 1_234_567;
+        summary.status.unique_allocated = 123 << 30;
+        summary.status.capacity = Some(1 << 40);
+        summary.status.available = Some(1 << 39);
+        Box::new(summary)
+    };
+    let labels = [
+        "scan",
+        "browse",
+        "findings",
+        "OMG Trash",
+        "options",
+        "up",
+        "delete…",
+        "details",
+        "preview",
+        "tier",
+        "select",
+        "delete selected…",
+        "empty all…",
+        "remove from list",
+        "move",
+        "remove line",
+        "clear log…",
+    ];
+    for tab in Tab::ALL {
+        let state = AppState {
+            tab,
+            now: 10,
+            summary: Some(summary()),
+            message: "Welcome to OMG: it finds it, explains it, and you decide. Press m.".into(),
+            ..Default::default()
+        };
+        let narrow = draw(&state, 50, 16);
+        let lines: Vec<&str> = narrow.lines().collect();
+        assert!(!narrow.contains("find it"), "{narrow}");
+        assert!(
+            lines[3].contains("scanned") && lines[3].ends_with('│'),
+            "{narrow}"
+        );
+        assert!(
+            lines[4].contains("used of 1.00 TiB") && lines[4].ends_with('│'),
+            "{narrow}"
+        );
+        assert!(lines[11].ends_with('…'), "{narrow}");
+        let bar = lines[13].trim_end_matches('│').trim_end();
+        assert!(labels.iter().any(|l| bar.ends_with(l)), "{narrow}");
+        let wide = draw(&state, 120, 30);
+        assert!(wide.contains("find it · explain it · you decide"), "{wide}");
+        assert!(wide.contains("1.23M files"), "{wide}");
+        assert!(
+            wide.contains("1 Overview") || wide.contains("● Overview"),
+            "{wide}"
+        );
+    }
+}
+
+#[test]
 fn browse_shows_sizes_escapes_names_and_progress() {
     let hostile = Child {
         path: b"evil\x1b[31mname\n".to_vec(),

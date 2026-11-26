@@ -82,6 +82,36 @@ pub fn scroll_start(state: &AppState, len: usize, visible: usize) -> usize {
     start
 }
 
+/// Cuts a line to `width` columns, ending it with "…" when something was cut.
+fn fit(line: Line<'static>, width: usize) -> Line<'static> {
+    if line.width() <= width {
+        return line;
+    }
+    let mut used = 0;
+    let mut spans = vec![];
+    for span in line.spans {
+        let room = width.saturating_sub(used + 1);
+        if used + span.width() <= room {
+            used += span.width();
+            spans.push(span);
+            continue;
+        }
+        let mut text = String::new();
+        for c in span.content.chars() {
+            let w = Span::raw(c.to_string()).width();
+            if used + w > room {
+                break;
+            }
+            used += w;
+            text.push(c);
+        }
+        spans.push(Span::styled(text, span.style));
+        spans.push(Span::styled("…", span.style));
+        break;
+    }
+    Line::from(spans)
+}
+
 fn tone(theme: &Theme, tone: Tone) -> Style {
     match tone {
         Tone::Normal => Style::new(),
@@ -128,7 +158,10 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState, theme: &Theme) {
         }
     };
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), rows[2]);
-    frame.render_widget(Paragraph::new(status_line(state, theme)), rows[3]);
+    frame.render_widget(
+        Paragraph::new(fit(status_line(state, theme), usize::from(area.width))),
+        rows[3],
+    );
     options_bar(frame, rows[4], state, theme);
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
@@ -152,15 +185,16 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
         ]
     };
     let mut first = brand_row(&rows[0]);
-    first.push(Span::styled(
-        format!("   v{}", env!("CARGO_PKG_VERSION")),
-        theme.dim(),
-    ));
     let mut second = brand_row(&rows[1]);
-    second.push(Span::styled(
-        "   find it · explain it · you decide",
-        theme.dim(),
-    ));
+    let brand = Line::from(first.clone()).width();
+    let version = format!("   v{}", env!("CARGO_PKG_VERSION"));
+    let tagline = "   find it · explain it · you decide";
+    if brand + version.chars().count() <= inner {
+        first.push(Span::styled(version, theme.dim()));
+    }
+    if brand + tagline.chars().count() <= inner {
+        second.push(Span::styled(tagline, theme.dim()));
+    }
     let mut lines = vec![Line::from(first), Line::from(second)];
     match state.summary.as_ref().map(|s| &s.status) {
         None => {
@@ -195,19 +229,31 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                 Some("running") => Span::styled(" · a scan is running", theme.brand()),
                 _ => Span::raw(""),
             };
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {scope}"), Style::new()),
-                Span::styled(
-                    format!(
-                        "  ·  scanned {}  ·  {} files  ·  {} indexed",
-                        ago(state.now, status.last_successful),
-                        short_count(status.entries),
-                        bytes(status.unique_allocated)
-                    ),
-                    theme.dim(),
-                ),
-                label,
-            ]));
+            let scope = truncate_middle(&scope, (inner / 2).max(12));
+            let room = inner.saturating_sub(2 + scope.chars().count() + label.width());
+            let when = format!("  ·  scanned {}", ago(state.now, status.last_successful));
+            let files = format!("  ·  {} files", short_count(status.entries));
+            let size = format!("  ·  {} indexed", bytes(status.unique_allocated));
+            let (w, f, s) = (
+                when.chars().count(),
+                files.chars().count(),
+                size.chars().count(),
+            );
+            let detail = if w + f + s <= room {
+                format!("{when}{files}{size}")
+            } else if w + s <= room {
+                format!("{when}{size}")
+            } else {
+                when
+            };
+            lines.push(fit(
+                Line::from(vec![
+                    Span::styled(format!("  {scope}"), Style::new()),
+                    Span::styled(detail, theme.dim()),
+                    label,
+                ]),
+                inner,
+            ));
             let gauge = inner.saturating_sub(70).clamp(10, 36);
             // Live numbers (read fresh from the filesystem) win over the scan-time sample.
             let disk = summary_volume(state).or_else(|| {
@@ -226,19 +272,23 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
                     } else {
                         theme.brand()
                     };
+                    let text = format!(" {} used of {}", bytes(used_bytes), bytes(cap));
+                    let gauge = gauge
+                        .min(inner.saturating_sub(7 + text.chars().count()))
+                        .max(4);
                     let filled = bar(used, gauge).trim_end().to_string();
-                    Line::from(vec![
-                        Span::styled("  disk ", theme.dim()),
-                        Span::styled(filled.clone(), style),
-                        Span::styled(
-                            "░".repeat(gauge.saturating_sub(filled.chars().count())),
-                            theme.dim(),
-                        ),
-                        Span::styled(
-                            format!(" {} used of {}", bytes(used_bytes), bytes(cap)),
-                            Style::new().patch(theme.bold()),
-                        ),
-                    ])
+                    fit(
+                        Line::from(vec![
+                            Span::styled("  disk ", theme.dim()),
+                            Span::styled(filled.clone(), style),
+                            Span::styled(
+                                "░".repeat(gauge.saturating_sub(filled.chars().count())),
+                                theme.dim(),
+                            ),
+                            Span::styled(text, Style::new().patch(theme.bold())),
+                        ]),
+                        inner + 2,
+                    )
                 }
                 _ => Line::from(Span::styled("  disk usage unknown", theme.dim())),
             });
@@ -255,31 +305,40 @@ fn header(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
 }
 
 fn tabs(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Theme) {
-    let mut spans = vec![Span::raw(" ")];
     let marked = state.summary.as_ref().map_or(0, |s| s.marked.len());
-    for (i, tab) in Tab::ALL.iter().enumerate() {
-        let mut name = if area.width < 84 {
-            tab.name()
-                .split(' ')
-                .next_back()
-                .unwrap_or("")
-                .chars()
-                .take(5)
-                .collect()
-        } else {
-            tab.name().to_string()
-        };
-        if *tab == Tab::Trash && marked > 0 {
-            name.push_str(&format!(" ({marked})"));
+    let line = |short: Option<usize>| {
+        let mut spans = vec![Span::raw(" ")];
+        for (i, tab) in Tab::ALL.iter().enumerate() {
+            let mut name = match short {
+                None => tab.name().to_string(),
+                Some(n) => tab
+                    .name()
+                    .split(' ')
+                    .next_back()
+                    .unwrap_or("")
+                    .chars()
+                    .take(n)
+                    .collect(),
+            };
+            if *tab == Tab::Trash && marked > 0 {
+                name.push_str(&format!(" ({marked})"));
+            }
+            if *tab == state.tab {
+                spans.push(Span::styled(format!("● {name}"), theme.selected()));
+            } else {
+                spans.push(Span::styled(format!("{} {name}", i + 1), theme.dim()));
+            }
+            spans.push(Span::raw("  "));
         }
-        if *tab == state.tab {
-            spans.push(Span::styled(format!("● {name}"), theme.selected()));
-        } else {
-            spans.push(Span::styled(format!("{} {name}", i + 1), theme.dim()));
-        }
-        spans.push(Span::raw("  "));
-    }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+        Line::from(spans)
+    };
+    let width = usize::from(area.width);
+    let chosen = [None, Some(usize::MAX), Some(5), Some(4)]
+        .into_iter()
+        .map(line)
+        .find(|l| l.width() <= width + 2)
+        .unwrap_or_else(|| fit(line(Some(4)), width));
+    frame.render_widget(Paragraph::new(chosen), area);
 }
 
 fn status_line(state: &AppState, theme: &Theme) -> Line<'static> {
@@ -425,7 +484,9 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
             ],
         }
     };
+    let room = usize::from(area.width.saturating_sub(2));
     let mut spans = vec![Span::raw(" ")];
+    let mut used = 1;
     for (key, label) in options {
         let danger = label.starts_with("delete") || label.starts_with("empty");
         if *key == "K" && !super::auto_on(state) {
@@ -434,6 +495,11 @@ fn options_bar(frame: &mut Frame<'_>, area: Rect, state: &AppState, theme: &Them
         if danger && !super::delete_available() {
             continue;
         }
+        let width = key.chars().count() + 2 + label.chars().count();
+        if used + width > room {
+            break;
+        }
+        used += width + 3;
         spans.push(Span::styled(
             format!(" {key} "),
             if danger {
@@ -496,27 +562,30 @@ fn menu_overlay(frame: &mut Frame<'_>, area: Rect, menu: &Menu, theme: &Theme) {
             Style::new()
         }
         .patch(tone(theme, choice.tone));
-        choice_lines.push(Line::from(vec![
-            Span::styled(if selected { " ❯ " } else { "   " }, theme.selected()),
-            Span::styled(format!("{}. ", i + 1), theme.dim()),
-            Span::styled(choice.label.clone(), label_style),
-            Span::styled(
-                choice
-                    .key
-                    .map(|k| {
-                        format!(
-                            "   {}",
-                            if k == ' ' {
-                                "space".into()
-                            } else {
-                                k.to_string()
-                            }
-                        )
-                    })
-                    .unwrap_or_default(),
-                theme.dim(),
-            ),
-        ]));
+        choice_lines.push(fit(
+            Line::from(vec![
+                Span::styled(if selected { " ❯ " } else { "   " }, theme.selected()),
+                Span::styled(format!("{}. ", i + 1), theme.dim()),
+                Span::styled(choice.label.clone(), label_style),
+                Span::styled(
+                    choice
+                        .key
+                        .map(|k| {
+                            format!(
+                                "   {}",
+                                if k == ' ' {
+                                    "space".into()
+                                } else {
+                                    k.to_string()
+                                }
+                            )
+                        })
+                        .unwrap_or_default(),
+                    theme.dim(),
+                ),
+            ]),
+            inner_width,
+        ));
     }
     let border = match menu.tone {
         Tone::Danger => theme.danger(),
@@ -749,7 +818,7 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
         .max()
         .unwrap_or(1)
         .max(1);
-    let bar_width = (width.saturating_sub(46)).clamp(6, 24);
+    let bar_width = (width.saturating_sub(28) / 3).clamp(4, 24);
     let visible = height.saturating_sub(2).max(1);
     let start = scroll_start(state, view.children.len(), visible);
     for (n, child) in view.children.iter().enumerate().skip(start).take(visible) {
@@ -767,6 +836,22 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
                 _ => Span::raw(""),
             }
         };
+        let files = Span::styled(
+            if child.kind != "directory" || child.excluded {
+                String::new()
+            } else if child.incomplete && child.files == 0 && child.dirs == 0 {
+                "  unreadable".into()
+            } else if child.incomplete {
+                format!("  {} files · incomplete", short_count(child.files))
+            } else {
+                format!("  {} files", short_count(child.files))
+            },
+            if child.incomplete {
+                theme.warn()
+            } else {
+                theme.dim()
+            },
+        );
         let filled = bar(child.allocated as f64 / max as f64, bar_width)
             .trim_end()
             .to_string();
@@ -790,7 +875,12 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
             Span::styled(
                 format!(
                     "{}{}",
-                    truncate_middle(&name_of(&child.path), width.saturating_sub(bar_width + 40)),
+                    truncate_middle(
+                        &name_of(&child.path),
+                        width
+                            .saturating_sub(bar_width + 17 + files.width() + flag.width())
+                            .max(10)
+                    ),
                     if child.kind == "directory" { "/" } else { "" }
                 ),
                 path_style(
@@ -803,22 +893,7 @@ fn browse(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lines
                     theme,
                 ),
             ),
-            Span::styled(
-                if child.kind != "directory" || child.excluded {
-                    String::new()
-                } else if child.incomplete && child.files == 0 && child.dirs == 0 {
-                    "  unreadable".into()
-                } else if child.incomplete {
-                    format!("  {} files · incomplete", short_count(child.files))
-                } else {
-                    format!("  {} files", short_count(child.files))
-                },
-                if child.incomplete {
-                    theme.warn()
-                } else {
-                    theme.dim()
-                },
-            ),
+            files,
             flag,
         ]));
     }
@@ -894,13 +969,10 @@ fn findings(state: &AppState, theme: &Theme, width: usize, height: usize) -> Lin
                 ),
             ),
         ]));
-        out.push(Line::from(Span::styled(
-            format!(
-                "      {}",
-                truncate_middle(&f.reason, width.saturating_sub(8))
-            ),
-            theme.dim(),
-        )));
+        out.push(fit(
+            Line::from(Span::styled(format!("      {}", f.reason), theme.dim())),
+            width.saturating_sub(1),
+        ));
     }
     out
 }

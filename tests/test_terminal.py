@@ -77,6 +77,14 @@ class TerminalSmokeTests(unittest.TestCase):
                             os.write(master, b"\x1b[1;1R")
                 self.assertIn(b"OMG", output)
                 os.write(master, b"q")
+                # Keep reading: a full terminal buffer would block the interface before it sees q.
+                deadline = time.monotonic() + 10
+                while process.poll() is None and time.monotonic() < deadline:
+                    if select.select([master], [], [], .1)[0]:
+                        try:
+                            os.read(master, 65536)
+                        except OSError:
+                            break
                 self.assertEqual(process.wait(timeout=10), 0)
                 self.assertEqual(termios.tcgetattr(slave), before)
             finally:
@@ -139,6 +147,14 @@ class TerminalSmokeTests(unittest.TestCase):
                     read_until("\0", .3)
                 self.assertIn("complete", scans(), "the scan asked for while waiting never ran")
                 os.write(master, b"q")
+                # Keep reading: a full terminal buffer would block the interface before it sees q.
+                deadline = time.monotonic() + 10
+                while process.poll() is None and time.monotonic() < deadline:
+                    if select.select([master], [], [], .1)[0]:
+                        try:
+                            os.read(master, 65536)
+                        except OSError:
+                            break
                 self.assertEqual(process.wait(timeout=10), 0)
             finally:
                 if process.poll() is None:
