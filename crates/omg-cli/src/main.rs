@@ -93,6 +93,11 @@ enum Command {
         #[command(subcommand)]
         command: ScheduleCommand,
     },
+    /// Delete what has waited in OMG Trash for a chosen period, in the background, with your permission
+    AutoDelete {
+        #[command(subcommand)]
+        command: AutoDeleteCommand,
+    },
     /// Observed free-space and growth history from local scans
     Trends {
         #[arg(long, default_value_t = 30)]
@@ -173,6 +178,28 @@ enum ScheduleCommand {
     Disable,
     /// Show whether the daily scan is registered
     Status,
+}
+
+#[derive(Subcommand)]
+enum AutoDeleteCommand {
+    /// Show the settings, the job and what the next run would delete
+    Status,
+    /// Give permission and turn auto delete on (asks you to type yes)
+    On {
+        /// Days an item waits in OMG Trash before it is deleted: 1, 7, 30 or 180
+        #[arg(long, value_parser = parse_period, default_value = "7")]
+        every: u32,
+        /// Also delete whole repositories, application data and toolchains
+        #[arg(long)]
+        include_risky: bool,
+        /// Run on battery power too
+        #[arg(long)]
+        allow_battery: bool,
+    },
+    /// Turn auto delete off at once and remove the job; a run in progress stops before its next item
+    Off,
+    /// One run: scan, then delete what is due. The scheduled job runs this
+    Run,
 }
 
 #[derive(Subcommand)]
@@ -353,6 +380,13 @@ fn run() -> Result<()> {
             None => platform::default_state()?,
         };
         return schedule(command, state);
+    }
+    if let Some(Command::AutoDelete { command }) = &cli.command {
+        let state = match &cli.state_dir {
+            Some(state) => state.clone(),
+            None => platform::default_state()?,
+        };
+        return auto_delete(command, state);
     }
     if matches!(cli.command, Some(Command::Doctor { .. })) && !platform::supported() {
         println!("omg: this platform is not certified; native scanning and cleanup disabled");
@@ -726,6 +760,7 @@ fn schedule(command: &ScheduleCommand, state: PathBuf) -> Result<()> {
         ScheduleCommand::Enable { hour } => {
             let executable = std::env::current_exe()?;
             let spec = Spec {
+                job: omg_core::scheduled::Job::Scan,
                 executable,
                 state_dir: state,
                 hour: *hour,
@@ -744,6 +779,155 @@ fn schedule(command: &ScheduleCommand, state: PathBuf) -> Result<()> {
         }
         ScheduleCommand::Status => {
             println!("{}", serde_json::to_string_pretty(&scheduler.state()?)?)
+        }
+    }
+    Ok(())
+}
+
+fn parse_period(text: &str) -> std::result::Result<u32, String> {
+    text.strip_suffix('d')
+        .unwrap_or(text)
+        .parse::<u32>()
+        .ok()
+        .filter(|d| omg_core::cleanup::auto::PERIODS.contains(d))
+        .ok_or_else(|| "choose 1, 7, 30 or 180 days".into())
+}
+
+fn auto_delete(command: &AutoDeleteCommand, state: PathBuf) -> Result<()> {
+    use omg_core::scheduled::{Job, Scheduler, Spec};
+    let home = platform::home()?;
+    let scheduler = || Scheduler::for_job(&home, Job::AutoDelete);
+    match command {
+        AutoDeleteCommand::Status => {
+            let index = Index::open(&state)?;
+            let preview = index.auto_preview(&home)?;
+            let job = scheduler()
+                .and_then(|s| s.state())
+                .map_err(|e| format!("{e:#}"));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "settings": preview.settings,
+                    "due_items": preview.due.len(),
+                    "due_bytes": preview.due_bytes(),
+                    "next_due": preview.next,
+                    "waiting": preview.waiting,
+                    "kept": preview.held,
+                    "skipped": preview.excluded,
+                    "job": match job {
+                        Ok(job) => serde_json::to_value(job)?,
+                        Err(error) => serde_json::json!({ "registered": false, "detail": error }),
+                    },
+                }))?
+            );
+        }
+        AutoDeleteCommand::On {
+            every,
+            include_risky,
+            allow_battery,
+        } => {
+            if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+                bail!(
+                    "auto delete needs your permission in a terminal (or in the interface); it cannot be turned on from a script"
+                );
+            }
+            let index = Index::open(&state)?;
+            println!(
+                "Auto delete permanently deletes items that have been in OMG Trash for {every} day(s), in the background, without asking each time.\n\
+                 - Only items that have not changed since they were added; changed items wait again.\n\
+                 - Every item is checked again just before deletion; protected items are never deleted.\n\
+                 - {}\n\
+                 - {}\n\
+                 - You get a notification after each run that deletes something. Turn it off any time with `omg auto-delete off`.\n\
+                 Deleted items do not go to the system Trash and cannot be restored.",
+                if *include_risky {
+                    "Whole repositories, application data and toolchains are included."
+                } else {
+                    "Whole repositories, application data and toolchains are left for you."
+                },
+                if *allow_battery {
+                    "Runs on battery power too."
+                } else {
+                    "Runs only while the computer is plugged in."
+                }
+            );
+            print!("Type yes to give permission: ");
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            if answer.trim() != "yes" {
+                println!("omg: auto delete stays off");
+                return Ok(());
+            }
+            index.grant_auto_delete(*every, *include_risky, !*allow_battery)?;
+            let spec = Spec {
+                job: Job::AutoDelete,
+                executable: std::env::current_exe()?,
+                state_dir: state,
+                hour: 0,
+            };
+            if let Err(error) = scheduler().and_then(|s| s.enable(&spec)) {
+                index.revoke_auto_delete()?;
+                return Err(
+                    error.context("could not register the auto delete job; auto delete stays off")
+                );
+            }
+            println!(
+                "omg: auto delete is on. Items in OMG Trash for {every} day(s) are deleted in the background."
+            );
+        }
+        AutoDeleteCommand::Off => {
+            let index = Index::open(&state)?;
+            index.revoke_auto_delete()?;
+            let removed = scheduler().and_then(|s| s.disable());
+            println!("omg: auto delete is off");
+            if let Err(error) = removed {
+                eprintln!(
+                    "omg: the job could not be removed ({error:#}); it does nothing while auto delete is off"
+                );
+            }
+        }
+        AutoDeleteCommand::Run => {
+            omg_core::alert::hide_console();
+            let mut index = Index::open(&state)?;
+            let settings = index.auto_delete()?;
+            let idle = |reason: &str| {
+                println!("{}", serde_json::json!({ "ran": false, "reason": reason }));
+                Ok(())
+            };
+            if !settings.active() {
+                return idle("auto delete is off");
+            }
+            if !index.auto_worth_scanning()? {
+                return idle("nothing is due");
+            }
+            if settings.plugged_in_only && omg_core::alert::on_battery() == Some(true) {
+                return idle("on battery power");
+            }
+            let saved = index.options()?;
+            let options = ScanOptions {
+                workers: omg_core::scanner::default_workers(),
+                root: saved
+                    .as_ref()
+                    .map_or_else(|| home.clone(), |o| o.root.clone()),
+                exclusions: saved.map(|o| o.exclusions).unwrap_or_default(),
+                full: false,
+                publish_partial: true,
+            };
+            let cancel = Arc::new(AtomicBool::new(false));
+            let progress = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            #[cfg(target_os = "linux")]
+            let report = svc::scan_with_handoff(&mut index, &options, cancel, progress)?;
+            #[cfg(not(target_os = "linux"))]
+            let report = omg_core::scanner::scan(&mut index, &options, cancel, progress)?;
+            if !matches!(report.state.as_str(), "complete" | "partial") {
+                bail!("the scan before auto delete did not finish; nothing deleted");
+            }
+            let outcome = index.auto_run(&home)?;
+            if let Some(text) = outcome.message() {
+                let _ = omg_core::alert::notify(&text);
+            }
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
         }
     }
     Ok(())

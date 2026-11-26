@@ -2889,3 +2889,158 @@ fn fast_growth_and_unexplained_space_are_reported_from_metadata() {
     let paths: Vec<&[u8]> = unexplained.iter().map(|u| u.path.as_slice()).collect();
     assert_eq!(paths, vec![b"archive/stuff".as_slice()]);
 }
+
+fn age_for(h: &Path, paths: &[&str], days: u64) {
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(days * 86_400);
+    for path in paths {
+        fs::File::open(h.join(path))
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+}
+fn backdate_marked(state: &Path, days: i64) {
+    let db = rusqlite::Connection::open(state.join("index.sqlite")).unwrap();
+    db.execute(
+        "UPDATE marked SET added=added-?",
+        rusqlite::params![days * 86_400],
+    )
+    .unwrap();
+}
+
+#[test]
+fn auto_delete_takes_only_unchanged_items_that_waited_the_whole_period() {
+    let (home, state) = setup();
+    let h = home.path();
+    for dir in ["old", "kept", "fresh", "grown"] {
+        fs::create_dir(h.join(dir)).unwrap();
+        fs::write(h.join(dir).join("a.bin"), vec![1u8; 40_000]).unwrap();
+    }
+    for dir in ["old", "kept", "fresh", "grown"] {
+        age_for(h, &[&format!("{dir}/a.bin"), dir], 10);
+    }
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    for dir in ["old", "kept", "fresh", "grown"] {
+        index.mark(dir.as_bytes(), 40_000, h).unwrap();
+    }
+    // Off by default: nothing runs.
+    assert!(!index.auto_delete().unwrap().active());
+    assert!(!index.auto_run(h).unwrap().ran);
+
+    index.grant_auto_delete(7, false, true).unwrap();
+    backdate_marked(state.path(), 8);
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    db.execute(
+        "UPDATE marked SET added=strftime('%s','now') WHERE path=?",
+        [b"fresh".to_vec()],
+    )
+    .unwrap();
+    index.hold(id_of(&index, b"kept"), true).unwrap();
+    // "grown" more than doubled after it was added.
+    fs::write(h.join("grown/b.bin"), vec![2u8; 200_000]).unwrap();
+    age_for(h, &["grown/b.bin", "grown"], 10);
+    scan(&mut index, h);
+
+    let preview = index.auto_preview(h).unwrap();
+    assert_eq!(preview.due.len(), 1, "{preview:?}");
+    assert_eq!((preview.held, preview.waiting), (1, 1));
+    let outcome = index.auto_run(h).unwrap();
+    assert!(outcome.ran);
+    assert_eq!(outcome.deleted, 1, "{outcome:?}");
+    assert_eq!(outcome.skipped, 1, "the grown item waits again");
+    assert!(!h.join("old").exists());
+    for dir in ["kept", "fresh", "grown"] {
+        assert!(h.join(dir).exists(), "{dir}");
+    }
+    let message = outcome.message().unwrap();
+    assert!(message.starts_with("OMG auto-deleted 1 item"), "{message}");
+    assert!(!message.contains("old"), "notifications carry no paths");
+    let log = index.deleted_log().unwrap();
+    assert!(
+        log.iter()
+            .any(|d| d.path.ends_with(b"/old") && d.source == "auto"),
+        "{log:?}"
+    );
+
+    // The grown item starts a fresh wait at its new size.
+    let grown = index
+        .marked()
+        .unwrap()
+        .into_iter()
+        .find(|m| m.path == b"grown")
+        .unwrap();
+    assert!(grown.added > 0 && grown.added_bytes >= 200_000);
+    assert_eq!(
+        index
+            .auto_standing(h)
+            .unwrap()
+            .into_iter()
+            .find(|(m, _)| m.path == b"grown")
+            .unwrap()
+            .1,
+        omg_core::cleanup::auto::Standing::Waiting(grown.added + 7 * 86_400)
+    );
+    // A second run the same day does nothing.
+    assert!(!index.auto_run(h).unwrap().ran);
+    assert_eq!(index.auto_take_message().unwrap(), Some(message));
+    assert_eq!(index.auto_take_message().unwrap(), None);
+}
+
+#[test]
+fn auto_delete_waits_again_for_items_with_newer_files_and_stops_when_revoked() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir(h.join("busy")).unwrap();
+    fs::write(h.join("busy/a.bin"), vec![1u8; 40_000]).unwrap();
+    age_for(h, &["busy/a.bin", "busy"], 10);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"busy", 40_000, h).unwrap();
+    index.grant_auto_delete(1, false, true).unwrap();
+    backdate_marked(state.path(), 2);
+    // A small new file, written after the item was added.
+    fs::write(h.join("busy/new.txt"), b"x").unwrap();
+    scan(&mut index, h);
+    let outcome = index.auto_run(h).unwrap();
+    assert_eq!((outcome.deleted, outcome.skipped), (0, 1));
+    assert!(h.join("busy/new.txt").exists());
+
+    index.revoke_auto_delete().unwrap();
+    let settings = index.auto_delete().unwrap();
+    assert!(!settings.active() && settings.consented.is_none());
+    assert!(!omg_core::cleanup::auto::enabled_in(state.path()));
+    assert!(index.tune_auto_delete(Some(3), None, false).is_err());
+}
+
+#[test]
+fn auto_delete_leaves_whole_repositories_unless_the_wider_permission_was_given() {
+    let (home, state) = setup();
+    let h = home.path();
+    fs::create_dir_all(h.join("old/.git")).unwrap();
+    fs::write(h.join("old/.git/HEAD"), b"ref").unwrap();
+    fs::write(h.join("old/notes.md"), b"old work").unwrap();
+    age_for(h, &["old/notes.md", "old/.git/HEAD", "old/.git", "old"], 60);
+    let mut index = Index::open(state.path()).unwrap();
+    scan(&mut index, h);
+    index.mark(b"old", 1, h).unwrap();
+    index.grant_auto_delete(1, false, true).unwrap();
+    backdate_marked(state.path(), 2);
+    assert_eq!(
+        index.auto_standing(h).unwrap()[0].1,
+        omg_core::cleanup::auto::Standing::NeedsPermission
+    );
+    assert_eq!(index.auto_run(h).unwrap().deleted, 0);
+    assert!(h.join("old/notes.md").exists());
+
+    index.grant_auto_delete(1, true, true).unwrap();
+    let db = rusqlite::Connection::open(state.path().join("index.sqlite")).unwrap();
+    db.execute(
+        "UPDATE settings SET value=CAST(json_set(CAST(value AS TEXT),'$.last_run',null) AS BLOB) WHERE key='auto_delete'",
+        [],
+    )
+    .unwrap();
+    let outcome = index.auto_run(h).unwrap();
+    assert_eq!(outcome.deleted, 1, "{outcome:?}");
+    assert!(!h.join("old").exists());
+}

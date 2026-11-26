@@ -8,6 +8,8 @@
 //! Scope is the user's home directory only, current-user owned entries only. Hard protections
 //! (exclusions, `.git`, credentials, databases, disk images, system paths) always deny. Being inside
 //! a Git repository is a *warning* that the interface must surface before confirmation.
+pub mod auto;
+
 use crate::{Entry, Index, index::unsigned, now, platform, policy};
 use anyhow::{Result, bail};
 use rusqlite::{OptionalExtension, params};
@@ -132,6 +134,12 @@ pub struct Marked {
     pub birth: Option<String>,
     /// "auto" when a scan suggested it, "user" when the user added it.
     pub source: String,
+    /// The user chose to keep it out of automatic runs.
+    #[serde(default)]
+    pub hold: bool,
+    /// Size when it entered OMG Trash; an automatic run skips an item that grew a lot since.
+    #[serde(default)]
+    pub added_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -750,19 +758,26 @@ impl Index {
             let _ = &root;
             None
         };
+        // Auto delete measures growth from the indexed size, whatever size the caller showed.
+        let baseline = i64::try_from(if entry.kind == "directory" {
+            self.subtree(&entry.path)?
+                .map_or(allocated, |t| t.allocated.max(allocated))
+        } else {
+            entry.allocated.max(allocated)
+        })?;
         if source == "user" {
             // A user's choice always wins, including over an earlier dismissed suggestion.
             self.db.execute(
-                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed) VALUES(?,?,?,?,?,?,?,?,'user',0) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth,source='user',dismissed=0",
-                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth],
+                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed,added_bytes) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'user',0,?9) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth,added=CASE WHEN marked.dismissed=0 THEN marked.added ELSE excluded.added END,added_bytes=CASE WHEN marked.dismissed=0 THEN marked.added_bytes ELSE excluded.added_bytes END,source='user',dismissed=0",
+                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth, baseline],
             )?;
         } else {
             // A removed suggestion stays out until it has grown a lot since, or until
             // `SUGGESTION_RETURN_DAYS` have passed: caches refill on their own. `dismissed` holds
             // when it was removed (1 for removals recorded before that time was kept).
             self.db.execute(
-                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'auto',0) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth,added=CASE WHEN marked.dismissed=0 THEN marked.added ELSE excluded.added END,dismissed=0 WHERE marked.dismissed=0 OR marked.dismissed<=?9 OR (marked.allocated>0 AND excluded.allocated>=marked.allocated*2) OR excluded.allocated>=marked.allocated+?10",
-                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth, now() - SUGGESTION_RETURN_DAYS * 86_400, SUGGESTION_RETURN_GROWTH],
+                "INSERT INTO marked(root,path,identity,kind,allocated,added,warning,birth,source,dismissed,added_bytes) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,'auto',0,?11) ON CONFLICT(root,path) DO UPDATE SET identity=excluded.identity,kind=excluded.kind,allocated=excluded.allocated,warning=excluded.warning,birth=excluded.birth,added=CASE WHEN marked.dismissed=0 THEN marked.added ELSE excluded.added END,added_bytes=CASE WHEN marked.dismissed=0 THEN marked.added_bytes ELSE excluded.added_bytes END,dismissed=0 WHERE marked.dismissed=0 OR marked.dismissed<=?9 OR (marked.allocated>0 AND excluded.allocated>=marked.allocated*2) OR excluded.allocated>=marked.allocated+?10",
+                params![root_raw, entry.path, entry.identity, entry.kind, i64::try_from(allocated)?, now(), warning, birth, now() - SUGGESTION_RETURN_DAYS * 86_400, SUGGESTION_RETURN_GROWTH, baseline],
             )?;
         }
         Ok(verdict)
@@ -857,7 +872,7 @@ impl Index {
             return Ok(vec![]);
         };
         let mut statement = self.db.prepare(
-            "SELECT id,path,identity,kind,allocated,added,warning,birth,source FROM marked WHERE root=? AND dismissed=0 ORDER BY allocated DESC,id",
+            "SELECT id,path,identity,kind,allocated,added,warning,birth,source,hold,coalesce(added_bytes,allocated) FROM marked WHERE root=? AND dismissed=0 ORDER BY allocated DESC,id",
         )?;
         Ok(statement
             .query_map([root_raw], |r| {
@@ -871,6 +886,8 @@ impl Index {
                     warning: r.get(6)?,
                     birth: r.get(7)?,
                     source: r.get(8)?,
+                    hold: r.get::<_, i64>(9)? != 0,
+                    added_bytes: unsigned(r, 10)?,
                 })
             })?
             .collect::<rusqlite::Result<_>>()?)
@@ -1203,6 +1220,8 @@ impl Index {
                 warning,
                 birth,
                 source: "keep-protected".into(),
+                hold: false,
+                added_bytes: allocated,
             });
         }
         for path in kept {
@@ -1327,7 +1346,7 @@ impl Index {
                                     let log = crate::index::log_deleted(
                                         &tx,
                                         now(),
-                                        "files",
+                                        self.delete_source,
                                         &joined(&root_raw, group.unwrap_or(&item.path)),
                                         freed.allocated,
                                     )?;
@@ -2212,6 +2231,8 @@ mod tests {
             warning: warning.map(str::to_string),
             birth: None,
             source: "user".into(),
+            hold: false,
+            added_bytes: 4096,
         }
     }
 

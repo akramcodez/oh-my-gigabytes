@@ -4,6 +4,7 @@ Notable changes to OMG (Oh My Gigabytes). Every release is a development preview
 
 ## Unreleased
 
+- **Auto delete.** Off by default. From the options menu (`m`) or `omg auto-delete on --every 7`, after a permission screen, OMG deletes what has waited unchanged in OMG Trash for 1 day, 7 days, 1 month or 6 months, in the background after the computer starts and at most once a day. Changed items wait again, `K` keeps an item out, whole repositories, application data and toolchains need a second permission, and by default it runs only on mains power. A notification follows each run that deleted something, and the Deleted tab lists those items under "Auto-deleted". Turning it off takes effect at once, even during a run.
 - **`D` empties OMG Trash.** After its one confirmation it deletes every listed item, whole repositories and application data included; their warnings are shown in the plan first. `omg clean` still never takes those two. Protected items, missing creation times and the checks before each removal are unchanged.
 - **Removed suggestions come back.** A cache you took out of OMG Trash is suggested again once it has doubled or grown by 1 GB, or after 30 days. Suggestions removed with an earlier version return on the next scan.
 - **`omg trash --add PATH` and `--remove PATH`** add a scanned path to OMG Trash or take it out from the shell, under the same rules as the interface. Nothing moves or is deleted.

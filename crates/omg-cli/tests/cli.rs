@@ -718,3 +718,23 @@ fn trash_adds_and_removes_scanned_paths_from_the_shell() {
     assert!(!omg(&["trash", "--remove", "cache"]).status.success());
     assert!(root.join("cache/inner/data").exists() && root.join("file").exists());
 }
+
+#[test]
+fn auto_delete_cannot_be_turned_on_from_a_script() {
+    let fixture = tempfile::tempdir().unwrap();
+    let state = fixture.path().join("state");
+    let result = Command::new(env!("CARGO_BIN_EXE_omg"))
+        .arg("--state-dir")
+        .arg(&state)
+        .args(["auto-delete", "on", "--every", "7"])
+        .env("HOME", fixture.path())
+        .env("XDG_CONFIG_HOME", fixture.path().join("config"))
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains("needs your permission"), "{stderr}");
+    assert!(!state.exists(), "refusal must not create state");
+    assert!(!fixture.path().join("config").exists());
+}

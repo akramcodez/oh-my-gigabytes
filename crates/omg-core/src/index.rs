@@ -22,8 +22,10 @@ pub struct RunningScan {
 
 /// Days a line of the deleted log is kept.
 pub const DELETED_LOG_DAYS: i64 = 20;
+/// Lines of automatic runs are kept longer, so the longest period still shows the last run.
+pub const AUTO_DELETED_LOG_DAYS: i64 = 200;
 
-/// One line of the deleted log: when, what kind (`files` or `docker`), which path or Docker name
+/// One line of the deleted log: when, what kind (`files`, `auto` or `docker`), which path or Docker name
 /// (raw bytes), and its estimated size.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DeletedRecord {
@@ -41,13 +43,17 @@ fn deleted_log_cutoff(now: i64) -> i64 {
 /// Writes only when something has expired, so reading the log does not wait behind a scan.
 pub(crate) fn prune_deleted_log(db: &Connection, now: i64) -> Result<()> {
     let cutoff = deleted_log_cutoff(now);
+    let auto_cutoff = now.saturating_sub(AUTO_DELETED_LOG_DAYS * 86_400);
     let expired: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM deleted_log WHERE at<?)",
-        [cutoff],
+        "SELECT EXISTS(SELECT 1 FROM deleted_log WHERE at<?1 AND (source!='auto' OR at<?2))",
+        [cutoff, auto_cutoff],
         |r| r.get(0),
     )?;
     if expired {
-        db.execute("DELETE FROM deleted_log WHERE at<?", [cutoff])?;
+        db.execute(
+            "DELETE FROM deleted_log WHERE at<?1 AND (source!='auto' OR at<?2)",
+            [cutoff, auto_cutoff],
+        )?;
     }
     Ok(())
 }
@@ -84,6 +90,9 @@ pub struct Index {
     pub(crate) issued: crate::cleanup::IssuedPlans,
     /// The last full list of findings, reused while nothing it depends on changed.
     pub(crate) findings_memo: std::cell::RefCell<Option<crate::catalog::FindingsMemo>>,
+    /// How the deleted log labels what this session deletes: `files`, or `auto` during an
+    /// automatic run.
+    pub(crate) delete_source: &'static str,
 }
 /// Native scanning maturity, as `omg doctor` reports it.
 fn native_analysis() -> &'static str {
@@ -154,7 +163,7 @@ pub fn diagnose(state: &Path) -> Result<serde_json::Value> {
     let schema: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let integrity: String = db.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     Ok(
-        serde_json::json!({"state":"existing index","output_schema":crate::OUTPUT_SCHEMA,"schema":schema,"schema_supported":schema<=14,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
+        serde_json::json!({"state":"existing index","output_schema":crate::OUTPUT_SCHEMA,"schema":schema,"schema_supported":schema<=15,"integrity":integrity,"sqlite":sqlite_version(),"cleanup":crate::capability::platform_permanent_delete().as_str(),"os_trash":crate::capability::os_trash().as_str(),"service":"see omg service status","native_analysis":native_analysis()}),
     )
 }
 
@@ -318,7 +327,7 @@ impl Index {
             bail!("SQLite 3.51.3+ required for WAL safety baseline");
         }
         let version: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version > 14 {
+        if version > 15 {
             bail!("index schema is newer than this omg build");
         }
         // quick_check reads the whole file (seconds on a multi-GB index), so very large indexes
@@ -393,6 +402,9 @@ impl Index {
         if version < 14 {
             db.execute_batch(include_str!("../../../migrations/014.sql"))?;
         }
+        if version < 15 {
+            db.execute_batch(include_str!("../../../migrations/015.sql"))?;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -407,6 +419,7 @@ impl Index {
             state,
             issued: Default::default(),
             findings_memo: Default::default(),
+            delete_source: "files",
         })
     }
     pub fn status(&self) -> Result<Status> {
@@ -656,14 +669,16 @@ impl Index {
         }
         Ok(total)
     }
-    /// What omg deleted in the last `DELETED_LOG_DAYS` days, newest first. Older rows are dropped.
+    /// What omg deleted in the last `DELETED_LOG_DAYS` days (`AUTO_DELETED_LOG_DAYS` for automatic
+    /// runs), newest first. Older rows are dropped.
     pub fn deleted_log(&self) -> Result<Vec<DeletedRecord>> {
         let now = crate::now();
         prune_deleted_log(&self.db, now)?;
         let mut statement = self.db.prepare(
-            "SELECT id,at,source,path,bytes FROM deleted_log WHERE at>=? ORDER BY at DESC,id DESC",
+            "SELECT id,at,source,path,bytes FROM deleted_log WHERE at>=?1 OR (source='auto' AND at>=?2) ORDER BY at DESC,id DESC",
         )?;
-        let rows = statement.query_map([deleted_log_cutoff(now)], |r| {
+        let auto_cutoff = now.saturating_sub(AUTO_DELETED_LOG_DAYS * 86_400);
+        let rows = statement.query_map([deleted_log_cutoff(now), auto_cutoff], |r| {
             Ok(DeletedRecord {
                 id: r.get(0)?,
                 at: r.get(1)?,

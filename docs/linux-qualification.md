@@ -52,3 +52,7 @@ Status: **no profile is qualified.** This page records what was actually run, an
 2. Each enabled capability's race and failure tests (WP05) passing on that profile.
 3. A reviewed constant or table entry that maps the profile to `qualified`, tied to this document.
 4. The release manifest and `omg doctor` updated in the same change (`assemble-release.js`, `verify.js`, `release.test.js`).
+
+## Auto delete
+
+Auto delete (D16, [evidence.md](evidence.md)) registers the systemd user units `omg-auto-delete.service` and `.timer` and notifies through `notify-send`. The unit contents are tested with a fake `systemctl` (`tests/scheduled.rs`) on the Linux CI runners only; no timer run, desktop notification or battery check has been seen on a real Linux machine.

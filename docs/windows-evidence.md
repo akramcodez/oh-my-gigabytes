@@ -162,3 +162,7 @@ Not done: a symbolic link root and the link-inside-a-folder delete scenario on t
 Removed after use: screenshots, probe scripts, the link-test crate, scan state directories and the copied index. Kept, for the owner to remove when no longer needed: `C:\src\omg` (1 MB source mirror), `C:\src\omg-target` (build output), `C:\src\mingw` (about 0.9 GB MinGW toolchain), `C:\src\venv` (Python with `pywinpty`) and `C:\src\omg-state-r12` (0.7 GB index from the 2026-10-19 profile measurement).
 
 2026-11-02: C: had 0 bytes free when the native run started, and the first attempt failed with "not enough space on the disk". `C:\src\omg-target` had grown to 3.6 GB of stale debug output; it was emptied with `cargo clean` (3.6 GiB) and rebuilt without debug info. C: then had 3.4 GB free, and 11.9 GB when the run finished; that later increase came from something else on the PC.
+
+## Auto delete
+
+Auto delete (D16, [evidence.md](evidence.md)) registers the Task Scheduler task `omg\\auto-delete` (every 6 hours) and notifies through a PowerShell toast. It is compiled and its unit tests run on the Windows CI runners only; no native run, toast or battery check has been seen on a real PC.

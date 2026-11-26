@@ -1,6 +1,8 @@
-//! A daily scan registered with the per-user scheduler of macOS (launchd agent) or Windows (Task
-//! Scheduler). The job only runs `omg scan`: it never deletes and never changes OMG Trash. The
-//! scheduler tools are run by fixed path with fixed arguments, never through a shell.
+//! Jobs registered with the per-user scheduler: a launchd agent on macOS, a Task Scheduler task on
+//! Windows, a systemd user timer on Linux. The daily scan only runs `omg scan` and never deletes.
+//! The auto delete job runs `omg auto-delete run`, which deletes only under the permission the user
+//! gave (decision D16) and through `cleanup.rs`. The scheduler tools are run by fixed path with
+//! fixed arguments, never through a shell.
 use anyhow::{Context, Result, bail};
 use std::{
     path::{Path, PathBuf},
@@ -10,9 +12,41 @@ use std::{
 pub const LABEL: &str = "dev.omg.scan";
 pub const TASK: &str = "omg\\scan";
 const MARKER: &str = "Managed by omg: daily scan-only job. Remove with `omg schedule disable`.";
+pub const AUTO_LABEL: &str = "dev.omg.auto-delete";
+pub const AUTO_TASK: &str = "omg\\auto-delete";
+const AUTO_MARKER: &str = "Managed by omg: auto delete job. Remove with `omg auto-delete off`.";
+/// How often the auto delete job wakes; the run itself starts at most once in 20 hours.
+pub const AUTO_EVERY_HOURS: u32 = 6;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Job {
+    Scan,
+    AutoDelete,
+}
+impl Job {
+    pub fn label(self) -> &'static str {
+        match self {
+            Job::Scan => LABEL,
+            Job::AutoDelete => AUTO_LABEL,
+        }
+    }
+    pub fn task(self) -> &'static str {
+        match self {
+            Job::Scan => TASK,
+            Job::AutoDelete => AUTO_TASK,
+        }
+    }
+    fn marker(self) -> &'static str {
+        match self {
+            Job::Scan => MARKER,
+            Job::AutoDelete => AUTO_MARKER,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Spec {
+    pub job: Job,
     pub executable: PathBuf,
     pub state_dir: PathBuf,
     /// Local hour of the day, 0 to 23.
@@ -41,14 +75,16 @@ pub fn arguments(spec: &Spec) -> Result<Vec<String>> {
         }
         Ok(text.to_string())
     };
-    Ok(vec![
+    let mut out = vec![
         text(&spec.executable)?,
         "--state-dir".into(),
         text(&spec.state_dir)?,
-        "scan".into(),
-        "--accept-gaps".into(),
-        "--no-suggest".into(),
-    ])
+    ];
+    match spec.job {
+        Job::Scan => out.extend(["scan".into(), "--accept-gaps".into(), "--no-suggest".into()]),
+        Job::AutoDelete => out.extend(["auto-delete".into(), "run".into()]),
+    }
+    Ok(out)
 }
 
 fn xml(text: &str) -> String {
@@ -64,9 +100,21 @@ pub fn plist(spec: &Spec) -> Result<String> {
         .iter()
         .map(|a| format!("    <string>{}</string>\n", xml(a)))
         .collect();
+    let (marker, label) = (spec.job.marker(), spec.job.label());
+    // The auto delete job also runs at login and wakes every few hours, so a computer that was off
+    // at the usual time still gets its run soon after it is turned on.
+    let when = match spec.job {
+        Job::Scan => format!(
+            "  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{}</integer>\n    <key>Minute</key>\n    <integer>0</integer>\n  </dict>\n",
+            spec.hour
+        ),
+        Job::AutoDelete => format!(
+            "  <key>RunAtLoad</key>\n  <true/>\n  <key>StartInterval</key>\n  <integer>{}</integer>\n",
+            AUTO_EVERY_HOURS * 3600
+        ),
+    };
     Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- {MARKER} -->\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{LABEL}</string>\n  <key>ProgramArguments</key>\n  <array>\n{arguments}  </array>\n  <key>StartCalendarInterval</key>\n  <dict>\n    <key>Hour</key>\n    <integer>{}</integer>\n    <key>Minute</key>\n    <integer>0</integer>\n  </dict>\n  <key>ProcessType</key>\n  <string>Background</string>\n  <key>LowPriorityIO</key>\n  <true/>\n  <key>Nice</key>\n  <integer>10</integer>\n  <key>StandardOutPath</key>\n  <string>/dev/null</string>\n  <key>StandardErrorPath</key>\n  <string>/dev/null</string>\n</dict>\n</plist>\n",
-        spec.hour
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- {marker} -->\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{label}</string>\n  <key>ProgramArguments</key>\n  <array>\n{arguments}  </array>\n{when}  <key>ProcessType</key>\n  <string>Background</string>\n  <key>LowPriorityIO</key>\n  <true/>\n  <key>Nice</key>\n  <integer>10</integer>\n  <key>StandardOutPath</key>\n  <string>/dev/null</string>\n  <key>StandardErrorPath</key>\n  <string>/dev/null</string>\n</dict>\n</plist>\n"
     ))
 }
 
@@ -90,18 +138,23 @@ pub fn schtasks_create(spec: &Spec) -> Result<Vec<String>> {
             "the scan command is longer than Task Scheduler allows (261 characters); install omg in a shorter folder"
         );
     }
-    Ok(vec![
-        "/Create".into(),
-        "/TN".into(),
-        TASK.into(),
-        "/SC".into(),
-        "DAILY".into(),
-        "/ST".into(),
-        format!("{:02}:00", spec.hour),
-        "/TR".into(),
-        command,
-        "/F".into(),
-    ])
+    let mut out = vec!["/Create".into(), "/TN".into(), spec.job.task().into()];
+    match spec.job {
+        Job::Scan => out.extend([
+            "/SC".into(),
+            "DAILY".into(),
+            "/ST".into(),
+            format!("{:02}:00", spec.hour),
+        ]),
+        Job::AutoDelete => out.extend([
+            "/SC".into(),
+            "HOURLY".into(),
+            "/MO".into(),
+            AUTO_EVERY_HOURS.to_string(),
+        ]),
+    }
+    out.extend(["/TR".into(), command, "/F".into()]);
+    Ok(out)
 }
 
 /// The executable the job points at must be a regular file; on Unix also owned by you or root and
@@ -124,11 +177,50 @@ pub fn validate_executable(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// The per-user scheduler of this platform, with the tool and folder it uses (tests pass fakes).
+/// The systemd user units for the auto delete job: a one-shot service and a timer that fires at
+/// login and every few hours, catching up after the computer was off.
+pub fn systemd_units(spec: &Spec) -> Result<(String, String)> {
+    let command = arguments(spec)?
+        .iter()
+        .map(|a| systemd_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let marker = format!("# {AUTO_MARKER}");
+    Ok((
+        format!(
+            "{marker}\n[Unit]\nDescription=OMG auto delete (only what waited in OMG Trash for the chosen period)\n\n[Service]\nType=oneshot\nExecStart={command}\nNice=10\nIOSchedulingClass=idle\nNoNewPrivileges=yes\nStandardOutput=null\nStandardError=null\n"
+        ),
+        format!(
+            "{marker}\n[Unit]\nDescription=OMG auto delete timer\n\n[Timer]\nOnStartupSec=10min\nOnUnitActiveSec={AUTO_EVERY_HOURS}h\nPersistent=true\nOnCalendar=daily\n\n[Install]\nWantedBy=timers.target\n"
+        ),
+    ))
+}
+
+/// systemd command-line quoting for one argument, also neutralizing `%` specifiers and `$`.
+fn systemd_quote(argument: &str) -> String {
+    let mut out = String::from("\"");
+    for c in argument.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '%' => out.push_str("%%"),
+            '$' => out.push_str("$$"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
+const SYSTEMD_UNIT: &str = "omg-auto-delete";
+
+/// The per-user scheduler of this platform for one job, with the tool and folder it uses (tests
+/// pass fakes).
 pub struct Scheduler {
     pub tool: PathBuf,
-    /// macOS: the LaunchAgents folder. Unused on Windows.
+    /// macOS: the LaunchAgents folder. Linux: the systemd user unit folder. Unused on Windows.
     pub agents: PathBuf,
+    pub job: Job,
 }
 
 #[derive(Debug, PartialEq, Eq, serde::Serialize)]
@@ -139,10 +231,14 @@ pub struct State {
 
 impl Scheduler {
     pub fn discover(home: &Path) -> Result<Self> {
+        Self::for_job(home, Job::Scan)
+    }
+    pub fn for_job(home: &Path, job: Job) -> Result<Self> {
         if cfg!(target_os = "macos") {
             Ok(Self {
                 tool: PathBuf::from("/bin/launchctl"),
                 agents: home.join("Library/LaunchAgents"),
+                job,
             })
         } else if cfg!(windows) {
             let system = std::env::var_os("SystemRoot")
@@ -152,16 +248,45 @@ impl Scheduler {
             Ok(Self {
                 tool: system.join("System32").join("schtasks.exe"),
                 agents: PathBuf::new(),
+                job,
+            })
+        } else if job == Job::AutoDelete {
+            let tool = ["/usr/bin/systemctl", "/bin/systemctl"]
+                .into_iter()
+                .map(PathBuf::from)
+                .find(|p| p.is_file())
+                .unwrap_or_else(|| PathBuf::from("/usr/bin/systemctl"));
+            let config = std::env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute())
+                .unwrap_or_else(|| home.join(".config"));
+            Ok(Self {
+                tool,
+                agents: config.join("systemd/user"),
+                job,
             })
         } else {
             bail!("on Linux, use `omg start` for the background service");
         }
     }
+    fn linux(&self) -> bool {
+        !cfg!(target_os = "macos") && !cfg!(windows)
+    }
     fn plist_path(&self) -> PathBuf {
-        self.agents.join(format!("{LABEL}.plist"))
+        self.agents.join(format!("{}.plist", self.job.label()))
+    }
+    fn unit_paths(&self) -> [PathBuf; 2] {
+        [
+            self.agents.join(format!("{SYSTEMD_UNIT}.service")),
+            self.agents.join(format!("{SYSTEMD_UNIT}.timer")),
+        ]
     }
     fn run(&self, args: &[String]) -> Result<(bool, String)> {
-        let output = Command::new(&self.tool)
+        let mut command = Command::new(&self.tool);
+        if self.linux() {
+            command.arg("--user");
+        }
+        let output = command
             .args(args)
             .stdin(Stdio::null())
             .output()
@@ -178,8 +303,28 @@ impl Scheduler {
     fn domain() -> String {
         String::new()
     }
+    fn write_ours(&self, path: &Path, content: &str) -> Result<()> {
+        if path.exists() && !self.ours(path) {
+            bail!(
+                "{} exists and was not written by omg; leaving it alone",
+                path.display()
+            );
+        }
+        std::fs::create_dir_all(&self.agents)?;
+        let name = path
+            .file_name()
+            .context("job file has no name")?
+            .to_string_lossy();
+        let staged = self.agents.join(format!(".{name}.new"));
+        std::fs::write(&staged, content)?;
+        std::fs::rename(&staged, path)?;
+        Ok(())
+    }
     pub fn enable(&self, spec: &Spec) -> Result<()> {
         validate_executable(&spec.executable)?;
+        if spec.job != self.job {
+            bail!("the job does not match this scheduler");
+        }
         if cfg!(windows) {
             let (ok, text) = self.run(&schtasks_create(spec)?)?;
             if !ok {
@@ -187,20 +332,41 @@ impl Scheduler {
             }
             return Ok(());
         }
-        let content = plist(spec)?;
-        let path = self.plist_path();
-        if path.exists() && !self.ours(&path) {
-            bail!(
-                "{} exists and was not written by omg; leaving it alone",
-                path.display()
-            );
+        if self.linux() {
+            if !self.tool.is_file() {
+                bail!("systemd is not installed, so the auto delete job cannot be registered");
+            }
+            let (service, timer) = systemd_units(spec)?;
+            let [service_path, timer_path] = self.unit_paths();
+            for path in [&service_path, &timer_path] {
+                if path.exists() && !self.ours(path) {
+                    bail!(
+                        "{} exists and was not written by omg; leaving it alone",
+                        path.display()
+                    );
+                }
+            }
+            self.write_ours(&service_path, &service)?;
+            self.write_ours(&timer_path, &timer)?;
+            let (ok, text) = self.run(&["daemon-reload".into()])?;
+            if !ok {
+                bail!("systemctl --user daemon-reload failed: {text}");
+            }
+            let (ok, text) = self.run(&[
+                "enable".into(),
+                "--now".into(),
+                format!("{SYSTEMD_UNIT}.timer"),
+            ])?;
+            if !ok {
+                bail!("systemctl --user could not start the timer: {text}");
+            }
+            return Ok(());
         }
-        std::fs::create_dir_all(&self.agents)?;
-        let staged = self.agents.join(format!(".{LABEL}.plist.new"));
-        std::fs::write(&staged, content)?;
-        std::fs::rename(&staged, &path)?;
+        let label = self.job.label();
+        let path = self.plist_path();
+        self.write_ours(&path, &plist(spec)?)?;
         // Replace a loaded copy so a changed hour or path takes effect.
-        let _ = self.run(&["bootout".into(), format!("{}/{LABEL}", Self::domain())]);
+        let _ = self.run(&["bootout".into(), format!("{}/{label}", Self::domain())]);
         let (ok, text) = self.run(&[
             "bootstrap".into(),
             Self::domain(),
@@ -216,10 +382,42 @@ impl Scheduler {
             if !self.state()?.registered {
                 return Ok(false);
             }
-            let (ok, text) =
-                self.run(&["/Delete".into(), "/TN".into(), TASK.into(), "/F".into()])?;
+            let (ok, text) = self.run(&[
+                "/Delete".into(),
+                "/TN".into(),
+                self.job.task().into(),
+                "/F".into(),
+            ])?;
             if !ok {
                 bail!("Task Scheduler could not drop the task: {text}");
+            }
+            return Ok(true);
+        }
+        if self.linux() {
+            let paths = self.unit_paths();
+            if !paths.iter().any(|p| p.exists()) {
+                return Ok(false);
+            }
+            if let Some(foreign) = paths.iter().find(|p| p.exists() && !self.ours(p)) {
+                bail!(
+                    "{} was not written by omg; leaving it alone",
+                    foreign.display()
+                );
+            }
+            if self.tool.is_file() {
+                let _ = self.run(&[
+                    "disable".into(),
+                    "--now".into(),
+                    format!("{SYSTEMD_UNIT}.timer"),
+                ]);
+            }
+            for path in &paths {
+                if path.exists() {
+                    std::fs::remove_file(path)?;
+                }
+            }
+            if self.tool.is_file() {
+                let _ = self.run(&["daemon-reload".into()]);
             }
             return Ok(true);
         }
@@ -233,41 +431,66 @@ impl Scheduler {
                 path.display()
             );
         }
-        let _ = self.run(&["bootout".into(), format!("{}/{LABEL}", Self::domain())]);
+        let label = self.job.label();
+        let _ = self.run(&["bootout".into(), format!("{}/{label}", Self::domain())]);
         std::fs::remove_file(&path)?;
         Ok(true)
     }
     pub fn state(&self) -> Result<State> {
+        let what = match self.job {
+            Job::Scan => "daily scan",
+            Job::AutoDelete => "auto delete job",
+        };
+        let missing = || State {
+            registered: false,
+            detail: "not registered".into(),
+        };
         if cfg!(windows) {
-            let (ok, _) = self.run(&["/Query".into(), "/TN".into(), TASK.into()])?;
+            let (ok, _) = self.run(&["/Query".into(), "/TN".into(), self.job.task().into()])?;
             return Ok(State {
                 registered: ok,
                 detail: if ok {
-                    "daily scan registered in Task Scheduler".into()
+                    format!("{what} registered in Task Scheduler")
                 } else {
                     "not registered".into()
                 },
             });
         }
-        let path = self.plist_path();
-        if !path.exists() {
+        if self.linux() {
+            let [service, timer] = self.unit_paths();
+            if !timer.exists() {
+                return Ok(missing());
+            }
+            let active = self.tool.is_file()
+                && self
+                    .run(&["is-active".into(), format!("{SYSTEMD_UNIT}.timer")])?
+                    .0;
             return Ok(State {
-                registered: false,
-                detail: "not registered".into(),
+                registered: self.ours(&timer) && self.ours(&service),
+                detail: if active {
+                    format!("{what} registered and its timer is active")
+                } else {
+                    "registered but the timer is not active; turn auto delete on again".into()
+                },
             });
         }
-        let (loaded, _) = self.run(&["print".into(), format!("{}/{LABEL}", Self::domain())])?;
+        let path = self.plist_path();
+        if !path.exists() {
+            return Ok(missing());
+        }
+        let label = self.job.label();
+        let (loaded, _) = self.run(&["print".into(), format!("{}/{label}", Self::domain())])?;
         Ok(State {
             registered: self.ours(&path),
             detail: if loaded {
-                "daily scan registered and loaded".into()
+                format!("{what} registered and loaded")
             } else {
-                "registered but not loaded; run `omg schedule enable` again".into()
+                "registered but not loaded; turn it on again".into()
             },
         })
     }
     fn ours(&self, path: &Path) -> bool {
-        std::fs::read_to_string(path).is_ok_and(|t| t.contains(MARKER))
+        std::fs::read_to_string(path).is_ok_and(|t| t.contains(self.job.marker()))
     }
 }
 
@@ -294,6 +517,7 @@ mod tests {
 
     fn spec() -> Spec {
         Spec {
+            job: Job::Scan,
             executable: PathBuf::from(if cfg!(windows) {
                 "C:\\Users\\a b\\omg.exe"
             } else {
@@ -356,5 +580,29 @@ mod tests {
             "x".repeat(300)
         ));
         assert!(schtasks_create(&long).is_err());
+    }
+
+    #[test]
+    fn auto_delete_job_runs_only_its_command_and_wakes_often() {
+        let auto = Spec {
+            job: Job::AutoDelete,
+            ..spec()
+        };
+        assert_eq!(&arguments(&auto).unwrap()[3..], ["auto-delete", "run"]);
+        let text = plist(&auto).unwrap();
+        assert!(text.contains(AUTO_LABEL) && text.contains(AUTO_MARKER));
+        assert!(text.contains("<key>RunAtLoad</key>") && text.contains("<integer>21600</integer>"));
+        assert!(!text.contains("StartCalendarInterval"));
+        let args = schtasks_create(&auto).unwrap();
+        assert_eq!(
+            args[..7],
+            ["/Create", "/TN", AUTO_TASK, "/SC", "HOURLY", "/MO", "6"]
+        );
+        assert!(args[8].ends_with("auto-delete run"));
+        let (service, timer) = systemd_units(&auto).unwrap();
+        assert!(service.starts_with(&format!("# {AUTO_MARKER}")));
+        assert!(service.contains("Type=oneshot") && service.contains("\"auto-delete\" \"run\""));
+        assert!(timer.contains("Persistent=true") && timer.contains("OnStartupSec=10min"));
+        assert_eq!(systemd_quote("a%b$c\"d"), "\"a%%b$$c\\\"d\"");
     }
 }
