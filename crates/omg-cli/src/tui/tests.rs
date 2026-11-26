@@ -1079,3 +1079,72 @@ fn scan_keeps_one_label_for_the_whole_run() {
     assert!(text.contains("Tallying space ") && !text.contains("Tallying space…"));
     assert!(text.contains('ᗧ') || text.contains('●'), "{text}");
 }
+
+#[test]
+fn browse_up_restores_cursor() {
+    let view = |names: &[&str]| DirView {
+        children: names
+            .iter()
+            .map(|p| Child {
+                path: p.as_bytes().to_vec(),
+                kind: "directory".into(),
+                allocated: 1 << 20,
+                apparent: 1 << 20,
+                files: 1,
+                dirs: 0,
+                protected: 0,
+                newest: 0,
+                incomplete: false,
+                excluded: false,
+            })
+            .collect(),
+        marks: vec![],
+        total: None,
+    };
+    let (mut app, _rx) = test_app();
+    app.state.tab = Tab::Browse;
+    app.state
+        .dirs
+        .insert(Vec::new(), view(&["Android", "dotslash", "Steam"]));
+    app.state
+        .dirs
+        .insert(b"dotslash".to_vec(), view(&["dotslash/a", "dotslash/b"]));
+    app.state
+        .dirs
+        .insert(b"dotslash/b".to_vec(), view(&["dotslash/b/deep"]));
+
+    let enter = event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+    let back = event::KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+
+    app.state.cursor = 1;
+    app.state.scroll.set(1);
+    app.handle_key(enter).unwrap();
+    assert_eq!(
+        (
+            app.state.dir.as_slice(),
+            app.state.cursor,
+            app.state.scroll.get()
+        ),
+        (b"dotslash".as_slice(), 0, 0)
+    );
+
+    app.state.cursor = 1;
+    app.handle_key(enter).unwrap();
+    app.handle_key(back).unwrap();
+    assert_eq!(
+        (app.state.dir.as_slice(), app.state.cursor),
+        (b"dotslash".as_slice(), 1)
+    );
+
+    // Also test restoring by path after cache clear when `dotslash` shifts index.
+    app.on_response(Response::Deleted(Box::default()));
+    app.handle_key(back).unwrap();
+    assert_eq!(app.state.dir, b"");
+    app.on_response(Response::Dir {
+        path: Vec::new(),
+        children: view(&["Android", "Steam", "dotslash"]).children,
+        marks: vec![],
+        total: None,
+    });
+    assert_eq!((app.state.cursor, app.state.scroll.get()), (2, 1));
+}

@@ -148,6 +148,22 @@ pub struct DirView {
     pub total: Option<Totals>,
 }
 
+/// Where the Browse list was positioned when drilling into a child directory, so backing out
+/// lands back on that folder instead of jumping to row 0.
+#[derive(Clone, Default)]
+pub struct BrowseCursor {
+    pub path: Vec<u8>,
+    pub cursor: usize,
+    pub scroll: usize,
+}
+
+fn restore_cursor(children: &[Child], target: &BrowseCursor) -> usize {
+    children
+        .iter()
+        .position(|c| c.path == target.path)
+        .unwrap_or_else(|| target.cursor.min(children.len().saturating_sub(1)))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
     Normal,
@@ -248,6 +264,8 @@ pub struct AppState {
     /// First visible row of the current list. Kept between frames so the view scrolls only when
     /// the cursor nears an edge (see `render::scroll_start`).
     pub scroll: std::cell::Cell<usize>,
+    pub browse_history: HashMap<Vec<u8>, BrowseCursor>,
+    pub browse_restore: Option<(Vec<u8>, BrowseCursor)>,
     pub details: bool,
     pub tier: usize,
     pub plan: Option<omg_core::planning::Plan>,
@@ -1253,6 +1271,14 @@ impl App {
                 total,
             } => {
                 s.busy = None;
+                if let Some((restore_dir, target)) = s.browse_restore.take() {
+                    if path == restore_dir && s.dir == restore_dir {
+                        s.cursor = restore_cursor(&children, &target);
+                        s.scroll.set(target.scroll);
+                    } else if s.dir == restore_dir {
+                        s.browse_restore = Some((restore_dir, target));
+                    }
+                }
                 s.dirs.insert(
                     path,
                     DirView {
@@ -1360,9 +1386,22 @@ impl App {
             self.state.message = format!("⚠ {error}");
         }
     }
-    fn enter_dir(&mut self, path: Vec<u8>) {
+    fn enter_dir(&mut self, path: Vec<u8>, restore: Option<BrowseCursor>) {
         self.state.dir = path.clone();
-        self.state.cursor = 0;
+        self.state.browse_restore = None;
+        if let Some(target) = restore {
+            if let Some(view) = self.state.dirs.get(&path) {
+                self.state.cursor = restore_cursor(&view.children, &target);
+                self.state.scroll.set(target.scroll);
+            } else {
+                self.state.cursor = 0;
+                self.state.scroll.set(0);
+                self.state.browse_restore = Some((path.clone(), target));
+            }
+        } else {
+            self.state.cursor = 0;
+            self.state.scroll.set(0);
+        }
         if !self.state.dirs.contains_key(&path) {
             self.request(Request::Dir(path), Some("Loading"));
         }
@@ -1468,7 +1507,15 @@ impl App {
                     .filter(|c| c.kind == "directory")
                     .map(|c| c.path.clone());
                 if let Some(path) = next {
-                    self.enter_dir(path);
+                    self.state.browse_history.insert(
+                        self.state.dir.clone(),
+                        BrowseCursor {
+                            path: path.clone(),
+                            cursor: self.state.cursor,
+                            scroll: self.state.scroll.get(),
+                        },
+                    );
+                    self.enter_dir(path, None);
                 }
             }
             KeyCode::Backspace | KeyCode::Left if tab == Tab::Browse => self.go_up(),
@@ -1532,10 +1579,20 @@ impl App {
         if self.state.dir.is_empty() {
             return;
         }
-        let cut = self.state.dir.iter().rposition(|b| *b == b'/').unwrap_or(0);
-        let mut parent = self.state.dir.clone();
+        let child = self.state.dir.clone();
+        let cut = child.iter().rposition(|b| *b == b'/').unwrap_or(0);
+        let mut parent = child.clone();
         parent.truncate(cut);
-        self.enter_dir(parent);
+        let target = self
+            .state
+            .browse_history
+            .remove(&parent)
+            .unwrap_or(BrowseCursor {
+                path: child,
+                cursor: 0,
+                scroll: 0,
+            });
+        self.enter_dir(parent, Some(target));
     }
 }
 
