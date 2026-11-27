@@ -142,12 +142,30 @@ Owner's laptop: Windows 11 Home 25H2 (build 10.0.26200.7462), AMD64, C: and D: N
 
 Not done: a symbolic link root and the link-inside-a-folder delete scenario on this account (they need Developer Mode), OneDrive cloud-only placeholders (none on this PC). Found, not fixed in 0.1.0: `omg tree` on the excluded `OneDrive` folder itself shows 0 bytes with `incomplete: false`, although it holds 1,190 files; the listing of the profile shows it as excluded.
 
+## The 0.2.0 CI binary before signing (2026-11-27)
+
+Same PC and account as the 0.1.0 check. Binary: `omg.exe` from `Release build` run 45944007561 on `06919e2`, unsigned and run directly; its SHA-256 `63dbdf6b...0306` equals the build's `SHA256SUMS`. Tests from a clone at `06919e2`. Signed 0.2.0 packages did not exist yet, so the launcher, signature and tamper steps were not run.
+
+| Step | Result |
+| --- | --- |
+| `--version`, `doctor` | Pass: `omg 0.2.0`; "permanent delete: development-unqualified (Windows: NTFS only; ReFS and FAT32 refused; cloud placeholders never deleted)"; "auto delete: off; job not registered"; the daily scan job is reported, not registered. |
+| State folder | Pass: `icacls` lists only the user and SYSTEM. |
+| Refusals | Pass: FAT32 `F:\`, a junction, `\\localhost\C$\...`, with the same messages as 0.1.0; each exits 1. |
+| Profile scan | Pass: complete, 726,828 entries, 0 errors, 128 excluded, 14.5 s (23 s with startup), 10.2 s on a rescan; 55.12 GiB indexed; index 378 MiB; 123 findings (112 review, 6 info, 5 protected), 21.4 GiB explained. The profile shrank since 2026-11-21: 0.1.0 scanned the same profile the same day to 726,829 entries and 55.12 GiB. |
+| `status`, `tree`, `findings`, `trends`, `history`, `grew`, `unexplained` | Pass: all exit 0. |
+| Fixed 0.1.0 issues | Pass: `tree` on `OneDrive` gives sizes `null`, `excluded`, `incomplete: true`; the rescan's `estimated_total` is the previous count (726,828). |
+| `schedule status`, `auto-delete status` | Pass: not registered, `executable_missing: false`; auto delete off, nothing due. |
+| ConPTY delete tests | Pass: `test_terminal_windows.py` with `OMG_BINARY` set to the CI `omg.exe`: 3 of 3, none skipped. |
+| `qualify-delete.py` | Pass: 6 of 7, the link scenario skipped ("this account cannot create symbolic links"). |
+
+Not done: the signed 0.2.0 package (install, signature, tamper), turning auto delete on and off, the interface by hand (small terminals, scan animation), a symbolic link root.
+
 ## Known gaps (not done, not claimed)
 
 - **Hard-link counts.** Enumeration does not read link counts, so each Windows name counts once. Data reachable by two names is double-counted in folder totals until link counts are read (plan W02).
 - **Containment.** Each directory is checked by final path and file ID, which refuses a junction swapped into an intermediate component. Relative `NtCreateFile` opens (the stronger design in the plan) are not used.
 - **State directory ACLs.** Done 2026-10-19: see "Owner-only state directory" below.
-- **Cloud placeholders.** Placeholder detection uses attributes and reparse tags. It is not tested against a live OneDrive sync root. `OneDrive` in the profile is excluded by name; `omg tree` on that folder itself shows 0 bytes instead of unknown (to fix after 0.1.0).
+- **Cloud placeholders.** Placeholder detection uses attributes and reparse tags. It is not tested against a live OneDrive sync root. `OneDrive` in the profile is excluded by name; since 0.2.0 `omg tree` on that folder itself shows its size as unknown and `incomplete: true` (checked 2026-11-27).
 - **Drive root and system folders.** Scanning `C:\` as a whole is untested. `System Volume Information` and `$Recycle.Bin` are excluded by name.
 - **Progress estimate.** No used-inode count is available on Windows, so the ETA is unavailable.
 - **Not implemented:** drives view, Recycle Bin size, WSL/Docker virtual-disk findings (M2); background service (M4); Recycle Bin deletion; Authenticode signing (W09). The ConPTY tests (W11) exist since 2026-10-19 and cover delete since 2026-11-02.

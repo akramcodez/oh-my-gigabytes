@@ -135,7 +135,7 @@ The next release is `0.2.0` on npm `latest`, still declaring `cleanup: developme
 
 Next for `0.2.0`, in order (steps of [Releasing a version](#releasing-a-version)):
 1. `Release build` on the merged version commit, then download and sign with `--version 0.2.0 --publishable` (owner).
-2. Step 4 on the Mac, Windows and WSL2 with the signed offline packages, including turning auto delete on and off in a throwaway home and checking that `omg doctor` reports the job and `0.2.0`.
+2. Step 4 on the Mac, Windows and WSL2 with the signed offline packages, including turning auto delete on and off in a throwaway home and checking that `omg doctor` reports the job and `0.2.0`. Before signing, the unsigned binaries of `Release build` run 45944007561 (`06919e2`) passed the analysis and delete checks on Windows and WSL2 on 2026-11-27 ([windows-evidence.md](windows-evidence.md), [linux-qualification.md](linux-qualification.md)); the launcher, signature, tamper and auto delete on/off checks are left for the signed packages.
 3. Owner: draft GitHub Release `v0.2.0` with the same files as `0.1.0`; the notes repeat what is not in this release: moving to the system trash, a macOS or Windows background scan service, Authenticode signing, Apple notarization, Intel Macs, Windows on Arm and musl.
 4. `Install smoke test` with `source=release`, the tag `v0.2.0`, the fingerprint and `previous_tag=v0.1.0`.
 5. Owner: `npm publish` (to `latest`), platform packages first and the wrapper last, check `npm dist-tag ls oh-my-gigabytes`, publish the GitHub Release and add its date to `CHANGELOG.md`.
