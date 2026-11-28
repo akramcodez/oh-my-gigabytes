@@ -1956,6 +1956,37 @@ button.icon-slot {
   }
 }
 
+html {
+  scrollbar-color: var(--rule-strong) var(--paper);
+}
+
+.shell,
+.table-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 2px solid var(--paper);
+    border-radius: 999px;
+    background: var(--rule-strong);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-3);
+  }
+}
+
 .text-link[aria-current="page"] {
   color: var(--ink);
 }
@@ -1999,6 +2030,12 @@ button.icon-slot {
   border-right: 1px solid var(--rule);
   font-size: 0.88rem;
   scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.docs-nav:hover,
+.docs-nav:focus-within {
+  scrollbar-color: var(--rule-strong) transparent;
 }
 
 .docs-nav-title,
@@ -2248,14 +2285,13 @@ button.icon-slot {
 .note {
   margin: 0 0 20px;
   padding: 14px 18px;
-  border: 1px solid var(--rule);
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--rule));
   border-radius: 6px;
   background: var(--accent-soft);
 }
 
 .note.is-warn {
-  border-left-color: var(--t-danger);
+  border-color: color-mix(in srgb, var(--t-danger) 35%, var(--rule));
   background: color-mix(in srgb, var(--t-danger) 7%, transparent);
 }
 
