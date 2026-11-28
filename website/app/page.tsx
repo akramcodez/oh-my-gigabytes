@@ -1,3 +1,4 @@
+import Link from "next/link";
 import CopyCommand from "@/components/CopyCommand";
 import Downloads from "@/components/Downloads";
 import Sponsors from "@/components/Sponsors";
@@ -48,6 +49,8 @@ const FOOTER: { title: string; links: [string, string][] }[] = [
   {
     title: "Docs",
     links: [
+      ["Every command", "/docs"],
+      ["Guides", "/guides"],
       ["Readme", doc("README.md")],
       ["Safety rules", doc("docs/safety.md")],
       ["Compatibility", doc("docs/compatibility.md")],
@@ -320,10 +323,10 @@ export default async function Home() {
           </a>
           <nav aria-label="Project" className="topbar-actions">
             {SHOW_SPONSORS && <NavSponsors />}
-            <a href={doc("README.md")} className="text-link" aria-label="Docs">
+            <Link href="/docs" className="text-link" aria-label="Docs">
               <LuBookOpen aria-hidden="true" />
               <span className="nav-label">Docs</span>
-            </a>
+            </Link>
             <a href={NPM} className="text-link" aria-label="npm package">
               <SiNpm aria-hidden="true" />
               <span className="nav-label">npm</span>
@@ -343,8 +346,8 @@ export default async function Home() {
               <em>Take it back on your terms.</em>
             </h1>
             <p className="lede">
-              A keyboard-first disk analyzer for developers. It finds the caches, build folders and old toolchains filling
-              your disk, and deletes only what you confirm.
+              A free, open source disk space analyzer for developers, from the terminal. It finds the caches, build folders
+              and old toolchains filling your disk, and deletes only what you confirm.
             </p>
             <div className="hero-actions">
               <CopyCommand command={INSTALL} />
@@ -440,6 +443,9 @@ export default async function Home() {
                     <span>{what}</span>
                   </li>
                 ))}
+                <li>
+                  <Link href="/docs">Every command and option, explained</Link>
+                </li>
               </ul>
             </div>
           </section>

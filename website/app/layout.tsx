@@ -11,7 +11,7 @@ const serif = Newsreader({ subsets: ["latin"], style: ["normal", "italic"], vari
 export const metadata: Metadata = {
   metadataBase: new URL(SITE),
   title: {
-    default: "OMG (Oh My Gigabytes): see where your disk space went",
+    default: "OMG (Oh My Gigabytes): disk space analyzer and cleaner for developers",
     template: "%s | OMG",
   },
   description: DESCRIPTION,
