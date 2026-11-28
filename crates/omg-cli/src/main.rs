@@ -10,6 +10,25 @@ use std::{
 };
 mod tui;
 
+/// Rust reports an MSYS or Cygwin pty (mintty) as a terminal, but it is a pipe: the console the
+/// interface reads keys from never sees them, and mintty echoes them instead.
+#[cfg(windows)]
+fn console_input() -> bool {
+    use std::os::windows::io::AsRawHandle;
+    let mut mode = 0;
+    unsafe {
+        windows_sys::Win32::System::Console::GetConsoleMode(
+            std::io::stdin().as_raw_handle(),
+            &mut mode,
+        ) != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn console_input() -> bool {
+    true
+}
+
 #[derive(Parser)]
 #[command(name = "omg", version)]
 #[cfg_attr(
@@ -480,6 +499,13 @@ fn run() -> Result<()> {
         && (!std::io::stdin().is_terminal() || !std::io::stdout().is_terminal())
     {
         bail!("interactive TUI requires a terminal; use omg status or omg scan --root PATH");
+    }
+    if cli.command.is_none() && !console_input() {
+        bail!(
+            "the interactive interface needs a Windows console, but this window passes keys through a pipe \
+             (Git Bash's default mintty window does). Run `winpty omg`, open Git Bash in Windows Terminal, \
+             or use PowerShell or Command Prompt. Commands such as omg status and omg scan work here."
+        );
     }
     let mut index = Index::open(&state)?;
     match cli.command {

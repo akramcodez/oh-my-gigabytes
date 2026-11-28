@@ -811,3 +811,71 @@ fn auto_delete_status_items_explains_each_item() {
         serde_json::from_slice(&omg(&["auto-delete", "status"]).stdout).unwrap();
     assert!(summary["job"]["registered"] == false && summary.get("settings").is_some());
 }
+
+/// Git Bash's mintty window gives programs a named pipe that Rust reports as a terminal, so the
+/// interface used to start, read no keys and leave mintty echoing them. It must refuse instead.
+#[test]
+#[cfg(windows)]
+fn interface_refuses_a_mintty_pipe_and_explains() {
+    use std::os::windows::{
+        ffi::OsStrExt,
+        io::{FromRawHandle, OwnedHandle},
+    };
+    use windows_sys::Win32::{
+        Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{CreateFileW, OPEN_EXISTING, PIPE_ACCESS_DUPLEX},
+        System::Pipes::{CreateNamedPipeW, PIPE_TYPE_BYTE},
+    };
+    fn pty(end: &str) -> (OwnedHandle, OwnedHandle) {
+        let name = format!(
+            r"\\.\pipe\msys-{:016x}-pty0-{end}-master",
+            std::process::id()
+        );
+        let wide: Vec<u16> = std::ffi::OsStr::new(&name)
+            .encode_wide()
+            .chain([0])
+            .collect();
+        unsafe {
+            let server = CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE,
+                1,
+                4096,
+                4096,
+                0,
+                std::ptr::null(),
+            );
+            assert_ne!(server, INVALID_HANDLE_VALUE, "{name}");
+            let client = CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            );
+            assert_ne!(client, INVALID_HANDLE_VALUE, "{name}");
+            (
+                OwnedHandle::from_raw_handle(server),
+                OwnedHandle::from_raw_handle(client),
+            )
+        }
+    }
+    let fixture = tempfile::tempdir().unwrap();
+    let state = fixture.path().join("state");
+    let (_input_server, input) = pty("from");
+    let (_output_server, output) = pty("to");
+    let result = Command::new(env!("CARGO_BIN_EXE_omg"))
+        .arg("--state-dir")
+        .arg(&state)
+        .stdin(input)
+        .stdout(output)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!result.status.success(), "{stderr}");
+    assert!(stderr.contains("winpty omg"), "{stderr}");
+    assert!(!state.exists());
+}
