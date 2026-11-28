@@ -3,6 +3,7 @@ import { LuBookOpen, LuCompass } from "react-icons/lu";
 import { SiNpm } from "react-icons/si";
 import SiteFooter from "@/components/SiteFooter";
 import Stars from "@/components/Stars";
+import TocSpy from "@/components/TocSpy";
 import { banner } from "@/lib/banner";
 import { starCount } from "@/lib/github";
 import { NPM } from "@/lib/site";
@@ -87,5 +88,47 @@ export function Shell({ children }: { children: string }) {
         })}
       </code>
     </pre>
+  );
+}
+
+export type NavLink = { href: string; label: string; code?: boolean; items?: NavLink[] };
+
+function NavList({ links }: { links: NavLink[] }) {
+  return (
+    <ul>
+      {links.map((l) => (
+        <li key={l.href}>
+          <a href={l.href}>{l.code ? <code>{l.label}</code> : l.label}</a>
+          {l.items && <NavList links={l.items} />}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function DocLayout({ title, nav, children }: { title: string; nav: NavLink[]; children: React.ReactNode }) {
+  return (
+    <div className="docs">
+      <aside className="docs-nav" aria-label={title}>
+        <p className="docs-nav-title">{title}</p>
+        <NavList links={nav} />
+      </aside>
+      <div className="docs-body">
+        <details className="docs-toc">
+          <summary>{title}</summary>
+          <NavList links={nav} />
+        </details>
+        {children}
+      </div>
+      <TocSpy />
+    </div>
+  );
+}
+
+export function Note({ children, tone }: { children: React.ReactNode; tone?: "warn" }) {
+  return (
+    <div className={tone ? `note is-${tone}` : "note"} role="note">
+      {children}
+    </div>
   );
 }

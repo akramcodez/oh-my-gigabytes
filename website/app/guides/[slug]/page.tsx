@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import CopyCommand from "@/components/CopyCommand";
-import DocShell, { SectionHead, Shell } from "@/components/DocShell";
+import DocShell, { DocLayout, type NavLink, Note, Shell } from "@/components/DocShell";
 import { GUIDES } from "@/lib/guides";
-import { INSTALL, SITE } from "@/lib/site";
+import { SITE } from "@/lib/site";
 
 export const dynamicParams = false;
 
@@ -53,26 +52,31 @@ export default async function GuidePage({ params }: { params: Promise<{ slug: st
     ],
   };
 
+  const anchor = (h: string) => h.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const nav: NavLink[] = [
+    { href: "#top", label: "Overview" },
+    ...blocks.filter((b) => b.h).map((b) => ({ href: `#${anchor(b.h!)}`, label: b.h! })),
+  ];
+
   return (
     <DocShell current="guides">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(schema) }} />
-      <section className="hero compact">
-        <p className="eyebrow">
-          <Link href="/guides">Guides</Link> &middot; {String(index).padStart(2, "0")}
-        </p>
-        <h1>{guide.title}</h1>
-        {intro?.p?.map((t) => (
-          <p key={t} className="lede">
-            {t}
+      <DocLayout title="In this guide" nav={nav}>
+        <header className="docs-head" id="top">
+          <p className="eyebrow">
+            <Link href="/guides">Guides</Link> &middot; {String(index).padStart(2, "0")}
           </p>
-        ))}
-      </section>
+          <h1>{guide.title}</h1>
+          {intro?.p?.map((t) => (
+            <p key={t} className="docs-lede">
+              {t}
+            </p>
+          ))}
+        </header>
 
-      <div className="section rows">
-        {blocks.map((b, i) => (
-          <section key={i} className={b.h === "With omg" ? "row is-omg" : "row"} aria-label={b.h}>
-            <div className="row-head">{b.h && <h2>{b.h}</h2>}</div>
-            <div className="row-body prose">
+        {blocks.map((b, i) => {
+          const body = (
+            <>
               {b.p?.map((t) => <p key={t}>{t}</p>)}
               {b.list && (
                 <ul className="rules">
@@ -82,37 +86,36 @@ export default async function GuidePage({ params }: { params: Promise<{ slug: st
                 </ul>
               )}
               {b.code && <Shell>{b.code}</Shell>}
-            </div>
-          </section>
-        ))}
-      </div>
+            </>
+          );
+          return (
+            <section key={i} className="docs-section" aria-labelledby={b.h ? anchor(b.h) : undefined}>
+              {b.h && (
+                <h2 id={anchor(b.h)}>
+                  <a href={`#${anchor(b.h)}`}>{b.h}</a>
+                </h2>
+              )}
+              {b.h === "With omg" ? <Note>{body}</Note> : body}
+            </section>
+          );
+        })}
 
-      <nav className="section" aria-labelledby="more-title">
-        <SectionHead id="more-title" title="More guides" lead="Every command is also explained in the docs." />
-        <ol className="grid four index">
-          {others.map((g) => (
-            <li key={g.slug}>
-              <Link href={`/guides/${g.slug}`}>
-                <span className="num">{String(GUIDES.indexOf(g) + 1).padStart(2, "0")}</span>
-                <h3>{g.title}</h3>
-                <p>{g.summary}</p>
-              </Link>
+        <section className="docs-section" aria-labelledby="more">
+          <h2 id="more">More guides</h2>
+          <ul className="doc-links">
+            {others.map((g) => (
+              <li key={g.slug}>
+                <Link href={`/guides/${g.slug}`}>{g.title}</Link>
+                <span>{g.summary}</span>
+              </li>
+            ))}
+            <li>
+              <Link href="/docs">Every omg command</Link>
+              <span>Each command, option and key in plain words.</span>
             </li>
-          ))}
-        </ol>
-      </nav>
-
-      <section className="cta" aria-label="Install">
-        <h2>
-          Your gigabytes, <em>accounted for.</em>
-        </h2>
-        <div className="hero-actions">
-          <CopyCommand command={INSTALL} />
-          <Link href="/docs" className="button">
-            Every command
-          </Link>
-        </div>
-      </section>
+          </ul>
+        </section>
+      </DocLayout>
     </DocShell>
   );
 }

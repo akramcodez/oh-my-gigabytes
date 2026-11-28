@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import CopyCommand from "@/components/CopyCommand";
-import DocShell, { SectionHead, Shell } from "@/components/DocShell";
+import DocShell, { DocLayout, type NavLink, Note, Shell } from "@/components/DocShell";
 import { INSTALL, NAME, SITE, VERSION, doc } from "@/lib/site";
 
 export const metadata: Metadata = {
@@ -325,19 +325,22 @@ const RULES = [
   "omg clean never takes a whole Git repository or an app's data. Only the interface can, after you confirm.",
 ];
 
-const SECTIONS: [string, string, string][] = [
-  ["words", "Words you will see", "Scan, index, finding, OMG Trash, fingerprint."],
-  ["interface", "The interface", "The five tabs and every key."],
-  ...GROUPS.map((g): [string, string, string] => [g.id, g.title, g.commands.map((c) => c.name.replace(/omg /g, "")).join(", ")]),
-  ["global", "Options for every command", "--state-dir, --config, OMG_STATE_DIR, JSON output."],
-  ["categories", "Categories", "The names omg clean takes, and which are suggested."],
-  ["safety", "What is never deleted", "The refusals no flag or setting turns off."],
-  ["files", "Data and uninstall", "Where the index lives, and how to remove omg."],
-];
-
-const num = (id: string) => String(SECTIONS.findIndex(([s]) => s === id) + 1).padStart(2, "0");
-
 const slug = (name: string) => name.replace(/^omg\s*/, "").replace(/[^a-z0-9]+/gi, "-").replace(/-$/, "") || "omg";
+
+const NAV: NavLink[] = [
+  { href: "#start", label: "Getting started" },
+  { href: "#words", label: "Words you will see" },
+  { href: "#interface", label: "The interface" },
+  ...GROUPS.map((g) => ({
+    href: `#${g.id}`,
+    label: g.title,
+    items: g.commands.map((c) => ({ href: `#cmd-${slug(c.name)}`, label: c.name, code: true })),
+  })),
+  { href: "#global", label: "Options for every command" },
+  { href: "#categories", label: "Categories" },
+  { href: "#safety", label: "What is never deleted" },
+  { href: "#files", label: "Data and uninstall" },
+];
 
 const SCHEMA = {
   "@context": "https://schema.org",
@@ -348,35 +351,36 @@ const SCHEMA = {
   inLanguage: "en",
 };
 
-function Options({ items }: { items: Option[] }) {
+function Options({ items, head = "Option" }: { items: Option[]; head?: string }) {
   return (
-    <dl className="opts">
-      {items.map(([opt, meaning]) => (
-        <div key={opt}>
-          <dt>
-            <code>{opt}</code>
-          </dt>
-          <dd>{meaning}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className="table-wrap">
+      <table className="doc-table">
+        <thead>
+          <tr>
+            <th scope="col">{head}</th>
+            <th scope="col">What it does</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map(([opt, meaning]) => (
+            <tr key={opt}>
+              <td>
+                <code>{opt}</code>
+              </td>
+              <td>{meaning}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-function Keys({ items }: { items: [string[], string][] }) {
+function H2({ id, children }: { id: string; children: React.ReactNode }) {
   return (
-    <dl className="keys">
-      {items.map(([keys, what]) => (
-        <div key={what}>
-          <dt>
-            {keys.map((k) => (
-              <kbd key={k}>{k}</kbd>
-            ))}
-          </dt>
-          <dd>{what}</dd>
-        </div>
-      ))}
-    </dl>
+    <h2 id={id}>
+      <a href={`#${id}`}>{children}</a>
+    </h2>
   );
 }
 
@@ -384,252 +388,209 @@ export default function Docs() {
   return (
     <DocShell current="docs">
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(SCHEMA) }} />
+      <DocLayout title="On this page" nav={NAV}>
+        <header className="docs-head" id="start">
+          <p className="eyebrow">Docs &middot; v{VERSION}</p>
+          <h1>
+            Every omg command, <em>in plain words.</em>
+          </h1>
+          <p className="docs-lede">
+            omg shows where your disk space went and helps you take it back. It scans your home folder, recognises developer
+            caches, build folders and old tools, explains each one, and deletes only what you confirm.
+          </p>
+        </header>
 
-      <section id="top" className="hero">
-        <p className="eyebrow">Docs &middot; v{VERSION} &middot; every command, option and key</p>
-        <h1>
-          Every omg command,
-          <br />
-          <em>in plain words.</em>
-        </h1>
-        <p className="lede">
-          omg shows where your disk space went and helps you take it back. It scans your home folder, recognises developer
-          caches, build folders and old tools, explains each one, and deletes only what you confirm.
-        </p>
-        <div className="hero-actions">
+        <section className="docs-section" aria-labelledby="start-title">
+          <h2 id="start-title" className="sr-only">
+            Getting started
+          </h2>
+          <p>Install it with npm. You need Node 22 or newer.</p>
           <CopyCommand command={INSTALL} />
-          <Link href="/guides" className="button">
-            Read the guides
-          </Link>
-        </div>
-        <p className="fine">
-          Node 22 or newer, then run <code>omg</code>.
-        </p>
-      </section>
+          <p>
+            Then run <code>omg</code>. On its first start it scans your home folder, which takes from a few seconds to a few
+            minutes. Everything the interface does also works as a command that prints JSON, so you can script it.
+          </p>
+          <Note>
+            <p>
+              <strong>On macOS</strong>, give your terminal Full Disk Access in System Settings, Privacy &amp; Security.
+              Without it omg cannot see Desktop, Documents and Downloads.
+            </p>
+          </Note>
+        </section>
 
-      <ul className="facts" aria-label="First run">
-        <li>
-          <strong>The first run scans for you</strong>
-          <span>omg scans your home folder on its first start. That takes from a few seconds to a few minutes.</span>
-        </li>
-        <li>
-          <strong>On macOS, allow your terminal</strong>
-          <span>Give it Full Disk Access in System Settings, Privacy &amp; Security, so omg can see Desktop, Documents and Downloads.</span>
-        </li>
-        <li>
-          <strong>Interface or shell</strong>
-          <span>Everything the interface does also works as a command that prints JSON.</span>
-        </li>
-      </ul>
-
-      <nav className="section" aria-labelledby="contents-title">
-        <SectionHead id="contents-title" title="On this page" lead="Start with the words and the interface, or jump straight to a command." />
-        <ol className="grid four index">
-          {SECTIONS.map(([id, title, lead], i) => (
-            <li key={id}>
-              <a href={`#${id}`}>
-                <span className="num">{String(i + 1).padStart(2, "0")}</span>
-                <h3>{title}</h3>
-                <p>{lead}</p>
-              </a>
-            </li>
-          ))}
-          <li>
-            <Link href="/guides">
-              <span className="num">Next</span>
-              <h3>Guides</h3>
-              <p>Xcode, node_modules, Docker and package caches, step by step.</p>
-            </Link>
-          </li>
-        </ol>
-      </nav>
-
-      <section id="words" className="section" tabIndex={-1} aria-labelledby="words-title">
-        <SectionHead id="words-title" num={num("words")} title="Words you will see" lead="A few terms come up everywhere. This is what each one means." />
-        <ul className="grid four">
-          {WORDS.map(([term, meaning]) => (
-            <li key={term}>
-              <h3>{term}</h3>
-              <p>{meaning}</p>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section id="interface" className="section" tabIndex={-1} aria-labelledby="interface-title">
-        <SectionHead
-          id="interface-title"
-          num={num("interface")}
-          title="The interface"
-          lead="Run omg with no command to open it. Five tabs, switched with the number keys."
-        />
-        <ol className="steps five">
-          {TABS.map(([tab, meaning], i) => (
-            <li key={tab}>
-              <span className="num">
-                <kbd>{i + 1}</kbd>
-              </span>
-              <h3>{tab}</h3>
-              <p>{meaning}</p>
-            </li>
-          ))}
-        </ol>
-        <div className="split">
-          <Keys items={KEYS.slice(0, 8)} />
-          <Keys items={KEYS.slice(8)} />
-        </div>
-      </section>
-
-      {GROUPS.map((group) => (
-        <section key={group.id} id={group.id} className="section" tabIndex={-1} aria-labelledby={`${group.id}-title`}>
-          <SectionHead id={`${group.id}-title`} num={num(group.id)} title={group.title} lead={group.lead} />
-          <div className="rows">
-            {group.commands.map((c) => (
-              <article key={c.name} className="row" id={`cmd-${slug(c.name)}`}>
-                <div className="row-head">
-                  <h3>
-                    <code>{c.name}</code>
-                  </h3>
-                  <p>{c.what}</p>
-                  {c.note && <p className="row-note">{c.note}</p>}
-                </div>
-                <div className="row-body">
-                  <Shell>{c.example}</Shell>
-                  {c.options && <Options items={c.options} />}
-                </div>
-              </article>
+        <section className="docs-section" aria-labelledby="words">
+          <H2 id="words">Words you will see</H2>
+          <p>A few terms come up everywhere. This is what each one means.</p>
+          <dl className="terms">
+            {WORDS.map(([term, meaning]) => (
+              <div key={term}>
+                <dt>{term}</dt>
+                <dd>{meaning}</dd>
+              </div>
             ))}
+          </dl>
+        </section>
+
+        <section className="docs-section" aria-labelledby="interface">
+          <H2 id="interface">The interface</H2>
+          <p>
+            Run <code>omg</code> with no command to open it. It has five tabs, switched with the number keys:
+          </p>
+          <ol className="tabs-list">
+            {TABS.map(([tab, meaning], i) => (
+              <li key={tab}>
+                <kbd>{i + 1}</kbd>
+                <span>
+                  <strong>{tab}.</strong> {meaning}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <h3 id="keys">Keys</h3>
+          <div className="table-wrap">
+            <table className="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">Key</th>
+                  <th scope="col">What it does</th>
+                </tr>
+              </thead>
+              <tbody>
+                {KEYS.map(([keys, what]) => (
+                  <tr key={what}>
+                    <td className="key-cell">
+                      {keys.map((k) => (
+                        <kbd key={k}>{k}</kbd>
+                      ))}
+                    </td>
+                    <td>{what}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
-      ))}
 
-      <section id="global" className="section" tabIndex={-1} aria-labelledby="global-title">
-        <SectionHead
-          id="global-title"
-          num={num("global")}
-          title="Options for every command"
-          lead="These go before or after any command, such as omg --state-dir /tmp/omg-test scan."
-        />
-        <div className="split">
+        {GROUPS.map((group) => (
+          <section key={group.id} className="docs-section" aria-labelledby={group.id}>
+            <H2 id={group.id}>{group.title}</H2>
+            <p>{group.lead}</p>
+            {group.commands.map((c) => (
+              <article key={c.name} className="cmd" aria-labelledby={`cmd-${slug(c.name)}`}>
+                <h3 id={`cmd-${slug(c.name)}`}>
+                  <a href={`#cmd-${slug(c.name)}`}>
+                    <code>{c.name}</code>
+                  </a>
+                </h3>
+                <p>{c.what}</p>
+                <Shell>{c.example}</Shell>
+                {c.options && <Options items={c.options} />}
+                {c.note && (
+                  <Note>
+                    <p>{c.note}</p>
+                  </Note>
+                )}
+              </article>
+            ))}
+          </section>
+        ))}
+
+        <section className="docs-section" aria-labelledby="global">
+          <H2 id="global">Options for every command</H2>
+          <p>
+            These go before or after any command, such as <code>omg --state-dir /tmp/omg-test scan</code>.
+          </p>
           <Options items={GLOBAL} />
-          <div className="prose">
-            <p>
-              Commands print JSON, so you can pipe them into tools like jq. Fields are only ever added, never removed or
-              renamed, and a size omg does not know is <code>null</code>, never <code>0</code>.
-            </p>
-            <p>
-              Details: <a href={doc("docs/compatibility.md")}>output compatibility</a>.
-            </p>
-          </div>
-        </div>
-      </section>
+          <p>
+            Commands print JSON, so you can pipe them into tools like jq. Fields are only ever added, never removed or renamed,
+            and a size omg does not know is <code>null</code>, never <code>0</code>. Details:{" "}
+            <a href={doc("docs/compatibility.md")}>output compatibility</a>.
+          </p>
+        </section>
 
-      <section id="categories" className="section" tabIndex={-1} aria-labelledby="categories-title">
-        <SectionHead
-          id="categories-title"
-          num={num("categories")}
-          title="Categories"
-          lead="Every finding has a category. Use these names with omg clean --category. Suggested ones are added to OMG Trash after a scan; the others are only listed."
-        />
-        <div className="table-wrap">
-          <table className="platforms cats">
-            <thead>
-              <tr>
-                <th scope="col">Category</th>
-                <th scope="col">What it is</th>
-                <th scope="col">After a scan</th>
-              </tr>
-            </thead>
-            <tbody>
-              {CATEGORIES.map(([name, what, suggested]) => (
-                <tr key={name}>
-                  <th scope="row">{name}</th>
-                  <td data-label="What it is">{what}</td>
-                  <td data-label="After a scan" className={suggested ? "is-suggested" : undefined}>
-                    {suggested ? "Suggested" : "Listed only"}
-                  </td>
+        <section className="docs-section" aria-labelledby="categories">
+          <H2 id="categories">Categories</H2>
+          <p>
+            Every finding has a category. Use these names with <code>omg clean --category</code>. Suggested ones are added to
+            OMG Trash after a scan; the others are only listed.
+          </p>
+          <div className="table-wrap">
+            <table className="doc-table">
+              <thead>
+                <tr>
+                  <th scope="col">Category</th>
+                  <th scope="col">What it is</th>
+                  <th scope="col">After a scan</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+              </thead>
+              <tbody>
+                {CATEGORIES.map(([name, what, suggested]) => (
+                  <tr key={name}>
+                    <td>
+                      <code>{name}</code>
+                    </td>
+                    <td>{what}</td>
+                    <td className={suggested ? "tag is-on" : "tag"}>{suggested ? "Suggested" : "Listed only"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      <section id="safety" className="section" tabIndex={-1} aria-labelledby="safety-title">
-        <SectionHead
-          id="safety-title"
-          num={num("safety")}
-          title="What is never deleted"
-          lead="These refusals live in the deletion code itself. No flag, setting or catalog rule turns them off."
-        />
-        <div className="split">
+        <section className="docs-section" aria-labelledby="safety">
+          <H2 id="safety">What is never deleted</H2>
+          <p>These refusals live in the deletion code itself. No flag, setting or catalog rule turns them off.</p>
           <ul className="never">
             {NEVER.map((n) => (
               <li key={n}>{n}</li>
             ))}
           </ul>
-          <div>
-            <div className="warning" role="note">
-              <p className="warning-title">Delete is permanent</p>
-              <p>
-                omg does not move files to the system trash and there is no undo. Read the list before you confirm: a cache
-                can be downloaded again, but that takes time.
-              </p>
-            </div>
-            <ul className="rules">
-              {RULES.map((r) => (
-                <li key={r}>{r}</li>
-              ))}
-              <li>
-                All of them: <a href={doc("docs/safety.md")}>safety rules</a>.
-              </li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      <section id="files" className="section" tabIndex={-1} aria-labelledby="files-title">
-        <SectionHead
-          id="files-title"
-          num={num("files")}
-          title="Data and uninstall"
-          lead="omg keeps its index and settings in one private folder that never leaves your computer."
-        />
-        <div className="split">
-          <div>
-            <h3 className="split-title">Where omg keeps its data</h3>
-            <Options
-              items={[
-                ["macOS", "~/Library/Application Support/omg"],
-                ["Linux", "~/.local/state/omg, or $XDG_STATE_HOME/omg"],
-                ["Windows", "%LOCALAPPDATA%\\omg"],
-              ]}
-            />
-            <p className="fine">
-              If omg ever says its index is damaged, move this folder aside and scan again. You lose only the delete log and
-              the trend history.
+          <Note tone="warn">
+            <p>
+              <strong>Delete is permanent.</strong> omg does not move files to the system trash and there is no undo. Read the
+              list before you confirm: a cache can be downloaded again, but that takes time.
             </p>
-          </div>
-          <div id="uninstall">
-            <h3 className="split-title">Uninstall</h3>
-            <p className="fine">Turn off anything that runs in the background, then remove the package:</p>
-            <Shell>{`omg auto-delete off\nomg schedule disable        # macOS, Windows\nomg service uninstall       # Linux\nnpm uninstall --global oh-my-gigabytes`}</Shell>
-            <p className="fine">Delete the state folder too if you want the index gone.</p>
-          </div>
-        </div>
-      </section>
+          </Note>
+          <h3 id="checks">How a delete is checked</h3>
+          <ul className="rules">
+            {RULES.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+          <p>
+            The full list: <a href={doc("docs/safety.md")}>safety rules</a>.
+          </p>
+        </section>
 
-      <section className="cta" aria-label="Install">
-        <h2>
-          Your gigabytes, <em>accounted for.</em>
-        </h2>
-        <div className="hero-actions">
-          <CopyCommand command={INSTALL} />
-          <Link href="/guides" className="button">
-            Read the guides
+        <section className="docs-section" aria-labelledby="files">
+          <H2 id="files">Data and uninstall</H2>
+          <p>omg keeps its index and settings in one private folder that never leaves your computer.</p>
+          <Options
+            head="System"
+            items={[
+              ["macOS", "~/Library/Application Support/omg"],
+              ["Linux", "~/.local/state/omg, or $XDG_STATE_HOME/omg"],
+              ["Windows", "%LOCALAPPDATA%\\omg"],
+            ]}
+          />
+          <p>
+            If omg ever says its index is damaged, move this folder aside and scan again. You lose only the delete log and the
+            trend history.
+          </p>
+          <h3 id="uninstall">Uninstall</h3>
+          <p>Turn off anything that runs in the background, then remove the package:</p>
+          <Shell>{`omg auto-delete off\nomg schedule disable        # macOS, Windows\nomg service uninstall       # Linux\nnpm uninstall --global oh-my-gigabytes`}</Shell>
+          <p>Delete the state folder too if you want the index gone.</p>
+        </section>
+
+        <nav className="docs-next" aria-label="Next">
+          <Link href="/guides">
+            <span>Next</span>
+            Guides: free up disk space step by step
           </Link>
-        </div>
-      </section>
+        </nav>
+      </DocLayout>
     </DocShell>
   );
 }
