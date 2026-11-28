@@ -23,6 +23,9 @@ ctrlc.workspace = true
 [target.'cfg(unix)'.dependencies]
 rustix.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
 [features]
 # Analysis-only build: cargo build -p omg-cli --no-default-features
 default = ["permanent-delete"]
@@ -30,3 +33,11 @@ permanent-delete = ["omg-core/permanent-delete"]
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+] }
